@@ -117,6 +117,8 @@ export const DEFAULT_SUBJECTS = {
 // Helper to get subjects - NOW DYNAMIC
 export const getSubjectsList = (classLevel: string, stream: string | null): Subject[] => {
   const isSenior = ['11', '12'].includes(classLevel);
+  const isMiddleSenior = ['9', '10'].includes(classLevel);
+  const isMiddle = ['6', '7', '8'].includes(classLevel);
 
   // 1. Try to load Custom Subjects from LocalStorage
   let pool = { ...DEFAULT_SUBJECTS };
@@ -134,7 +136,6 @@ export const getSubjectsList = (classLevel: string, stream: string | null): Subj
   const customKeys = allKeys.filter(k => !coreKeys.includes(k));
 
   let selectedSubjects: Subject[] = [];
-  const commonSubjects = [pool.english, pool.hindi, pool.computer];
 
   // --- COMPETITION ---
   if (classLevel === 'COMPETITION') {
@@ -149,28 +150,38 @@ export const getSubjectsList = (classLevel: string, stream: string | null): Subj
           pool.math
       ].filter(Boolean);
   }
-  // --- JUNIOR CLASSES (6-10) ---
-  else if (!isSenior) {
+  // --- MIDDLE CLASSES (6-8): Science, History, Geography, Polity ---
+  else if (isMiddle) {
       selectedSubjects = [
-          pool.math,
           pool.science,
-          pool.sst,
-          pool.english,
-          pool.hindi,
-          pool.sanskrit,
-          pool.computer
+          pool.history,
+          pool.geography,
+          pool.polity,
       ].filter(Boolean);
   }
-  // --- SENIOR CLASSES (11/12) ---
-  else {
-      if (stream === 'Science') {
-          selectedSubjects = [pool.physics, pool.chemistry, pool.math, pool.biology, ...commonSubjects];
-      } else if (stream === 'Commerce') {
-          selectedSubjects = [pool.accounts, pool.business, pool.economics, pool.math, ...commonSubjects];
-      } else if (stream === 'Arts') {
-          selectedSubjects = [pool.history, pool.geography, pool.polity, pool.economics, ...commonSubjects];
-      }
-      selectedSubjects = selectedSubjects.filter(Boolean);
+  // --- MIDDLE-SENIOR CLASSES (9-10): Phy, Che, Bio, History, Geo, Polity, Economics ---
+  else if (isMiddleSenior) {
+      selectedSubjects = [
+          pool.physics,
+          pool.chemistry,
+          pool.biology,
+          pool.history,
+          pool.geography,
+          pool.polity,
+          pool.economics,
+      ].filter(Boolean);
+  }
+  // --- SENIOR CLASSES (11/12): Phy, Che, Bio, History, Geo, Polity, Economics ---
+  else if (isSenior) {
+      selectedSubjects = [
+          pool.physics,
+          pool.chemistry,
+          pool.biology,
+          pool.history,
+          pool.geography,
+          pool.polity,
+          pool.economics,
+      ].filter(Boolean);
   }
 
   // 3. APPEND CUSTOM SUBJECTS
@@ -195,13 +206,42 @@ const CBSE_8_MATH = ["Rational Numbers", "Linear Equations in One Variable", "Un
 const CBSE_8_SCI = ["Crop Production and Management", "Microorganisms: Friend and Foe", "Synthetic Fibres and Plastics", "Materials: Metals and Non-Metals", "Coal and Petroleum", "Combustion and Flame", "Conservation of Plants and Animals", "Cell - Structure and Functions", "Reproduction in Animals", "Reaching the Age of Adolescence", "Force and Pressure", "Friction", "Sound", "Chemical Effects of Electric Current", "Some Natural Phenomena", "Light", "Stars and The Solar System", "Pollution of Air and Water"];
 const CBSE_8_SST = ["How, When and Where", "From Trade to Territory", "Ruling the Countryside", "Tribals, Dikus and the Vision of a Golden Age", "When People Rebel", "Weavers, Iron Smelters and Factory Owners", "Civilising the 'Native', Educating the Nation", "Women, Caste and Reform", "The Making of the National Movement", "India After Independence", "Resources", "Land, Soil, Water, Natural Vegetation and Wildlife", "Mineral and Power Resources", "Agriculture", "Industries", "Human Resources", "The Indian Constitution", "Understanding Secularism"];
 
+// Class 6-8 split: History, Geography, Polity
+const CBSE_6_HIST = ["What, Where, How and When?", "From Hunting–Gathering to Growing Food", "In the Earliest Cities", "What Books and Burials Tell Us", "Kingdoms, Kings and an Early Republic", "New Questions and Ideas", "Ashoka, The Emperor Who Gave Up War", "Vital Villages, Thriving Towns", "Traders, Kings and Pilgrims", "New Empires and Kingdoms", "Buildings, Paintings and Books"];
+const CBSE_6_GEO = ["The Earth in the Solar System", "Globe: Latitudes and Longitudes", "Motions of the Earth", "Maps", "Major Domains of the Earth", "Major Landforms of the Earth", "Our Country – India", "India: Climate, Vegetation and Wildlife"];
+const CBSE_6_POL = ["Understanding Diversity", "Diversity and Discrimination", "What is Government?", "Key Elements of a Democratic Government", "Panchayati Raj", "Rural Administration", "Urban Administration", "Rural Livelihoods", "Urban Livelihoods"];
+const CBSE_7_HIST = ["Tracing Changes Through a Thousand Years", "New Kings and Kingdoms", "The Delhi Sultans", "The Mughal Empire", "Rulers and Buildings", "Towns, Traders and Craftspersons", "Tribes, Nomads and Settled Communities", "Devotional Paths to the Divine", "The Making of Regional Cultures", "Eighteenth-Century Political Formations"];
+const CBSE_7_GEO = ["Environment", "Inside Our Earth", "Our Changing Earth", "Air", "Water", "Natural Vegetation and Wildlife", "Human Environment – Settlement, Transport and Communication", "Human Environment Interactions", "Life in the Temperate Grasslands", "Life in the Deserts"];
+const CBSE_7_POL = ["On Equality", "Role of the Government in Health", "How the State Government Works", "Growing up as Boys and Girls", "Women Change the World", "Understanding Media", "Understanding Advertising", "Markets Around Us", "A Shirt in the Market"];
+const CBSE_8_HIST = ["How, When and Where", "From Trade to Territory", "Ruling the Countryside", "Tribals, Dikus and the Vision of a Golden Age", "When People Rebel", "Weavers, Iron Smelters and Factory Owners", "Civilising the 'Native', Educating the Nation", "Women, Caste and Reform", "The Making of the National Movement", "India After Independence"];
+const CBSE_8_GEO = ["Resources", "Land, Soil, Water, Natural Vegetation and Wildlife", "Mineral and Power Resources", "Agriculture", "Industries", "Human Resources"];
+const CBSE_8_POL = ["The Indian Constitution", "Understanding Secularism", "Why Do We Need a Parliament?", "Understanding Laws", "Judiciary", "Understanding Our Criminal Justice System", "Understanding Marginalisation", "Confronting Marginalisation", "Public Facilities", "Law and Social Justice"];
+
 const CBSE_9_MATH = ["Number Systems", "Polynomials", "Coordinate Geometry", "Linear Equations in Two Variables", "Introduction to Euclid’s Geometry", "Lines and Angles", "Triangles", "Quadrilaterals", "Circles", "Heron’s Formula", "Surface Areas and Volumes", "Statistics"];
 const CBSE_9_SCI = ["Matter in Our Surroundings", "Is Matter Around Us Pure", "Atoms and Molecules", "Structure of the Atom", "The Fundamental Unit of Life", "Tissues", "Motion", "Force and Laws of Motion", "Gravitation", "Work and Energy", "Sound", "Improvement in Food Resources"];
 const CBSE_9_SST = ["The French Revolution", "Socialism in Europe and the Russian Revolution", "Nazism and the Rise of Hitler", "Forest Society and Colonialism", "Pastoralists in the Modern World", "India – Size and Location", "Physical Features of India", "Drainage", "Climate", "Natural Vegetation and Wildlife", "Population", "What is Democracy? Why Democracy?", "Constitutional Design", "Electoral Politics", "Working of Institutions", "Democratic Rights"];
 
+// Class 9 split: Physics, Chemistry, Biology, History, Geography, Polity, Economics
+const CBSE_9_PHY = ["Motion", "Force and Laws of Motion", "Gravitation", "Work and Energy", "Sound"];
+const CBSE_9_CHEM = ["Matter in Our Surroundings", "Is Matter Around Us Pure", "Atoms and Molecules", "Structure of the Atom"];
+const CBSE_9_BIO = ["The Fundamental Unit of Life", "Tissues", "Improvement in Food Resources"];
+const CBSE_9_HIST = ["The French Revolution", "Socialism in Europe and the Russian Revolution", "Nazism and the Rise of Hitler", "Forest Society and Colonialism", "Pastoralists in the Modern World"];
+const CBSE_9_GEO = ["India – Size and Location", "Physical Features of India", "Drainage", "Climate", "Natural Vegetation and Wildlife", "Population"];
+const CBSE_9_POL = ["What is Democracy? Why Democracy?", "Constitutional Design", "Electoral Politics", "Working of Institutions", "Democratic Rights"];
+const CBSE_9_ECO = ["The Story of Village Palampur", "People as Resource", "Poverty as a Challenge", "Food Security in India"];
+
 const CBSE_10_MATH = ["Real Numbers", "Polynomials", "Pair of Linear Equations in Two Variables", "Quadratic Equations", "Arithmetic Progressions", "Triangles", "Coordinate Geometry", "Introduction to Trigonometry", "Some Applications of Trigonometry", "Circles", "Areas Related to Circles", "Surface Areas and Volumes", "Statistics", "Probability"];
 const CBSE_10_SCI = ["Chemical Reactions and Equations", "Acids, Bases and Salts", "Metals and Non-Metals", "Carbon and its Compounds", "Life Processes", "Control and Coordination", "How do Organisms Reproduce?", "Heredity", "Light – Reflection and Refraction", "The Human Eye and the Colourful World", "Electricity", "Magnetic Effects of Electric Current", "Our Environment"];
 const CBSE_10_SST = ["The Rise of Nationalism in Europe", "Nationalism in India", "The Making of a Global World", "The Age of Industrialisation", "Print Culture and the Modern World", "Resources and Development", "Forest and Wildlife Resources", "Water Resources", "Agriculture", "Minerals and Energy Resources", "Manufacturing Industries", "Lifelines of National Economy", "Power Sharing", "Federalism", "Gender, Religion and Caste", "Political Parties", "Outcomes of Democracy", "Development", "Sectors of the Indian Economy"];
+
+// Class 10 split: Physics, Chemistry, Biology, History, Geography, Polity, Economics
+const CBSE_10_PHY = ["Light – Reflection and Refraction", "The Human Eye and the Colourful World", "Electricity", "Magnetic Effects of Electric Current", "Sources of Energy"];
+const CBSE_10_CHEM = ["Chemical Reactions and Equations", "Acids, Bases and Salts", "Metals and Non-Metals", "Carbon and its Compounds", "Periodic Classification of Elements"];
+const CBSE_10_BIO = ["Life Processes", "Control and Coordination", "How do Organisms Reproduce?", "Heredity and Evolution", "Our Environment", "Management of Natural Resources"];
+const CBSE_10_HIST = ["The Rise of Nationalism in Europe", "Nationalism in India", "The Making of a Global World", "The Age of Industrialisation", "Print Culture and the Modern World"];
+const CBSE_10_GEO = ["Resources and Development", "Forest and Wildlife Resources", "Water Resources", "Agriculture", "Minerals and Energy Resources", "Manufacturing Industries", "Lifelines of National Economy"];
+const CBSE_10_POL = ["Power Sharing", "Federalism", "Gender, Religion and Caste", "Political Parties", "Outcomes of Democracy"];
+const CBSE_10_ECO = ["Development", "Sectors of the Indian Economy", "Money and Credit", "Globalisation and the Indian Economy", "Consumer Rights"];
 
 const CBSE_11_PHY = ["Physical World", "Units and Measurements", "Motion in a Straight Line", "Motion in a Plane", "Laws of Motion", "Work, Energy and Power", "System of Particles and Rotational Motion", "Gravitation", "Mechanical Properties of Solids", "Mechanical Properties of Fluids", "Thermal Properties of Matter", "Thermodynamics", "Kinetic Theory", "Oscillations", "Waves"];
 const CBSE_11_CHEM = ["Some Basic Concepts of Chemistry", "Structure of Atom", "Classification of Elements and Periodicity in Properties", "Chemical Bonding and Molecular Structure", "States of Matter", "Thermodynamics", "Equilibrium", "Redox Reactions", "Hydrogen", "The s-Block Elements", "The p-Block Elements", "Organic Chemistry – Some Basic Principles and Techniques", "Hydrocarbons", "Environmental Chemistry"];
@@ -213,6 +253,16 @@ const CBSE_12_CHEM = ["The Solid State", "Solutions", "Electrochemistry", "Chemi
 const CBSE_12_MATH = ["Relations and Functions", "Inverse Trigonometric Functions", "Matrices", "Determinants", "Continuity and Differentiability", "Application of Derivatives", "Integrals", "Application of Integrals", "Differential Equations", "Vector Algebra", "Three Dimensional Geometry", "Linear Programming", "Probability"];
 const CBSE_12_BIO = ["Reproduction in Organisms", "Sexual Reproduction in Flowering Plants", "Human Reproduction", "Reproductive Health", "Principles of Inheritance and Variation", "Molecular Basis of Inheritance", "Evolution", "Human Health and Disease", "Strategies for Enhancement in Food Production", "Microbes in Human Welfare", "Biotechnology: Principles and Processes", "Biotechnology and its Applications", "Organisms and Populations", "Ecosystem", "Biodiversity and Conservation", "Environmental Issues"];
 
+// Class 11-12 Humanities: History, Geography, Polity, Economics
+const CBSE_11_HIST = ["From the Beginning of Time", "Early Cities", "An Empire Across Three Continents", "The Central Islamic Lands", "Nomadic Empires", "The Three Orders", "Changing Cultural Traditions", "Confrontation of Cultures", "The Industrial Revolution", "Displacing Indigenous Peoples", "Paths to Modernisation"];
+const CBSE_11_GEO = ["Geography as a Discipline", "The Origin and Evolution of the Earth", "Interior of the Earth", "Distribution of Oceans and Continents", "Minerals and Rocks", "Geomorphic Processes", "Fluvial Landforms", "Arid Landforms", "Glacial Landforms", "Waves, Currents and Tides", "Groundwater", "Water in the Atmosphere", "Atmospheric Circulation", "World Climate and Climate Change", "Biodiversity and Conservation", "Natural Hazards and Disasters"];
+const CBSE_11_POL = ["Political Theory: An Introduction", "Freedom", "Equality", "Social Justice", "Rights", "Citizenship", "Nationalism", "Secularism", "Peace", "Development"];
+const CBSE_11_ECO = ["Indian Economy on the Eve of Independence", "Indian Economy 1950–1990", "Liberalisation, Privatisation and Globalisation", "Poverty", "Human Capital Formation in India", "Rural Development", "Employment: Growth, Informalisation and Other Issues", "Infrastructure", "Environment and Sustainable Development", "Comparative Development Experiences"];
+const CBSE_12_HIST = ["Bricks, Beads and Bones", "Kings, Farmers and Towns", "Kinship, Caste and Class", "Thinkers, Beliefs and Buildings", "Through the Eyes of Travellers", "Bhakti-Sufi Traditions", "An Imperial Capital: Vijayanagara", "Peasants, Zamindars and the State", "Kings and Chronicles", "Colonialism and the Countryside", "Rebels and the Raj", "Colonial Cities", "Mahatma Gandhi and the National Movement", "Understanding Partition", "Framing the Constitution"];
+const CBSE_12_GEO = ["Human Geography: Nature and Scope", "The World Population: Distribution, Density and Growth", "Population Composition", "Human Development", "Primary Activities", "Secondary Activities", "Tertiary and Quaternary Activities", "Transport and Communication", "International Trade", "Human Settlements", "Population: Distribution, Density, Growth and Composition", "Migration: Types, Causes and Consequences", "Land Resources and Agriculture", "Water Resources", "Mineral and Energy Resources", "Manufacturing Industries", "Planning and Sustainable Development in the Indian Context"];
+const CBSE_12_POL = ["Cold War Era", "The End of Bipolarity", "US Hegemony in World Politics", "Alternative Centres of Power", "Contemporary South Asia", "International Organisations", "Security in the Contemporary World", "Environment and Natural Resources", "Globalisation", "Challenges of Nation-Building", "Era of One-Party Dominance", "Politics of Planned Development", "India's External Relations", "Challenges to the Congress System", "Crisis of the Constitutional Order", "Regional Aspirations", "Rise of Popular Movements", "Recent Developments in Indian Politics"];
+const CBSE_12_ECO = ["Introduction to Macroeconomics", "National Income Accounting", "Money and Banking", "Determination of Income and Employment", "Government Budget and the Economy", "Open Economy Macroeconomics", "Introduction to Microeconomics", "Theory of Consumer Behaviour", "Production and Costs", "The Theory of the Firm under Perfect Competition", "Market Equilibrium", "Non-competitive Markets"];
+
 
 export const STATIC_SYLLABUS: Record<string, string[]> = {
     // === COMPETITION ===
@@ -222,20 +272,39 @@ export const STATIC_SYLLABUS: Record<string, string[]> = {
     "CBSE-10-Mathematics": CBSE_10_MATH,
     "CBSE-10-Science": CBSE_10_SCI,
     "CBSE-10-Social Science": CBSE_10_SST,
+    "CBSE-10-Physics": CBSE_10_PHY,
+    "CBSE-10-Chemistry": CBSE_10_CHEM,
+    "CBSE-10-Biology": CBSE_10_BIO,
+    "CBSE-10-History": CBSE_10_HIST,
+    "CBSE-10-Geography": CBSE_10_GEO,
+    "CBSE-10-Political Science": CBSE_10_POL,
+    "CBSE-10-Economics": CBSE_10_ECO,
 
     // === CLASS 9 CBSE ===
     "CBSE-9-Mathematics": CBSE_9_MATH,
     "CBSE-9-Science": CBSE_9_SCI,
     "CBSE-9-Social Science": CBSE_9_SST,
+    "CBSE-9-Physics": CBSE_9_PHY,
+    "CBSE-9-Chemistry": CBSE_9_CHEM,
+    "CBSE-9-Biology": CBSE_9_BIO,
+    "CBSE-9-History": CBSE_9_HIST,
+    "CBSE-9-Geography": CBSE_9_GEO,
+    "CBSE-9-Political Science": CBSE_9_POL,
+    "CBSE-9-Economics": CBSE_9_ECO,
 
     // === CLASS 6-8 (COMPLETE) ===
     "CBSE-6-Mathematics": CBSE_6_MATH, "CBSE-6-Science": CBSE_6_SCI, "CBSE-6-Social Science": CBSE_6_SST,
+    "CBSE-6-History": CBSE_6_HIST, "CBSE-6-Geography": CBSE_6_GEO, "CBSE-6-Political Science": CBSE_6_POL,
     "CBSE-7-Mathematics": CBSE_7_MATH, "CBSE-7-Science": CBSE_7_SCI, "CBSE-7-Social Science": CBSE_7_SST,
+    "CBSE-7-History": CBSE_7_HIST, "CBSE-7-Geography": CBSE_7_GEO, "CBSE-7-Political Science": CBSE_7_POL,
     "CBSE-8-Mathematics": CBSE_8_MATH, "CBSE-8-Science": CBSE_8_SCI, "CBSE-8-Social Science": CBSE_8_SST,
+    "CBSE-8-History": CBSE_8_HIST, "CBSE-8-Geography": CBSE_8_GEO, "CBSE-8-Political Science": CBSE_8_POL,
 
     // === CLASS 11-12 (COMPLETE) ===
     "CBSE-11-Physics": CBSE_11_PHY, "CBSE-11-Chemistry": CBSE_11_CHEM, "CBSE-11-Mathematics": CBSE_11_MATH, "CBSE-11-Biology": CBSE_11_BIO,
+    "CBSE-11-History": CBSE_11_HIST, "CBSE-11-Geography": CBSE_11_GEO, "CBSE-11-Political Science": CBSE_11_POL, "CBSE-11-Economics": CBSE_11_ECO,
     "CBSE-12-Physics": CBSE_12_PHY, "CBSE-12-Chemistry": CBSE_12_CHEM, "CBSE-12-Mathematics": CBSE_12_MATH, "CBSE-12-Biology": CBSE_12_BIO,
+    "CBSE-12-History": CBSE_12_HIST, "CBSE-12-Geography": CBSE_12_GEO, "CBSE-12-Political Science": CBSE_12_POL, "CBSE-12-Economics": CBSE_12_ECO,
 
     // === BSEB MAPPINGS (Using Hindi Titles where available, fallback to English structure) ===
     // BSEB 10
@@ -248,13 +317,26 @@ export const STATIC_SYLLABUS: Record<string, string[]> = {
     "BSEB-9-Science": ["हमारे आस-पास के पदार्थ", "क्या हमारे आस-पास के पदार्थ शुद्ध हैं", "परमाणु एवं अणु", "परमाणु की संरचना", "जीवन की मौलिक इकाई", "ऊतक", "जीवों में विविधता", "गति", "बल तथा गति के नियम", "गुरुत्वाकर्षण", "कार्य तथा ऊर्जा", "ध्वनि", "हम बीमार क्यों होते हैं", "प्राकृतिक संपदा", "खाद्य संसाधनों में सुधार"],
     "BSEB-9-Social Science": ["भौगोलिक खोजें", "अमेरिकी स्वतंत्रता संग्राम", "फ्रांस की क्रांति", "विश्वयुद्धों का इतिहास", "नाजीवाद", "वन्य समाज और उपनिवेशवाद", "शांति के प्रयास", "कृषि और खेतिहर समाज", "स्थिति और विस्तार", "भौतिक स्वरूप: संरचना और उच्चावच", "अपवाह स्वरूप", "जलवायु", "प्राकृतिक वनस्पति एवं वन्य प्राणी", "जनसंख्या", "लोकतंत्र का क्रमिक विकास", "संविधान निर्माण", "चुनावी राजनीति", "संसदीय लोकतंत्र की संस्थाएँ", "लोकतांत्रिक अधिकार", "बिहार के एक गाँव की कहानी", "मानव एक संसाधन", "गरीबी: एक चुनौती", "भारत में खाद्य सुरक्षा"],
 
+    // BSEB 10 - Split subjects
+    "BSEB-10-Physics": CBSE_10_PHY, "BSEB-10-Chemistry": CBSE_10_CHEM, "BSEB-10-Biology": CBSE_10_BIO,
+    "BSEB-10-History": CBSE_10_HIST, "BSEB-10-Geography": CBSE_10_GEO, "BSEB-10-Political Science": CBSE_10_POL, "BSEB-10-Economics": CBSE_10_ECO,
+
+    // BSEB 9 - Split subjects
+    "BSEB-9-Physics": CBSE_9_PHY, "BSEB-9-Chemistry": CBSE_9_CHEM, "BSEB-9-Biology": CBSE_9_BIO,
+    "BSEB-9-History": CBSE_9_HIST, "BSEB-9-Geography": CBSE_9_GEO, "BSEB-9-Political Science": CBSE_9_POL, "BSEB-9-Economics": CBSE_9_ECO,
+
     // Fallback Mappings for other BSEB classes (Map to CBSE English for now to ensure content availability)
     "BSEB-6-Mathematics": CBSE_6_MATH, "BSEB-6-Science": CBSE_6_SCI, "BSEB-6-Social Science": CBSE_6_SST,
+    "BSEB-6-History": CBSE_6_HIST, "BSEB-6-Geography": CBSE_6_GEO, "BSEB-6-Political Science": CBSE_6_POL,
     "BSEB-7-Mathematics": CBSE_7_MATH, "BSEB-7-Science": CBSE_7_SCI, "BSEB-7-Social Science": CBSE_7_SST,
+    "BSEB-7-History": CBSE_7_HIST, "BSEB-7-Geography": CBSE_7_GEO, "BSEB-7-Political Science": CBSE_7_POL,
     "BSEB-8-Mathematics": CBSE_8_MATH, "BSEB-8-Science": CBSE_8_SCI, "BSEB-8-Social Science": CBSE_8_SST,
+    "BSEB-8-History": CBSE_8_HIST, "BSEB-8-Geography": CBSE_8_GEO, "BSEB-8-Political Science": CBSE_8_POL,
 
     "BSEB-11-Physics": CBSE_11_PHY, "BSEB-11-Chemistry": CBSE_11_CHEM, "BSEB-11-Mathematics": CBSE_11_MATH, "BSEB-11-Biology": CBSE_11_BIO,
+    "BSEB-11-History": CBSE_11_HIST, "BSEB-11-Geography": CBSE_11_GEO, "BSEB-11-Political Science": CBSE_11_POL, "BSEB-11-Economics": CBSE_11_ECO,
     "BSEB-12-Physics": CBSE_12_PHY, "BSEB-12-Chemistry": CBSE_12_CHEM, "BSEB-12-Mathematics": CBSE_12_MATH, "BSEB-12-Biology": CBSE_12_BIO,
+    "BSEB-12-History": CBSE_12_HIST, "BSEB-12-Geography": CBSE_12_GEO, "BSEB-12-Political Science": CBSE_12_POL, "BSEB-12-Economics": CBSE_12_ECO,
 };
 
 // --- ADMIN PERMISSIONS LIST (30+ Controls) ---
