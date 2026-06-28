@@ -21,7 +21,6 @@ import { LoadingOverlay } from './components/LoadingOverlay';
 import { RulesPage } from './components/RulesPage';
 import { IICPage } from './components/IICPage';
 import { WeeklyTestView } from './components/WeeklyTestView';
-import { FloatingDock } from './components/FloatingDock';
 import { FloatingActionMenu } from './components/FloatingActionMenu';
 import { RewardPopup } from './components/RewardPopup';
 import { CreditConfirmationModal } from './components/CreditConfirmationModal';
@@ -2172,16 +2171,6 @@ const App: React.FC = () => {
           />
       )}
       
-      {/* FLOATING DOCK */}
-      {state.user && !activeWeeklyTest && !isFullScreen && (
-          <FloatingDock 
-            onTabSelect={setStudentTab} 
-            onGoHome={goHome} 
-            onGoBack={goBack} 
-            isStudent={state.user.role === 'STUDENT' || !!state.originalAdmin} 
-            settings={state.settings}
-          />
-      )}
 
       {/* FLOATING ACTION MENU (PLAN 2.0) */}
       {state.user && !activeWeeklyTest && !isFullScreen && (
