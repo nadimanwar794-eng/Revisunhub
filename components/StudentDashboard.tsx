@@ -854,22 +854,12 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
   };
 
   const saveProfile = () => {
-      // Cost Check
-      const isPremium = user.isPremium && user.subscriptionEndDate && new Date(user.subscriptionEndDate) > new Date();
-      const cost = settings?.profileEditCost ?? 10;
-      
-      if (!isPremium && user.credits < cost) {
-          showAlert(`Profile update costs ${cost} NST Coins.\nYou have ${user.credits} coins.`, 'ERROR');
-          return;
-      }
-      
       const updatedUser = { 
           ...user, 
           board: profileData.board,
           classLevel: profileData.classLevel,
           stream: profileData.stream,
           password: profileData.newPassword.trim() ? profileData.newPassword : user.password,
-          credits: isPremium ? user.credits : user.credits - cost
       };
       localStorage.setItem(`nst_goal_${user.id}`, profileData.dailyGoalHours.toString());
       setDailyTargetSeconds(profileData.dailyGoalHours * 3600);
@@ -1411,45 +1401,9 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                             <p className="text-lg font-black text-slate-800">{user.classLevel} • {user.board} • {user.stream}</p>
                         </div>
                         
-                        <div className="bg-white rounded-xl p-4 border border-slate-200">
-                            <p className="text-xs font-bold text-slate-500 uppercase mb-1">Subscription</p>
-                            <p className="text-lg font-black text-slate-800">
-                                {user.subscriptionTier === 'CUSTOM' ? (user.customSubscriptionName || 'Basic Ultra') : (user.subscriptionTier || 'FREE')}
-                            </p>
-                            {user.subscriptionEndDate && user.subscriptionTier !== 'LIFETIME' && (
-                                <div className="mt-1">
-                                    <p className="text-xs text-slate-500 font-medium">Expires on:</p>
-                                    <p className="text-xs font-bold text-slate-700">
-                                        {new Date(user.subscriptionEndDate).toLocaleString('en-IN', {
-                                            year: 'numeric', month: 'long', day: 'numeric',
-                                            hour: '2-digit', minute: '2-digit', second: '2-digit'
-                                        })}
-                                    </p>
-                                    <p className="text-[10px] text-red-500 mt-1 font-mono">
-                                        (Time left: {
-                                            (() => {
-                                                const diff = new Date(user.subscriptionEndDate).getTime() - Date.now();
-                                                if (diff <= 0) return 'Expired';
-                                                const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-                                                const h = Math.floor((diff / (1000 * 60 * 60)) % 24);
-                                                const m = Math.floor((diff / 1000 / 60) % 60);
-                                                return `${d}d ${h}h ${m}m`;
-                                            })()
-                                        })
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                                <p className="text-xs font-bold text-blue-600 uppercase">Credits</p>
-                                <p className="text-2xl font-black text-blue-600">{user.credits}</p>
-                            </div>
-                            <div className="bg-orange-50 rounded-xl p-4 border border-orange-200">
-                                <p className="text-xs font-bold text-orange-600 uppercase">Streak</p>
-                                <p className="text-2xl font-black text-orange-600">{user.streak} Days</p>
-                            </div>
+                        <div className="bg-orange-50 rounded-xl p-4 border border-orange-200">
+                            <p className="text-xs font-bold text-orange-600 uppercase">Streak</p>
+                            <p className="text-2xl font-black text-orange-600">{user.streak} Days</p>
                         </div>
                         
                         <button onClick={() => { setMarksheetType('MONTHLY'); setShowMonthlyReport(true); }} className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 shadow flex items-center justify-center gap-2"><BarChart3 size={18} /> View Monthly Report</button>
@@ -1690,15 +1644,12 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                         className="w-full p-3 border rounded-xl mb-2" 
                         placeholder="Enter new name" 
                     />
-                    <p className="text-xs text-slate-500 mb-4">Cost: <span className="font-bold text-orange-600">{settings?.nameChangeCost || 10} Coins</span></p>
                     <div className="flex gap-2">
                         <button onClick={() => setShowNameChangeModal(false)} className="flex-1 py-2 text-slate-500 font-bold bg-slate-100 rounded-lg">Cancel</button>
                         <button 
                             onClick={() => {
-                                const cost = settings?.nameChangeCost || 10;
                                 if (newNameInput && newNameInput !== user.name) {
-                                    if (user.credits < cost) { showAlert(`Insufficient Coins! Need ${cost}.`, 'ERROR'); return; }
-                                    const u = { ...user, name: newNameInput, credits: user.credits - cost };
+                                    const u = { ...user, name: newNameInput };
                                     handleUserUpdate(u);
                                     setShowNameChangeModal(false);
                                     showAlert("Name Updated Successfully!", 'SUCCESS');
@@ -1706,7 +1657,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                             }}
                             className="flex-1 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700"
                         >
-                            Pay & Update
+                            Update
                         </button>
                     </div>
                 </div>
