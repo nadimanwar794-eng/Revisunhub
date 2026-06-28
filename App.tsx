@@ -355,16 +355,6 @@ const App: React.FC = () => {
               updatedUser.credits = (updatedUser.credits || 0) + bonusAmount;
               updatedUser.lastLoginRewardDate = new Date().toISOString();
 
-              // LEVEL SYSTEM LOGIC (1 Level per 7 Days)
-              if (state.settings.isLevelSystemEnabled !== false) {
-                  updatedUser.totalActiveDays = (updatedUser.totalActiveDays || 0) + 1;
-                  const calculatedLevel = 1 + Math.floor(updatedUser.totalActiveDays / 7);
-                  // Ensure level doesn't decrease and caps at 50 (optional cap)
-                  if (calculatedLevel > (updatedUser.level || 1)) {
-                      updatedUser.level = Math.min(50, calculatedLevel);
-                      // Level Up Alert logic could go here
-                  }
-              }
 
               hasUpdates = true;
 

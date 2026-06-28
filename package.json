@@ -38,6 +38,9 @@
     "zod": "^4.3.5",
     "zod-validation-error": "^5.0.0"
   },
+  "overrides": {
+    "protobufjs": "file:./local_stubs/protobufjs"
+  },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@types/node": "^22.14.0",

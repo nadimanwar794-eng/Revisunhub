@@ -22,16 +22,7 @@ interface Props {
 const RevisionHubComponent: React.FC<Props> = ({ user, onTabChange, settings, onNavigateContent, onUpdateUser }) => {
     // --- LEVEL LOCK CHECK ---
     const userLevel = user.level || 1;
-    const levelConfig = settings?.levelConfig || LEVEL_UP_CONFIG;
-    // Find if REVISION_HUB is unlocked
-    // In DEFAULT_CONFIG, REVISION_HUB is at level 20. But we respect dynamic settings.
-    // We check if any level <= userLevel unlocks 'REVISION_HUB'
-    // Actually, simpler: check if the feature is in the list of unlocked features for current level logic
-    // But since logic is "Level X unlocks Feature Y", we check if userLevel >= Level X where Feature Y is.
-    // Let's assume standard config for now or minimal level 1.
-    // User requested "level system se itna sara chijh control hoga".
-    const requiredLevel = levelConfig.find(l => l.featureId === 'REVISION_HUB')?.level || 1;
-    const isLevelLocked = settings?.isLevelSystemEnabled && userLevel < requiredLevel;
+    const isLevelLocked = false;
 
     const [topics, setTopics] = useState<TopicItem[]>([]);
     const [hubMode, setHubMode] = useState<'FREE' | 'PREMIUM'>(user.subscriptionTier !== 'FREE' ? 'PREMIUM' : 'FREE');

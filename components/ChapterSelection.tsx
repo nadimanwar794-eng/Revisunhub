@@ -1,6 +1,6 @@
 import React from 'react';
 import { Chapter, Subject, ClassLevel, User, SystemSettings } from '../types';
-import { BookOpen, ChevronRight, Lock, CheckCircle, PlayCircle, Clock, AlertCircle } from 'lucide-react';
+import { BookOpen, ChevronRight, CheckCircle, PlayCircle, Clock, AlertCircle } from 'lucide-react';
 import { getChapterData } from '../firebase';
 
 interface Props {
@@ -35,11 +35,6 @@ export const ChapterSelection: React.FC<Props> = ({
           if (s) settings = JSON.parse(s);
       } catch(e){}
   }
-
-  // Default to SEQUENTIAL if not set, or respect the toggle (enableMcqUnlockRestriction is legacy but we keep it sync)
-  // Actually, let's prioritize the new 'lessonUnlockPolicy'
-  const isSequentialMode = settings?.lessonUnlockPolicy === 'SEQUENTIAL_100_MCQ';
-  const restrictionEnabled = isSequentialMode || (settings?.enableMcqUnlockRestriction !== false && !settings?.lessonUnlockPolicy); 
 
   // Get current progress for this subject
   const userProgress = user?.progress?.[subject.id] || { currentChapterIndex: 0, totalMCQsSolved: 0 };
@@ -113,33 +108,13 @@ export const ChapterSelection: React.FC<Props> = ({
           {chapters
             .filter(ch => !settings?.hiddenChapters?.includes(ch.id))
             .map((chapter, index) => {
-            // Logic for Lock/Unlock
-            // If restriction is disabled, everything is unlocked (unless explicitly locked by admin)
-            const isCompleted = restrictionEnabled ? index < userProgress.currentChapterIndex : false;
-            const isCurrent = restrictionEnabled ? index === userProgress.currentChapterIndex : true; // All act as current/open if disabled
-            
-            // @ts-ignore
-            const isExplicitlyLocked = chapter.isLocked === true;
-            
-            // Final Lock Logic
-            const isLocked = !isAdmin && (
-                isExplicitlyLocked || 
-                (restrictionEnabled && index > userProgress.currentChapterIndex)
-            );
-            
             const isAvailable = availability[chapter.id];
 
             return (
               <div
                 key={chapter.id}
                 onClick={() => onSelect(chapter)}
-                className={`w-full p-5 rounded-xl border transition-all text-left flex items-center group relative overflow-hidden ${
-                    isLocked 
-                    ? 'bg-slate-100 border-slate-200 opacity-70 cursor-not-allowed' 
-                    : isCurrent 
-                        ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500 cursor-pointer' 
-                        : 'bg-white border-slate-200 hover:border-blue-300 cursor-pointer'
-                }`}
+                className="w-full p-5 rounded-xl border transition-all text-left flex items-center group relative overflow-hidden bg-white border-slate-200 hover:border-blue-300 cursor-pointer"
               >
                 {/* Availability Label */}
                 <div className="absolute top-2 right-2 z-10">
@@ -155,62 +130,27 @@ export const ChapterSelection: React.FC<Props> = ({
                 </div>
 
                 {/* Status Indicator Bar */}
-                <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${
-                    isLocked ? 'bg-slate-300' : isCurrent ? 'bg-blue-600' : 'bg-green-500'
-                }`}></div>
+                <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-blue-600"></div>
 
                 <div className="mr-5 ml-2 min-w-[3.5rem] flex flex-col items-center">
                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">CH</span>
-                   <span className={`text-2xl font-bold ${isCurrent ? 'text-blue-600' : isLocked ? 'text-slate-400' : 'text-green-600'}`}>
+                   <span className="text-2xl font-bold text-slate-700">
                        {(index + 1).toString().padStart(2, '0')}
                    </span>
                 </div>
                 
                 <div className="flex-1 pr-4">
                   <div className="flex items-center gap-2 mb-1">
-                      <h3 className={`font-bold text-lg ${isLocked ? 'text-slate-500' : 'text-slate-800'}`}>
+                      <h3 className="font-bold text-lg text-slate-800">
                           {chapter.title}
                       </h3>
-                      {isCurrent && <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold animate-pulse">ROUTINE ACTIVE</span>}
                   </div>
-                  
-
-                  {isLocked ? (
-                      <div className="flex items-center gap-1 text-xs text-slate-500 font-medium">
-                          <Lock size={12} />
-                          <span>
-                              {isExplicitlyLocked 
-                                ? "This content is currently locked by Admin." 
-                                : `Complete previous chapter MCQs (${settings?.mcqUnlockThreshold || 100}) to unlock`}
-                          </span>
-                      </div>
-                  ) : isCurrent ? (
-                      <div className="flex items-center gap-3 text-xs">
-                          <span className="font-bold text-blue-600 animate-pulse">
-                             Routine Active
-                          </span>
-                      </div>
-                  ) : (
-                      <div className="text-xs text-green-600 font-bold flex items-center gap-1">
-                          <CheckCircle size={12} /> Completed
-                      </div>
-                  )}
                 </div>
 
                 <div className="ml-2">
-                  {isLocked ? (
-                      <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-400 flex items-center justify-center">
-                          <Lock size={18} />
-                      </div>
-                  ) : isCurrent ? (
-                      <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                          <PlayCircle size={20} />
-                      </div>
-                  ) : (
-                      <div className="w-10 h-10 rounded-full bg-green-50 text-green-600 flex items-center justify-center border border-green-100">
-                          <BookOpen size={18} />
-                      </div>
-                  )}
+                  <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                      <PlayCircle size={20} />
+                  </div>
                 </div>
               </div>
             );

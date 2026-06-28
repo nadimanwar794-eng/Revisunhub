@@ -123,53 +123,10 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
       return allowedFeatures.includes(featureId);
   };
 
-  // --- LEVEL SYSTEM CHECK ---
-  const isLevelUnlocked = (featureId: string): boolean => {
-      if (settings?.isLevelSystemEnabled === false) return true;
-
-      const userLevel = user.level || 1;
-
-      // 1. Check Admin Config (Priority)
-      if (settings?.levelConfig && settings.levelConfig.length > 0) {
-          const allGatedFeatures = settings.levelConfig.flatMap(c => c.unlockedFeatures || []);
-
-          if (allGatedFeatures.includes(featureId)) {
-              // Feature is gated, check if unlocked for user
-              const unlockedForUser = settings.levelConfig
-                  .filter(c => c.level <= userLevel)
-                  .flatMap(c => c.unlockedFeatures || []);
-              return unlockedForUser.includes(featureId);
-          }
-      }
-
-      // 2. Fallback to Hardcoded Config (if not in Admin Config)
-      const config = LEVEL_UP_CONFIG.find(c => c.featureId === featureId);
-      if (config) {
-          return userLevel >= config.level;
-      }
-
-      return true;
-  };
-
-  const getRequiredLevel = (featureId: string): number => {
-      // 1. Admin Config
-      if (settings?.levelConfig) {
-          const adminConfig = settings.levelConfig.find(c => c.unlockedFeatures?.includes(featureId));
-          if (adminConfig) return adminConfig.level;
-      }
-
-      // 2. Hardcoded
-      const config = LEVEL_UP_CONFIG.find(c => c.featureId === featureId);
-      if (config) return config.level;
-
-      return 0;
-  };
-
-  const handleLevelLocked = (featureId: string) => {
-      const reqLevel = getRequiredLevel(featureId);
-      const featureName = ALL_FEATURES.find(f => f.id === featureId)?.label || LEVEL_UNLOCKABLE_FEATURES.find(f => f.id === featureId)?.label || 'Feature';
-      showAlert(`🔒 Locked! Reach Level ${reqLevel} to unlock ${featureName}.`, 'ERROR', 'Level Locked');
-  };
+  // --- LEVEL SYSTEM DISABLED ---
+  const isLevelUnlocked = (_featureId: string): boolean => true;
+  const getRequiredLevel = (_featureId: string): number => 0;
+  const handleLevelLocked = (_featureId: string) => {};
 
   // --- EXPIRY CHECK & AUTO DOWNGRADE ---
   useEffect(() => {
@@ -987,12 +944,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
               showAlert("Coming Soon! Competition Mode is currently disabled.", 'INFO');
               return;
           }
-          // 2. Check Level Access
-          if (!isLevelUnlocked('COMPETITION_MODE')) {
-              handleLevelLocked('COMPETITION_MODE');
-              return;
-          }
-          // 3. Check User Access (Strictly ULTRA & Active)
+          // 2. Check User Access (Strictly ULTRA & Active)
           const now = new Date();
           const isSubscribed = user.isPremium && user.subscriptionEndDate && new Date(user.subscriptionEndDate) > now;
           const hasAccess = (isSubscribed && (user.subscriptionLevel === 'ULTRA' || user.subscriptionTier === 'YEARLY')) || user.subscriptionTier === 'LIFETIME';
@@ -1100,15 +1052,6 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                                 <h2 className="text-lg font-black text-slate-800 leading-none">
                                     {settings?.appName || 'Student App'}
                                 </h2>
-                                {/* LEVEL BADGE (Next to App Name) */}
-                                {settings?.isLevelSystemEnabled !== false && (
-                                    <span
-                                        className="bg-gradient-to-r from-yellow-400 to-orange-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm flex items-center gap-1 cursor-pointer hover:scale-105 transition-transform"
-                                        onClick={() => setShowLevelModal(true)}
-                                    >
-                                        <Star size={8} className="fill-white" /> LVL {user.level || 1}
-                                    </span>
-                                )}
                                 {/* DISCOUNT BADGE */}
                                 {discountStatus === 'ACTIVE' && (
                                     <button
@@ -1223,20 +1166,9 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                         </button>
 
                         <button
-                            onClick={() => {
-                                if (isLevelUnlocked('ADVANCED_ANALYSIS')) {
-                                    onTabChange('ANALYTICS');
-                                } else {
-                                    handleLevelLocked('ADVANCED_ANALYSIS');
-                                }
-                            }}
-                            className={`bg-white border-2 border-slate-100 p-6 rounded-3xl shadow-sm flex flex-col items-center justify-center gap-2 group active:scale-95 transition-all hover:border-blue-200 h-32 relative overflow-hidden ${!isLevelUnlocked('ADVANCED_ANALYSIS') ? 'opacity-75 grayscale' : ''}`}
+                            onClick={() => onTabChange('ANALYTICS')}
+                            className="bg-white border-2 border-slate-100 p-6 rounded-3xl shadow-sm flex flex-col items-center justify-center gap-2 group active:scale-95 transition-all hover:border-blue-200 h-32 relative overflow-hidden"
                         >
-                            {!isLevelUnlocked('ADVANCED_ANALYSIS') && (
-                                <div className="absolute inset-0 bg-slate-100/50 flex items-center justify-center z-10 backdrop-blur-[1px]">
-                                    <Lock className="text-slate-400" size={24} />
-                                </div>
-                            )}
                             <BarChart3 size={32} className="text-blue-600 mb-1" />
                             <span className="font-black text-slate-700 text-lg tracking-wide uppercase">My Analysis</span>
                         </button>
@@ -1249,8 +1181,6 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
       // 2. AI FUTURE HUB (NEW)
       if (activeTab === 'AI_HUB' || activeTab === 'AI_STUDIO') {
           if (!hasPermission('AI_CHAT')) return <div className="p-8 text-center text-slate-500">🔒 AI Features are locked for your plan. Upgrade to access.</div>;
-          // Level Check handled in Tab Button, but double check here
-          if (!isLevelUnlocked('AI_GENERATOR')) return <div className="p-8 text-center text-slate-500 flex flex-col items-center gap-2"><Lock size={32} /><span>Level {getRequiredLevel('AI_GENERATOR')} Required</span></div>;
 
           return <AiHub user={user} onTabChange={onTabChange} settings={settings} />;
       }
@@ -1258,7 +1188,6 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
       // 3. REVISION HUB
       if (activeTab === 'REVISION') {
           if (!hasPermission('REVISION_HUB')) return <div className="p-8 text-center text-slate-500">🔒 Revision Hub is locked. Upgrade to access.</div>;
-          if (!isLevelUnlocked('REVISION_HUB')) return <div className="p-8 text-center text-slate-500 flex flex-col items-center gap-2"><Lock size={32} /><span>Level {getRequiredLevel('REVISION_HUB')} Required</span></div>;
 
           return (
               <RevisionHub
@@ -1393,15 +1322,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
 
                       {/* MCQ Section */}
                       {settings?.contentVisibility?.MCQ !== false && (
-                          <div className={`bg-gradient-to-br from-purple-50 to-fuchsia-100 p-6 rounded-3xl border border-purple-200 shadow-sm relative overflow-hidden ${!isLevelUnlocked('MCQ_PRACTICE') ? 'opacity-75 grayscale' : ''}`}>
-                              {!isLevelUnlocked('MCQ_PRACTICE') && (
-                                  <div className="absolute inset-0 bg-white/60 flex flex-col items-center justify-center z-10 backdrop-blur-[2px]">
-                                      <Lock className="text-purple-600 mb-2" size={32} />
-                                      <span className="font-black text-purple-900 text-xs px-3 py-1 bg-white rounded-full shadow-sm border border-purple-100">
-                                          Unlock at Level {getRequiredLevel('MCQ_PRACTICE')}
-                                      </span>
-                                  </div>
-                              )}
+                          <div className="bg-gradient-to-br from-purple-50 to-fuchsia-100 p-6 rounded-3xl border border-purple-200 shadow-sm relative overflow-hidden">
                               <div className="flex justify-between items-center mb-4">
                                   <h3 className="font-black text-purple-900 flex items-center gap-2 text-lg">
                                       <div className="p-2 bg-white rounded-full shadow-sm text-purple-600"><CheckSquare size={20} /></div>
@@ -1412,13 +1333,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                                   {visibleSubjects.map(s => (
                                       <button
                                         key={s.id}
-                                        onClick={() => {
-                                            if (isLevelUnlocked('MCQ_PRACTICE')) {
-                                                onTabChange('MCQ'); handleContentSubjectSelect(s);
-                                            } else {
-                                                handleLevelLocked('MCQ_PRACTICE');
-                                            }
-                                        }}
+                                        onClick={() => { onTabChange('MCQ'); handleContentSubjectSelect(s); }}
                                         className="bg-white p-3 rounded-2xl text-xs font-bold text-slate-700 shadow-sm border border-purple-100 text-left hover:shadow-md hover:scale-[1.02] transition-all flex items-center gap-2"
                                       >
                                           <div className={`w-2 h-2 rounded-full ${s.color?.split(' ')[0] || 'bg-purple-500'}`}></div>
@@ -1431,15 +1346,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
 
                       {/* Audio/Podcast Section */}
                       {settings?.contentVisibility?.AUDIO !== false && (
-                          <div className={`bg-gradient-to-r from-slate-900 to-slate-800 p-4 rounded-2xl shadow-lg border border-slate-700 relative overflow-hidden ${!isLevelUnlocked('AUDIO_LIBRARY') ? 'opacity-75 grayscale' : ''}`}>
-                              {!isLevelUnlocked('AUDIO_LIBRARY') && (
-                                  <div className="absolute inset-0 bg-slate-900/60 flex flex-col items-center justify-center z-20 backdrop-blur-[2px]">
-                                      <Lock className="text-pink-500 mb-2" size={32} />
-                                      <span className="font-black text-white text-xs px-3 py-1 bg-slate-800 rounded-full shadow-sm border border-slate-600">
-                                          Unlock at Level {getRequiredLevel('AUDIO_LIBRARY')}
-                                      </span>
-                                  </div>
-                              )}
+                          <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-4 rounded-2xl shadow-lg border border-slate-700 relative overflow-hidden">
                               <div className="flex justify-between items-center mb-2 relative z-10">
                                   <h3 className="font-bold text-white flex items-center gap-2"><Headphones className="text-pink-500" /> Audio Library</h3>
                                   <span className="text-[10px] font-black bg-pink-600 text-white px-2 py-0.5 rounded-full">NEW</span>
@@ -1449,13 +1356,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                                   {visibleSubjects.map(s => (
                                       <button
                                         key={s.id}
-                                        onClick={() => {
-                                            if (isLevelUnlocked('AUDIO_LIBRARY')) {
-                                                onTabChange('AUDIO'); handleContentSubjectSelect(s);
-                                            } else {
-                                                handleLevelLocked('AUDIO_LIBRARY');
-                                            }
-                                        }}
+                                        onClick={() => { onTabChange('AUDIO'); handleContentSubjectSelect(s); }}
                                         className="bg-white/10 hover:bg-white/20 p-2 rounded-xl text-xs font-bold text-white shadow-sm border border-white/10 text-left backdrop-blur-sm transition-colors"
                                       >
                                           {s.name}
@@ -1533,11 +1434,6 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                         </div>
                         <p className="text-white/80 text-sm font-mono relative z-10 flex justify-center items-center gap-2">
                             ID: {user.displayId || user.id}
-                            {settings?.isLevelSystemEnabled !== false && (
-                                <span className="bg-white/20 px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1">
-                                    <Star size={10} className="fill-white"/> LVL {user.level || 1}
-                                </span>
-                            )}
                         </p>
                         {user.createdAt && (
                             <p className="text-white/60 text-[10px] mt-1 font-medium relative z-10">
@@ -1910,29 +1806,21 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                 </button>
                 
                 <button
-                    onClick={() => {
-                        if (isLevelUnlocked('REVISION_HUB')) onTabChange('REVISION' as any);
-                        else handleLevelLocked('REVISION_HUB');
-                    }}
-                    className={`flex flex-col items-center justify-center w-full h-full ${activeTab === 'REVISION' ? 'text-blue-600' : 'text-slate-400'} ${!isLevelUnlocked('REVISION_HUB') ? 'opacity-50' : ''}`}
+                    onClick={() => onTabChange('REVISION' as any)}
+                    className={`flex flex-col items-center justify-center w-full h-full ${activeTab === 'REVISION' ? 'text-blue-600' : 'text-slate-400'}`}
                 >
                     <div className="relative">
                         <BrainCircuit size={24} fill={activeTab === 'REVISION' ? "currentColor" : "none"} />
-                        {!isLevelUnlocked('REVISION_HUB') && <div className="absolute -top-1 -right-1 bg-slate-100 rounded-full p-0.5"><Lock size={10} className="text-slate-500"/></div>}
                     </div>
                     <span className="text-[10px] font-bold mt-1">Revision</span>
                 </button>
 
                 <button
-                    onClick={() => {
-                        if (isLevelUnlocked('AI_GENERATOR')) onTabChange('AI_HUB');
-                        else handleLevelLocked('AI_GENERATOR');
-                    }}
-                    className={`flex flex-col items-center justify-center w-full h-full ${activeTab === 'AI_HUB' ? 'text-blue-600' : 'text-slate-400'} ${!isLevelUnlocked('AI_GENERATOR') ? 'opacity-50' : ''}`}
+                    onClick={() => onTabChange('AI_HUB')}
+                    className={`flex flex-col items-center justify-center w-full h-full ${activeTab === 'AI_HUB' ? 'text-blue-600' : 'text-slate-400'}`}
                 >
                     <div className="relative">
                         <Sparkles size={24} fill={activeTab === 'AI_HUB' ? "currentColor" : "none"} />
-                        {!isLevelUnlocked('AI_GENERATOR') && <div className="absolute -top-1 -right-1 bg-slate-100 rounded-full p-0.5"><Lock size={10} className="text-slate-500"/></div>}
                     </div>
                     <span className="text-[10px] font-bold mt-1">AI Hub</span>
                 </button>
@@ -2003,84 +1891,6 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
         )}
 
         {/* MODALS */}
-        {showLevelModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in">
-                <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-                    <div className="p-6 bg-slate-900 text-white flex justify-between items-center shrink-0">
-                        <div>
-                            <h3 className="text-xl font-black flex items-center gap-2">
-                                <Star className="text-yellow-400 fill-yellow-400" /> Level {user.level || 1}
-                            </h3>
-                            <p className="text-xs text-slate-400 mt-1">Keep studying to unlock features!</p>
-                        </div>
-                        <button onClick={() => setShowLevelModal(false)} className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition-colors">
-                            <X size={20} />
-                        </button>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50">
-                        {/* PROGRESS BAR */}
-                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-                            <div className="flex justify-between text-xs font-bold text-slate-500 mb-2">
-                                <span>Level {user.level || 1}</span>
-                                <span>Level {(user.level || 1) + 1}</span>
-                            </div>
-                            <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-yellow-400 to-orange-500 transition-all duration-1000"
-                                    style={{ width: `${(((user.totalActiveDays || 0) % 7) / 7) * 100}%` }}
-                                ></div>
-                            </div>
-                            <p className="text-[10px] text-center mt-2 text-slate-400 font-bold">
-                                {(user.totalActiveDays || 0) % 7} / 7 Days Active this week
-                            </p>
-                        </div>
-
-                        {/* LEVEL TREE */}
-                        <div className="space-y-3 relative">
-                            {/* Connector Line */}
-                            <div className="absolute left-6 top-4 bottom-4 w-0.5 bg-slate-200 z-0"></div>
-
-                            {((settings?.levelConfig && settings.levelConfig.length > 0) ? settings.levelConfig.sort((a,b) => a.level - b.level) : LEVEL_UP_CONFIG.map(c => ({ level: c.level, unlockedFeatures: [c.featureId] }))).map((conf, idx) => {
-                                const isUnlocked = (user.level || 1) >= conf.level;
-                                const isNext = (user.level || 1) + 1 === conf.level;
-
-                                // Resolve features
-                                const features = conf.unlockedFeatures.map(fid => ALL_FEATURES.find(f => f.id === fid)).filter(f => f);
-                                const label = features.length > 0 ? features.map(f => f?.label).join(', ') : 'Level Up';
-                                const desc = features.length > 0 ? features[0]?.description : 'Unlock new powers';
-
-                                return (
-                                    <div key={idx} className={`relative z-10 flex items-center gap-4 ${isUnlocked ? 'opacity-100' : 'opacity-60'}`}>
-                                        {/* CIRCLE INDICATOR */}
-                                        <div className={`w-12 h-12 rounded-full flex items-center justify-center font-black text-sm shrink-0 border-4 ${
-                                            isUnlocked ? 'bg-green-500 border-green-200 text-white' :
-                                            isNext ? 'bg-white border-yellow-400 text-yellow-500 animate-pulse' : 'bg-white border-slate-200 text-slate-300'
-                                        }`}>
-                                            {isUnlocked ? <CheckCircle size={20} /> : conf.level}
-                                        </div>
-
-                                        {/* CONTENT CARD */}
-                                        <div className={`flex-1 p-3 rounded-xl border ${
-                                            isUnlocked ? 'bg-white border-green-200 shadow-sm' :
-                                            isNext ? 'bg-yellow-50 border-yellow-200 shadow-md' : 'bg-slate-100 border-slate-200'
-                                        }`}>
-                                            <div className="flex justify-between items-start">
-                                                <div>
-                                                    <h4 className={`font-bold text-sm ${isUnlocked ? 'text-slate-800' : 'text-slate-500'}`}>{label}</h4>
-                                                    <p className="text-[10px] text-slate-400 leading-tight mt-0.5">{desc}</p>
-                                                </div>
-                                                {!isUnlocked && <Lock size={12} className="text-slate-400 mt-1" />}
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        )}
 
         {showUserGuide && <UserGuide onClose={() => setShowUserGuide(false)} />}
         
@@ -2250,18 +2060,11 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                             Inbox
                         </button>
                         <button
-                            onClick={() => {
-                                if (isLevelUnlocked('ADVANCED_ANALYSIS')) {
-                                    onTabChange('ANALYTICS'); setShowSidebar(false);
-                                } else {
-                                    handleLevelLocked('ADVANCED_ANALYSIS');
-                                }
-                            }}
-                            className={`w-full p-4 rounded-xl flex items-center gap-4 hover:bg-slate-50 transition-colors font-bold text-slate-700 ${!isLevelUnlocked('ADVANCED_ANALYSIS') ? 'opacity-60 grayscale' : ''}`}
+                            onClick={() => { onTabChange('ANALYTICS'); setShowSidebar(false); }}
+                            className="w-full p-4 rounded-xl flex items-center gap-4 hover:bg-slate-50 transition-colors font-bold text-slate-700"
                         >
                             <div className="bg-blue-100 text-blue-600 p-2 rounded-lg"><BarChart3 size={20} /></div>
                             Analytics
-                            {!isLevelUnlocked('ADVANCED_ANALYSIS') && <Lock size={16} className="ml-auto text-slate-400" />}
                         </button>
                         <button onClick={() => { setShowMonthlyReport(true); setShowSidebar(false); }} className="w-full p-4 rounded-xl flex items-center gap-4 hover:bg-slate-50 transition-colors font-bold text-slate-700">
                             <div className="bg-green-100 text-green-600 p-2 rounded-lg"><FileText size={20} /></div>
@@ -2277,18 +2080,11 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                         </button>
                         {isGameEnabled && (
                             <button
-                                onClick={() => {
-                                    if (isLevelUnlocked('GAMES')) {
-                                        onTabChange('GAME'); setShowSidebar(false);
-                                    } else {
-                                        handleLevelLocked('GAMES');
-                                    }
-                                }}
-                                className={`w-full p-4 rounded-xl flex items-center gap-4 hover:bg-slate-50 transition-colors font-bold text-slate-700 ${!isLevelUnlocked('GAMES') ? 'opacity-60 grayscale' : ''}`}
+                                onClick={() => { onTabChange('GAME'); setShowSidebar(false); }}
+                                className="w-full p-4 rounded-xl flex items-center gap-4 hover:bg-slate-50 transition-colors font-bold text-slate-700"
                             >
                                 <div className="bg-orange-100 text-orange-600 p-2 rounded-lg"><Gamepad2 size={20} /></div>
                                 Play Game
-                                {!isLevelUnlocked('GAMES') && <Lock size={16} className="ml-auto text-slate-400" />}
                             </button>
                         )}
                         <button onClick={() => { onTabChange('REDEEM'); setShowSidebar(false); }} className="w-full p-4 rounded-xl flex items-center gap-4 hover:bg-slate-50 transition-colors font-bold text-slate-700">
