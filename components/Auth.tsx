@@ -3,7 +3,7 @@ import { User, Board, ClassLevel, Stream, SystemSettings, RecoveryRequest } from
 import { ADMIN_EMAIL } from '../constants';
 import { saveUserToLive, auth, getUserByEmail, rtdb, getUserData } from '../firebase';
 import { ref, set } from "firebase/database";
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserLocalPersistence, signInAnonymously } from 'firebase/auth';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, setPersistence, browserLocalPersistence, signInAnonymously, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { UserPlus, LogIn, Lock, User as UserIcon, Phone, Mail, ShieldCheck, ArrowRight, School, GraduationCap, Layers, KeyRound, Copy, Check, AlertTriangle, XCircle, MessageCircle, Send, RefreshCcw, ShieldAlert, HelpCircle } from 'lucide-react';
 import { LoginGuide } from './LoginGuide';
 import { CustomAlert } from './CustomDialogs';
@@ -100,18 +100,74 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity }) => {
       return true;
   };
 
+  const handleGoogleAuth = async () => {
+      setError(null);
+      try {
+          await setPersistence(auth, browserLocalPersistence);
+          const provider = new GoogleAuthProvider();
+          const result = await signInWithPopup(auth, provider);
+          const firebaseUser = result.user;
+
+          let appUser: any = await getUserByEmail(firebaseUser.email!);
+          if (!appUser) {
+              const storedUsersStr = localStorage.getItem('nst_users');
+              const users: User[] = storedUsersStr ? JSON.parse(storedUsersStr) : [];
+              appUser = users.find(u => u.email === firebaseUser.email);
+          }
+
+          if (!appUser) {
+              const newId = `IIC-${(firebaseUser.displayName || 'STU').substring(0, 3).toUpperCase().replace(/[^A-Z]/g, 'X')}-${Math.floor(1000 + Math.random() * 9000)}`;
+              appUser = {
+                  id: firebaseUser.uid,
+                  displayId: newId,
+                  password: '',
+                  name: firebaseUser.displayName || 'Student',
+                  mobile: '',
+                  email: firebaseUser.email || '',
+                  role: 'STUDENT',
+                  createdAt: new Date().toISOString(),
+                  credits: settings?.signupBonus || 2,
+                  streak: 0,
+                  lastLoginDate: new Date().toISOString(),
+                  redeemedCodes: [],
+                  board: 'CBSE',
+                  classLevel: '10',
+                  progress: {},
+                  subscriptionTier: 'WEEKLY',
+                  subscriptionEndDate: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+                  isPremium: true
+              } as User;
+              const storedUsersStr = localStorage.getItem('nst_users');
+              const users: User[] = storedUsersStr ? JSON.parse(storedUsersStr) : [];
+              localStorage.setItem('nst_users', JSON.stringify([...users, appUser]));
+              const firestoreUser = { ...appUser };
+              delete firestoreUser.password;
+              await saveUserToLive(firestoreUser);
+              logActivity("SIGNUP", `Google Sign-up: ${appUser.name}`, appUser);
+          } else {
+              logActivity("LOGIN", `Google Login: ${appUser.name}`, appUser);
+          }
+
+          if (appUser.isArchived) { setError('Account suspended.'); return; }
+          onLogin(appUser);
+      } catch (err: any) {
+          console.error("Google Auth Error:", err);
+          if (err.code !== 'auth/popup-closed-by-user') {
+              setError("Google Sign-in failed: " + err.message);
+          }
+      }
+  };
+
   const handleCompleteSignup = async () => {
       const storedUsersStr = localStorage.getItem('nst_users');
       const users: User[] = storedUsersStr ? JSON.parse(storedUsersStr) : [];
 
       try {
-          // 1. Create in Firebase Auth
           await setPersistence(auth, browserLocalPersistence);
           const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
           const uid = userCredential.user.uid;
 
           const newId = generateUserId();
-          const isSenior = formData.classLevel === '11' || formData.classLevel === '12';
           
           const newUser: User = {
             id: uid,
@@ -126,9 +182,8 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity }) => {
             streak: 0,
             lastLoginDate: new Date().toISOString(),
             redeemedCodes: [],
-            board: formData.board,
-            classLevel: formData.classLevel,
-            stream: isSenior ? formData.stream : undefined,
+            board: 'CBSE',
+            classLevel: '10',
             progress: {},
             subscriptionTier: 'WEEKLY',
             subscriptionEndDate: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
@@ -138,14 +193,12 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity }) => {
           const updatedUsers = [...users, newUser];
           localStorage.setItem('nst_users', JSON.stringify(updatedUsers));
           
-          // Sync to Firestore
           const firestoreUser = { ...newUser };
           delete firestoreUser.password; 
           await saveUserToLive(firestoreUser);
 
-          logActivity("SIGNUP", `New Student Registered: ${newUser.classLevel} - ${newUser.board}`, newUser);
+          logActivity("SIGNUP", `New Student Registered: ${newUser.name}`, newUser);
           
-          // AUTO LOGIN
           setGeneratedId(newId);
           setView('SUCCESS_ID'); 
       } catch (err: any) {
@@ -341,11 +394,6 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity }) => {
         setError('Please fill in all required fields');
         return;
       }
-      if (!formData.board) { setError('Please select a Board'); return; }
-      if (!formData.classLevel) { setError('Please select a Class'); return; }
-      const isSenior = formData.classLevel === '11' || formData.classLevel === '12';
-      if (isSenior && !formData.stream) { setError('Please select a Stream'); return; }
-
       if (settings && settings.allowSignup === false) {
           setError('Registration is currently closed by Admin.');
           return;
@@ -532,24 +580,29 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity }) => {
 
               {view === 'SIGNUP' && (
                   <>
+                    <button type="button" onClick={handleGoogleAuth} className="w-full flex items-center justify-center gap-3 border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold py-3.5 rounded-xl transition-all shadow-sm">
+                        <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+                        Continue with Google
+                    </button>
+                    <div className="flex items-center gap-3"><div className="flex-1 h-px bg-slate-200"/><span className="text-xs text-slate-400 font-bold">OR</span><div className="flex-1 h-px bg-slate-200"/></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500 uppercase">Full Name</label><input name="name" type="text" placeholder="Real Name" value={formData.name} onChange={handleChange} className="w-full px-4 py-3 border border-slate-200 rounded-xl" /></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500 uppercase">Password (8-20 Chars)</label><input name="password" type="password" placeholder="Create Password" value={formData.password} onChange={handleChange} className="w-full px-4 py-3 border border-slate-200 rounded-xl" maxLength={20} /></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500 uppercase">Real Email Address</label><input name="email" type="email" placeholder="your.email@gmail.com" value={formData.email} onChange={handleChange} className="w-full px-4 py-3 border border-slate-200 rounded-xl" /></div>
                     <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500 uppercase">Mobile (10 Digits)</label><input name="mobile" type="tel" placeholder="Mobile Number" value={formData.mobile} onChange={handleChange} className="w-full px-4 py-3 border border-slate-200 rounded-xl" maxLength={10} /></div>
-                    <div className="bg-blue-50 p-4 rounded-xl space-y-3 border border-blue-100">
-                        <div className="space-y-1.5"><label className="text-xs font-bold text-blue-800 uppercase">Board</label><select name="board" value={formData.board} onChange={handleChange} className="w-full px-4 py-3 border border-blue-200 rounded-xl bg-white text-slate-700"><option value="">Select Board</option><option value="CBSE">CBSE Board</option><option value="BSEB">Bihar Board (BSEB)</option></select></div>
-                        <div className="space-y-1.5"><label className="text-xs font-bold text-blue-800 uppercase">Class</label><select name="classLevel" value={formData.classLevel} onChange={handleChange} className="w-full px-4 py-3 border border-blue-200 rounded-xl bg-white text-slate-700"><option value="">Select Class</option>{['6','7','8','9','10','11','12'].map(c => <option key={c} value={c}>Class {c}</option>)}<option value="COMPETITION">Competitive Exam</option></select></div>
-                        {(formData.classLevel === '11' || formData.classLevel === '12') && (<div className="space-y-1.5"><label className="text-xs font-bold text-blue-800 uppercase">Stream</label><select name="stream" value={formData.stream} onChange={handleChange} className="w-full px-4 py-3 border border-blue-200 rounded-xl bg-white text-slate-700"><option value="">Select Stream</option><option value="Science">Science</option><option value="Commerce">Commerce</option><option value="Arts">Arts</option></select></div>)}
-                    </div>
-                    <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl mt-4">Generate ID & Sign Up</button>
+                    <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl mt-2">Create Account</button>
                   </>
               )}
 
               {view === 'LOGIN' && (
                   <>
+                     <button type="button" onClick={handleGoogleAuth} className="w-full flex items-center justify-center gap-3 border-2 border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-bold py-3.5 rounded-xl transition-all shadow-sm">
+                         <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+                         Continue with Google
+                     </button>
+                     <div className="flex items-center gap-3"><div className="flex-1 h-px bg-slate-200"/><span className="text-xs text-slate-400 font-bold">OR</span><div className="flex-1 h-px bg-slate-200"/></div>
                      <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500 uppercase">Email / Mobile</label><input name="id" type="text" placeholder="Enter Email or Mobile" value={formData.id} onChange={handleChange} className="w-full px-4 py-3 border border-slate-200 rounded-xl" /></div>
                      <div className="space-y-1.5"><label className="text-xs font-bold text-slate-500 uppercase">Password</label><input name="password" type="password" placeholder="Enter Password" value={formData.password} onChange={handleChange} className="w-full px-4 py-3 border border-slate-200 rounded-xl" /></div>
-                     <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl mt-4">Login</button>
+                     <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl mt-2">Login</button>
                   </>
               )}
               
