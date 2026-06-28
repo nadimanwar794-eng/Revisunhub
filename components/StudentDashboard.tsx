@@ -236,6 +236,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
   const [loadingChapters, setLoadingChapters] = useState(false);
   const [syllabusMode, setSyllabusMode] = useState<'SCHOOL' | 'COMPETITION'>('SCHOOL');
   const [selectedClassForMCQ, setSelectedClassForMCQ] = useState<string>(user.classLevel || '10');
+  const [selectedBoard, setSelectedBoard] = useState<string>(user.board || 'CBSE');
   const [currentAudioTrack, setCurrentAudioTrack] = useState<{url: string, title: string} | null>(null);
   const [universalNotes, setUniversalNotes] = useState<any[]>([]);
   const [topicFilter, setTopicFilter] = useState<string | undefined>(undefined); // NEW: Topic Filter
@@ -1016,7 +1017,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
           } else if (type === 'AUDIO') {
             return <AudioPlaylistView chapter={selectedChapter} subject={selectedSubject} user={user} board={user.board || 'CBSE'} classLevel={user.classLevel || '10'} stream={user.stream || null} onBack={handlePlayerBack} onUpdateUser={handleUserUpdate} settings={settings} onPlayAudio={setCurrentAudioTrack} initialSyllabusMode={syllabusMode} />;
           } else {
-            return <McqView chapter={selectedChapter} subject={selectedSubject} user={user} board={user.board || 'CBSE'} classLevel={selectedClassForMCQ || user.classLevel || '10'} stream={user.stream || null} onBack={handlePlayerBack} onUpdateUser={handleUserUpdate} settings={settings} topicFilter={topicFilter} />;
+            return <McqView chapter={selectedChapter} subject={selectedSubject} user={user} board={selectedBoard} classLevel={selectedClassForMCQ || user.classLevel || '10'} stream={user.stream || null} onBack={handlePlayerBack} onUpdateUser={handleUserUpdate} settings={settings} topicFilter={topicFilter} />;
           }
       }
 
@@ -1073,10 +1074,23 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                           <h1 className="text-xl font-black text-slate-800">{settings?.appName || 'MCQ App'}</h1>
                           <p className="text-xs text-slate-400 font-medium">Select your class to start MCQ</p>
                       </div>
-                      <div className="flex items-center gap-1 bg-orange-50 border border-orange-200 px-3 py-1.5 rounded-full">
-                          <Zap size={14} className="fill-orange-500 text-orange-500" />
-                          <span className="font-black text-orange-600 text-sm">{user.streak}</span>
-                          <span className="text-[10px] text-orange-500 font-bold">Streak</span>
+                      <div className="flex items-center gap-2">
+                          {/* BOARD TOGGLE */}
+                          <div className="flex items-center bg-slate-100 rounded-full p-0.5 border border-slate-200">
+                              <button
+                                  onClick={() => setSelectedBoard('CBSE')}
+                                  className={`px-3 py-1 rounded-full text-xs font-black transition-all ${selectedBoard === 'CBSE' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500'}`}
+                              >CBSE</button>
+                              <button
+                                  onClick={() => setSelectedBoard('BSEB')}
+                                  className={`px-3 py-1 rounded-full text-xs font-black transition-all ${selectedBoard === 'BSEB' ? 'bg-green-600 text-white shadow-sm' : 'text-slate-500'}`}
+                              >BSEB</button>
+                          </div>
+                          <div className="flex items-center gap-1 bg-orange-50 border border-orange-200 px-3 py-1.5 rounded-full">
+                              <Zap size={14} className="fill-orange-500 text-orange-500" />
+                              <span className="font-black text-orange-600 text-sm">{user.streak}</span>
+                              <span className="text-[10px] text-orange-500 font-bold">Streak</span>
+                          </div>
                       </div>
                   </div>
 
