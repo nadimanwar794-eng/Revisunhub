@@ -1,0 +1,184 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - generic [ref=e5]: Experience the power of AI-driven education. • Experience the power of AI-driven education. • Experience the power of AI-driven education.
+  - generic [ref=e7]:
+    - heading "Terms & Conditions" [level=3] [ref=e9]:
+      - img [ref=e10]
+      - text: Terms & Conditions
+    - generic [ref=e13]:
+      - paragraph [ref=e14]: Please read carefully before using NST AI Assistant.
+      - paragraph [ref=e15]: By continuing, you agree to abide by these rules and the standard terms of service.
+    - button "I Agree & Continue" [ref=e17] [cursor=pointer]
+  - banner [ref=e18]:
+    - generic [ref=e19]:
+      - generic [ref=e21] [cursor=pointer]:
+        - img "Logo" [ref=e22]
+        - heading "NSTA" [level=1] [ref=e23]
+      - generic [ref=e24]:
+        - generic [ref=e26]: Super Admin
+        - button [ref=e27] [cursor=pointer]:
+          - img [ref=e28]
+  - main [ref=e31]:
+    - generic [ref=e33]:
+      - generic [ref=e34]:
+        - generic [ref=e35]:
+          - img [ref=e37]
+          - generic [ref=e39]:
+            - heading "Admin Console" [level=2] [ref=e40]
+            - generic [ref=e41]:
+              - generic [ref=e42]:
+                - button "CBSE" [ref=e43] [cursor=pointer]
+                - button "BSEB" [ref=e44] [cursor=pointer]
+              - generic "Active Users (5m)" [ref=e45]:
+                - img [ref=e47]
+                - generic [ref=e53]: "0"
+              - generic [ref=e54]:
+                - img [ref=e55]
+                - text: Online
+        - generic [ref=e59]:
+          - button "Force Update" [ref=e60] [cursor=pointer]:
+            - img [ref=e61]
+            - text: Force Update
+          - button "Save Settings" [ref=e66] [cursor=pointer]:
+            - img [ref=e67]
+            - text: Save Settings
+      - button "Dark Mode Off" [ref=e72] [cursor=pointer]:
+        - img [ref=e73]
+        - text: Dark Mode Off
+      - generic [ref=e75]:
+        - button "Users 1" [ref=e76] [cursor=pointer]:
+          - img [ref=e78]
+          - generic [ref=e83]: Users
+          - generic [ref=e84]: "1"
+        - button "Sub-Admins 0" [ref=e85] [cursor=pointer]:
+          - img [ref=e87]
+          - generic [ref=e90]: Sub-Admins
+          - generic [ref=e91]: "0"
+        - button "Subscriptions" [ref=e92] [cursor=pointer]:
+          - img [ref=e94]
+          - generic [ref=e96]: Subscriptions
+        - button "Plans Manager" [ref=e97] [cursor=pointer]:
+          - img [ref=e99]
+          - generic [ref=e101]: Plans Manager
+        - button "Gift Codes" [ref=e102] [cursor=pointer]:
+          - img [ref=e104]
+          - generic [ref=e108]: Gift Codes
+        - button "Subjects" [ref=e109] [cursor=pointer]:
+          - img [ref=e111]
+          - generic [ref=e113]: Subjects
+        - button "Demands 0" [ref=e114] [cursor=pointer]:
+          - img [ref=e116]
+          - generic [ref=e119]: Demands
+          - generic [ref=e120]: "0"
+        - button "Login Reqs 0" [ref=e121] [cursor=pointer]:
+          - img [ref=e123]
+          - generic [ref=e127]: Login Reqs
+          - generic [ref=e128]: "0"
+        - generic [ref=e130]:
+          - heading "CBSE Content Manager" [level=4] [ref=e131]:
+            - img [ref=e132]
+            - text: CBSE Content Manager
+          - generic [ref=e134]:
+            - button "Main Notes" [ref=e135] [cursor=pointer]:
+              - img [ref=e137]
+              - generic [ref=e140]: Main Notes
+            - button "Video Lectures" [ref=e141] [cursor=pointer]:
+              - img [ref=e143]
+              - generic [ref=e146]: Video Lectures
+            - button "Audio Series" [ref=e147] [cursor=pointer]:
+              - img [ref=e149]
+              - generic [ref=e151]: Audio Series
+            - button "MCQ & Tests" [ref=e152] [cursor=pointer]:
+              - img [ref=e154]
+              - generic [ref=e157]: MCQ & Tests
+            - button "Topic Notes" [ref=e158] [cursor=pointer]:
+              - img [ref=e160]
+              - generic [ref=e162]: Topic Notes
+            - button "Bulk Import" [ref=e163] [cursor=pointer]:
+              - img [ref=e165]
+              - generic [ref=e169]: Bulk Import
+        - button "Chapters List" [ref=e170] [cursor=pointer]:
+          - img [ref=e172]
+          - generic [ref=e175]: Chapters List
+        - button "General" [ref=e177] [cursor=pointer]:
+          - img [ref=e179]
+          - generic [ref=e181]: General
+        - button "Security" [ref=e182] [cursor=pointer]:
+          - img [ref=e184]
+          - generic [ref=e187]: Security
+        - button "Visibility" [ref=e188] [cursor=pointer]:
+          - img [ref=e190]
+          - generic [ref=e193]: Visibility
+        - button "Blogger Hub" [ref=e194] [cursor=pointer]:
+          - img [ref=e196]
+          - generic [ref=e201]: Blogger Hub
+        - button "Game Config" [ref=e202] [cursor=pointer]:
+          - img [ref=e204]
+          - generic [ref=e206]: Game Config
+        - button "Payment" [ref=e207] [cursor=pointer]:
+          - img [ref=e209]
+          - generic [ref=e212]: Payment
+        - button "External Apps" [ref=e213] [cursor=pointer]:
+          - img [ref=e215]
+          - generic [ref=e218]: External Apps
+        - button "Engagement Rewards" [ref=e219] [cursor=pointer]:
+          - img [ref=e221]
+          - generic [ref=e225]: Engagement Rewards
+        - button "Prize Settings" [ref=e226] [cursor=pointer]:
+          - img [ref=e228]
+          - generic [ref=e234]: Prize Settings
+        - button "Gating & Access" [ref=e235] [cursor=pointer]:
+          - img [ref=e237]
+          - generic [ref=e240]: Gating & Access
+        - button "Challenge Config" [ref=e241] [cursor=pointer]:
+          - img [ref=e243]
+          - generic [ref=e249]: Challenge Config
+        - button "Challenge 2.0" [ref=e250] [cursor=pointer]:
+          - img [ref=e252]
+          - generic [ref=e257]: Challenge 2.0
+        - button "Universal Playlist" [ref=e258] [cursor=pointer]:
+          - img [ref=e260]
+          - generic [ref=e263]: Universal Playlist
+        - button "💰 Pricing" [ref=e264] [cursor=pointer]:
+          - img [ref=e266]
+          - generic [ref=e269]: 💰 Pricing
+        - button "Deploy App" [ref=e271] [cursor=pointer]:
+          - img [ref=e273]
+          - generic [ref=e275]: Deploy App
+        - button "Database" [ref=e276] [cursor=pointer]:
+          - img [ref=e278]
+          - generic [ref=e282]: Database
+        - button "Recycle Bin 0" [ref=e283] [cursor=pointer]:
+          - img [ref=e285]
+          - generic [ref=e288]: Recycle Bin
+          - generic [ref=e289]: "0"
+        - button "Exit" [ref=e290] [cursor=pointer]:
+          - img [ref=e292]
+          - generic [ref=e295]: Exit
+  - contentinfo [ref=e296]:
+    - paragraph [ref=e297]: Developed by Nadim Anwar
+  - generic [ref=e299]: Start learning today! • Start learning today! • Start learning today!
+  - generic [ref=e301]:
+    - button [ref=e302] [cursor=pointer]:
+      - img [ref=e303]
+    - generic [ref=e308]:
+      - img [ref=e310]
+      - heading "Daily Goal Tracker" [level=2] [ref=e314]
+      - paragraph [ref=e315]: Study Challenge
+    - generic [ref=e316]:
+      - generic [ref=e317]:
+        - generic [ref=e318]:
+          - paragraph [ref=e319]: Today's Study Time
+          - paragraph [ref=e320]:
+            - text: 0h 0m
+            - generic [ref=e321]: / 3h 0m
+        - paragraph [ref=e323]: 0%
+      - generic [ref=e327]:
+        - img [ref=e329]
+        - generic [ref=e332]:
+          - paragraph [ref=e333]: Keep Going!
+          - paragraph [ref=e334]: Study more to unlock rewards.
+      - button "Continue Learning" [ref=e335] [cursor=pointer]
+```
