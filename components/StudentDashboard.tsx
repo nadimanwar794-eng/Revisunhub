@@ -1815,16 +1815,6 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                     <span className="text-[10px] font-bold mt-1">Revision</span>
                 </button>
 
-                <button
-                    onClick={() => onTabChange('AI_HUB')}
-                    className={`flex flex-col items-center justify-center w-full h-full ${activeTab === 'AI_HUB' ? 'text-blue-600' : 'text-slate-400'}`}
-                >
-                    <div className="relative">
-                        <Sparkles size={24} fill={activeTab === 'AI_HUB' ? "currentColor" : "none"} />
-                    </div>
-                    <span className="text-[10px] font-bold mt-1">AI Hub</span>
-                </button>
-
                 <button onClick={() => onTabChange('HISTORY')} className={`flex flex-col items-center justify-center w-full h-full ${activeTab === 'HISTORY' ? 'text-blue-600' : 'text-slate-400'}`}>
                     <History size={24} />
                     <span className="text-[10px] font-bold mt-1">History</span>
