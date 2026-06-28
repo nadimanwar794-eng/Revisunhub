@@ -235,6 +235,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loadingChapters, setLoadingChapters] = useState(false);
   const [syllabusMode, setSyllabusMode] = useState<'SCHOOL' | 'COMPETITION'>('SCHOOL');
+  const [selectedClassForMCQ, setSelectedClassForMCQ] = useState<string>(user.classLevel || '10');
   const [currentAudioTrack, setCurrentAudioTrack] = useState<{url: string, title: string} | null>(null);
   const [universalNotes, setUniversalNotes] = useState<any[]>([]);
   const [topicFilter, setTopicFilter] = useState<string | undefined>(undefined); // NEW: Topic Filter
@@ -904,7 +905,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
       setLoadingChapters(true);
       setContentViewStep('CHAPTERS');
       try {
-          const ch = await fetchChapters(user.board || 'CBSE', user.classLevel || '10', user.stream || 'Science', subject, 'English');
+          const ch = await fetchChapters(user.board || 'CBSE', selectedClassForMCQ || user.classLevel || '10', user.stream || 'Science', subject, 'English');
           setChapters(ch);
       } catch(e) { console.error(e); }
       setLoadingChapters(false);
@@ -983,8 +984,39 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
       const handlePlayerBack = () => {
           setContentViewStep('CHAPTERS');
           setFullScreen(false);
-          setTopicFilter(undefined); // Clear filter on back
+          setTopicFilter(undefined);
       };
+
+      if (contentViewStep === 'SUBJECTS') {
+          const classLabel = selectedClassForMCQ === 'COMPETITION' ? 'Competition' : `Class ${selectedClassForMCQ}`;
+          const subjects = getSubjectsList(selectedClassForMCQ as any, user.stream || null)
+              .filter(s => !(settings?.hiddenSubjects || []).includes(s.id));
+          return (
+              <div className="pb-24 animate-in fade-in slide-in-from-right-4 duration-300">
+                  <div className="bg-white px-4 py-4 border-b border-slate-100 shadow-sm sticky top-0 z-40 flex items-center gap-3">
+                      <button onClick={() => { onTabChange('HOME'); }} className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 transition-colors">
+                          <Home size={18} className="text-slate-600" />
+                      </button>
+                      <div>
+                          <h2 className="text-lg font-black text-slate-800">{classLabel}</h2>
+                          <p className="text-xs text-slate-400 font-medium">Choose a subject</p>
+                      </div>
+                  </div>
+                  <div className="p-4 grid grid-cols-2 gap-3 mt-2">
+                      {subjects.map(s => (
+                          <button
+                              key={s.id}
+                              onClick={() => handleContentSubjectSelect(s)}
+                              className={`bg-gradient-to-br ${s.color || 'from-blue-500 to-indigo-600'} p-5 rounded-2xl shadow-md flex flex-col items-start gap-2 active:scale-95 transition-all`}
+                          >
+                              <CheckSquare size={22} className="text-white/80" />
+                              <span className="font-black text-white text-base leading-tight">{s.name}</span>
+                          </button>
+                      ))}
+                  </div>
+              </div>
+          );
+      }
 
       if (contentViewStep === 'PLAYER' && selectedChapter && selectedSubject) {
           if (type === 'VIDEO') {
@@ -994,7 +1026,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
           } else if (type === 'AUDIO') {
             return <AudioPlaylistView chapter={selectedChapter} subject={selectedSubject} user={user} board={user.board || 'CBSE'} classLevel={user.classLevel || '10'} stream={user.stream || null} onBack={handlePlayerBack} onUpdateUser={handleUserUpdate} settings={settings} onPlayAudio={setCurrentAudioTrack} initialSyllabusMode={syllabusMode} />;
           } else {
-            return <McqView chapter={selectedChapter} subject={selectedSubject} user={user} board={user.board || 'CBSE'} classLevel={user.classLevel || '10'} stream={user.stream || null} onBack={handlePlayerBack} onUpdateUser={handleUserUpdate} settings={settings} topicFilter={topicFilter} />;
+            return <McqView chapter={selectedChapter} subject={selectedSubject} user={user} board={user.board || 'CBSE'} classLevel={selectedClassForMCQ || user.classLevel || '10'} stream={user.stream || null} onBack={handlePlayerBack} onUpdateUser={handleUserUpdate} settings={settings} topicFilter={topicFilter} />;
           }
       }
 
@@ -1032,148 +1064,51 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
   const renderMainContent = () => {
       // 1. HOME TAB
       if (activeTab === 'HOME') {
+          const classes = [
+              { label: 'Class 6', value: '6', color: 'from-pink-500 to-rose-600' },
+              { label: 'Class 7', value: '7', color: 'from-orange-500 to-amber-600' },
+              { label: 'Class 8', value: '8', color: 'from-yellow-500 to-orange-500' },
+              { label: 'Class 9', value: '9', color: 'from-green-500 to-emerald-600' },
+              { label: 'Class 10', value: '10', color: 'from-teal-500 to-cyan-600' },
+              { label: 'Class 11', value: '11', color: 'from-blue-500 to-indigo-600' },
+              { label: 'Class 12', value: '12', color: 'from-violet-500 to-purple-600' },
+              { label: 'Competition', value: 'COMPETITION', color: 'from-slate-700 to-slate-900' },
+          ];
+
           return (
-              <div className="space-y-4 pb-24">
-                {/* NEW HEADER DESIGN */}
-                <div className="bg-white p-4 rounded-b-3xl shadow-sm border-b border-slate-200 mb-2 flex items-center justify-between sticky top-0 z-40">
-                    <div className="flex items-center gap-3">
-                        <button
-                            onClick={() => setShowSidebar(true)}
-                            className="bg-white border border-slate-200 shadow-sm px-3 py-2 rounded-xl hover:bg-slate-50 transition-all flex items-center gap-2 group active:scale-95"
-                        >
-                            <div className="space-y-1">
-                                <span className="block w-5 h-0.5 bg-slate-600 group-hover:bg-blue-600 transition-colors rounded-full"></span>
-                                <span className="block w-3 h-0.5 bg-slate-600 group-hover:bg-blue-600 transition-colors rounded-full"></span>
-                                <span className="block w-5 h-0.5 bg-slate-600 group-hover:bg-blue-600 transition-colors rounded-full"></span>
-                            </div>
-                        </button>
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <h2 className="text-lg font-black text-slate-800 leading-none">
-                                    {settings?.appName || 'Student App'}
-                                </h2>
-                                {/* DISCOUNT BADGE */}
-                                {discountStatus === 'ACTIVE' && (
-                                    <button
-                                        onClick={() => onTabChange('STORE')}
-                                        className="bg-red-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full animate-pulse shadow-sm"
-                                    >
-                                        {settings?.specialDiscountEvent?.discountPercent || 50}% OFF
-                                    </button>
-                                )}
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                                <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{user.displayId || user.id.slice(0,6)}</span>
-                                {user.role === 'ADMIN' && <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[9px] font-bold">ADMIN</span>}
-                            </div>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                        <button
-                            onClick={() => onTabChange('STORE')}
-                            className="flex flex-col items-end group active:scale-95 transition-transform"
-                        >
-                            <span className="text-[10px] font-bold text-slate-400 uppercase group-hover:text-blue-600 transition-colors">Credits</span>
-                            <span className="font-black text-blue-600 flex items-center gap-1">
-                                <Crown size={14} className="fill-blue-600"/> {user.credits} <span className="bg-blue-100 text-blue-700 text-[8px] px-1 rounded ml-1 group-hover:bg-blue-600 group-hover:text-white transition-colors">ADD</span>
-                            </span>
-                        </button>
-                        <div className="flex flex-col items-end border-l pl-3 border-slate-100">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase">Streak</span>
-                            <span className="font-black text-orange-500 flex items-center gap-1">
-                                <Zap size={14} className="fill-orange-500"/> {user.streak}
-                            </span>
-                        </div>
-                        {user.isPremium && user.subscriptionEndDate && (
-                            <div className="flex flex-col items-end border-l pl-3 border-slate-100">
-                                <span className="text-[10px] font-bold text-slate-400 uppercase">Plan</span>
-                                <span className="font-black text-purple-600 text-[10px]">
-                                    {user.subscriptionTier === 'LIFETIME' ? '∞' :
-                                     `${Math.max(0, Math.ceil((new Date(user.subscriptionEndDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))} Days`}
-                                </span>
-                            </div>
-                        )}
-                    </div>
-                </div>
+              <div className="pb-24">
+                  {/* HEADER */}
+                  <div className="bg-white px-4 py-4 border-b border-slate-100 shadow-sm sticky top-0 z-40 flex items-center justify-between">
+                      <div>
+                          <h1 className="text-xl font-black text-slate-800">{settings?.appName || 'MCQ App'}</h1>
+                          <p className="text-xs text-slate-400 font-medium">Select your class to start MCQ</p>
+                      </div>
+                      <div className="flex items-center gap-1 bg-orange-50 border border-orange-200 px-3 py-1.5 rounded-full">
+                          <Zap size={14} className="fill-orange-500 text-orange-500" />
+                          <span className="font-black text-orange-600 text-sm">{user.streak}</span>
+                          <span className="text-[10px] text-orange-500 font-bold">Streak</span>
+                      </div>
+                  </div>
 
-                {/* PERFORMANCE GRAPH */}
-                <DashboardSectionWrapper id="section_performance" label="Performance" settings={settings} isLayoutEditing={isLayoutEditing} onToggleVisibility={toggleLayoutVisibility}>
-                    <PerformanceGraph
-                        history={user.mcqHistory || []}
-                        user={user}
-                        onViewNotes={(topic) => {
-                            onTabChange('PDF');
-                        }}
-                    />
-                </DashboardSectionWrapper>
-
-                {/* STUDY TIMER & MYSTERY REVISION */}
-                <DashboardSectionWrapper id="section_timer" label="Study Goal" settings={settings} isLayoutEditing={isLayoutEditing} onToggleVisibility={toggleLayoutVisibility}>
-                    <div className="relative">
-                        <StudyGoalTimer
-                            dailyStudySeconds={dailyStudySeconds}
-                            targetSeconds={dailyTargetSeconds}
-                            onSetTarget={(s) => {
-                                setDailyTargetSeconds(s);
-                                localStorage.setItem(`nst_goal_${user.id}`, (s / 3600).toString());
-                            }}
-                        />
-
-                        {/* MYSTERY REVISION BUTTON (Weak Topic Shortcut) */}
-                        {(() => {
-                            // Check for Weak Topics due today
-                            const weakTopics = (user.mcqHistory || [])
-                                .filter(h => (h.score / h.totalQuestions) < 0.5)
-                                .map(h => h.chapterTitle || 'Topic');
-                            const uniqueWeak = [...new Set(weakTopics)];
-                            const topicName = uniqueWeak[0]; // Get first topic name
-
-                            if (uniqueWeak.length > 0) {
-                                return (
-                                    <button
-                                        onClick={() => {
-                                            onTabChange('REVISION');
-                                            showAlert(`🎯 Focusing on: ${topicName}. Go to Revision Hub!`, "INFO");
-                                        }}
-                                        className="absolute -top-2 right-4 bg-slate-900 text-white px-3 py-1.5 rounded-full shadow-lg border-2 border-red-500 animate-in slide-in-from-right flex items-center gap-2 group z-10"
-                                        title="Mystery Revision Due!"
-                                    >
-                                        <div className="relative">
-                                            <HelpCircle size={16} className="text-yellow-400" />
-                                            <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-600 rounded-full border border-white animate-pulse"></div>
-                                        </div>
-                                        <span className="text-[10px] font-bold max-w-[100px] truncate">
-                                            {topicName}
-                                        </span>
-                                    </button>
-                                );
-                            }
-                            return null;
-                        })()}
-                    </div>
-                </DashboardSectionWrapper>
-
-                {/* MAIN ACTION BUTTONS */}
-                <DashboardSectionWrapper id="section_main_actions" label="Main Actions" settings={settings} isLayoutEditing={isLayoutEditing} onToggleVisibility={toggleLayoutVisibility}>
-                    <div className="grid grid-cols-2 gap-4">
-                        <button
-                            onClick={() => { onTabChange('COURSES'); setContentViewStep('SUBJECTS'); }}
-                            className="bg-gradient-to-br from-blue-600 to-indigo-700 p-6 rounded-3xl shadow-lg shadow-blue-200 flex flex-col items-center justify-center gap-2 group active:scale-95 transition-all relative overflow-hidden h-32"
-                        >
-                            <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                            <Book size={32} className="text-white mb-1" />
-                            <span className="font-black text-white text-lg tracking-wide uppercase">My Courses</span>
-                        </button>
-
-                        <button
-                            onClick={() => onTabChange('ANALYTICS')}
-                            className="bg-white border-2 border-slate-100 p-6 rounded-3xl shadow-sm flex flex-col items-center justify-center gap-2 group active:scale-95 transition-all hover:border-blue-200 h-32 relative overflow-hidden"
-                        >
-                            <BarChart3 size={32} className="text-blue-600 mb-1" />
-                            <span className="font-black text-slate-700 text-lg tracking-wide uppercase">My Analysis</span>
-                        </button>
-                    </div>
-                </DashboardSectionWrapper>
+                  {/* CLASS GRID */}
+                  <div className="p-4 grid grid-cols-2 gap-4 mt-2">
+                      {classes.map((cls) => (
+                          <button
+                              key={cls.value}
+                              onClick={() => {
+                                  setSelectedClassForMCQ(cls.value);
+                                  setContentViewStep('SUBJECTS');
+                                  setSelectedSubject(null);
+                                  setSelectedChapter(null);
+                                  onTabChange('MCQ');
+                              }}
+                              className={`bg-gradient-to-br ${cls.color} p-6 rounded-2xl shadow-md flex flex-col items-center justify-center gap-2 active:scale-95 transition-all h-28 relative overflow-hidden`}
+                          >
+                              <span className="font-black text-white text-xl tracking-wide">{cls.label}</span>
+                              <span className="text-white/70 text-xs font-semibold">Tap to Practice MCQ</span>
+                          </button>
+                      ))}
+                  </div>
               </div>
           );
       }
