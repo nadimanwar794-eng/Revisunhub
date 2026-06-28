@@ -1039,7 +1039,7 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                           handleContentChapterSelect(chapter);
                       }
                   }} 
-                  onBack={() => { setContentViewStep('SUBJECTS'); onTabChange('COURSES'); }} 
+                  onBack={() => { setContentViewStep('SUBJECTS'); onTabChange('HOME'); }} 
               />
           );
       }
@@ -1194,104 +1194,6 @@ export const StudentDashboard: React.FC<Props> = ({ user, dailyStudySeconds, onS
                   }}
               />
           );
-      }
-
-      // 3. COURSES TAB (Handles Video, Notes, MCQ Selection)
-      if (activeTab === 'COURSES') {
-          // If viewing a specific content type (from drilled down), show it
-          // Note: Clicking a subject switches tab to VIDEO/PDF/MCQ, so COURSES just shows the Hub.
-          const visibleSubjects = getSubjectsList(user.classLevel || '10', user.stream || null)
-                                    .filter(s => !(settings?.hiddenSubjects || []).includes(s.id));
-
-          return (
-              <div className="space-y-6 pb-24">
-                      <div className="flex items-center justify-between">
-                          <h2 className="text-2xl font-black text-slate-800">My Courses</h2>
-                      </div>
-
-                      {/* Video Section */}
-                      {settings?.contentVisibility?.VIDEO !== false && (
-                          <div className="bg-gradient-to-br from-red-50 to-rose-100 p-6 rounded-3xl border border-red-200 shadow-sm">
-                              <h3 className="font-black text-red-900 flex items-center gap-2 mb-4 text-lg">
-                                  <div className="p-2 bg-white rounded-full shadow-sm text-red-600"><Youtube size={20} /></div>
-                                  Video Lectures
-                              </h3>
-                              <div className="grid grid-cols-2 gap-3">
-                                  {visibleSubjects.map(s => (
-                                      <button key={s.id} onClick={() => { onTabChange('VIDEO'); handleContentSubjectSelect(s); }} className="bg-white p-3 rounded-2xl text-xs font-bold text-slate-700 shadow-sm border border-red-100 text-left hover:shadow-md hover:scale-[1.02] transition-all flex items-center gap-2">
-                                          <div className={`w-2 h-2 rounded-full ${s.color?.split(' ')[0] || 'bg-red-500'}`}></div>
-                                          {s.name}
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
-                      )}
-
-                      {/* Notes Section */}
-                      {settings?.contentVisibility?.PDF !== false && (
-                          <div className="bg-gradient-to-br from-blue-50 to-indigo-100 p-6 rounded-3xl border border-blue-200 shadow-sm">
-                              <h3 className="font-black text-blue-900 flex items-center gap-2 mb-4 text-lg">
-                                  <div className="p-2 bg-white rounded-full shadow-sm text-blue-600"><FileText size={20} /></div>
-                                  Notes Library
-                              </h3>
-                              <div className="grid grid-cols-2 gap-3">
-                                  {visibleSubjects.map(s => (
-                                      <button key={s.id} onClick={() => { onTabChange('PDF'); handleContentSubjectSelect(s); }} className="bg-white p-3 rounded-2xl text-xs font-bold text-slate-700 shadow-sm border border-blue-100 text-left hover:shadow-md hover:scale-[1.02] transition-all flex items-center gap-2">
-                                          <div className={`w-2 h-2 rounded-full ${s.color?.split(' ')[0] || 'bg-blue-500'}`}></div>
-                                          {s.name}
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
-                      )}
-
-                      {/* MCQ Section */}
-                      {settings?.contentVisibility?.MCQ !== false && (
-                          <div className="bg-gradient-to-br from-purple-50 to-fuchsia-100 p-6 rounded-3xl border border-purple-200 shadow-sm relative overflow-hidden">
-                              <div className="flex justify-between items-center mb-4">
-                                  <h3 className="font-black text-purple-900 flex items-center gap-2 text-lg">
-                                      <div className="p-2 bg-white rounded-full shadow-sm text-purple-600"><CheckSquare size={20} /></div>
-                                      MCQ Practice
-                                  </h3>
-                              </div>
-                              <div className="grid grid-cols-2 gap-3">
-                                  {visibleSubjects.map(s => (
-                                      <button
-                                        key={s.id}
-                                        onClick={() => { onTabChange('MCQ'); handleContentSubjectSelect(s); }}
-                                        className="bg-white p-3 rounded-2xl text-xs font-bold text-slate-700 shadow-sm border border-purple-100 text-left hover:shadow-md hover:scale-[1.02] transition-all flex items-center gap-2"
-                                      >
-                                          <div className={`w-2 h-2 rounded-full ${s.color?.split(' ')[0] || 'bg-purple-500'}`}></div>
-                                          {s.name}
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
-                      )}
-
-                      {/* Audio/Podcast Section */}
-                      {settings?.contentVisibility?.AUDIO !== false && (
-                          <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-4 rounded-2xl shadow-lg border border-slate-700 relative overflow-hidden">
-                              <div className="flex justify-between items-center mb-2 relative z-10">
-                                  <h3 className="font-bold text-white flex items-center gap-2"><Headphones className="text-pink-500" /> Audio Library</h3>
-                                  <span className="text-[10px] font-black bg-pink-600 text-white px-2 py-0.5 rounded-full">NEW</span>
-                              </div>
-                              <p className="text-xs text-slate-400 mb-3 relative z-10">Listen to high-quality audio lectures and podcasts.</p>
-                              <div className="grid grid-cols-2 gap-2 relative z-10">
-                                  {visibleSubjects.map(s => (
-                                      <button
-                                        key={s.id}
-                                        onClick={() => { onTabChange('AUDIO'); handleContentSubjectSelect(s); }}
-                                        className="bg-white/10 hover:bg-white/20 p-2 rounded-xl text-xs font-bold text-white shadow-sm border border-white/10 text-left backdrop-blur-sm transition-colors"
-                                      >
-                                          {s.name}
-                                      </button>
-                                  ))}
-                              </div>
-                          </div>
-                      )}
-                  </div>
-              );
       }
 
       // 4. LEGACY TABS (Mapped to new structure or kept as sub-views)

@@ -201,7 +201,7 @@ export const McqReviewHub: React.FC<Props> = ({ user, onTabChange, settings, onN
 
                                 {activeFilter === 'TODAY' && (
                                     <button
-                                        onClick={() => onTabChange('COURSES')}
+                                        onClick={() => onTabChange('MCQ')}
                                         className="mt-4 bg-purple-600 text-white px-6 py-2 rounded-xl text-sm font-bold shadow-lg hover:scale-105 transition-transform"
                                     >
                                         Practice New Topics
