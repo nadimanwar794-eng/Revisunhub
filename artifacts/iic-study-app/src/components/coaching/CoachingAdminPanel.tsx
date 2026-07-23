@@ -97,7 +97,14 @@ function parseBulkMcq(text: string): CoachingMcq[] {
 
       // Ans: / Answer: / सही उत्तर: B or B) or B) text
       const ansMatch = line.match(/^(?:Ans|Answer|सही\s*उत्तर)\s*[:.]\s*\*?\s*([A-Da-d])/i);
-      if (ansMatch) { ansLetter = ansMatch[1].toUpperCase(); collectingExp = false; continue; }
+      if (ansMatch) {
+        ansLetter = ansMatch[1].toUpperCase();
+        collectingExp = false;
+        continue;
+      }
+      if (/^(?:\*{1,2}\s*)?सही\s*उत्तर\s*:\s*$/i.test(line)) {
+        continue;
+      }
 
       // Options: *A: text OR *A) text OR A: text OR A) text
       const optMatch = line.match(/^(\*?)\s*([A-Da-d])[:.)\s]\s*(.+)/);
@@ -119,7 +126,7 @@ function parseBulkMcq(text: string): CoachingMcq[] {
       // Continuation lines of a multi-line/statement-based question — append
       // them to the question as long as options haven't started yet.
       if (!optionsStarted && !collectingExp) {
-        question += (/[:?]$/.test(question) ? "\n" : " ") + line;
+        question += '\n' + line;
       }
     }
     const correctAnswer = ansLetter ? Math.max(0, "ABCD".indexOf(ansLetter)) : 0;
