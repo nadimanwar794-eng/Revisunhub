@@ -235,14 +235,7 @@ function parseBulkMcq(text: string): CoachingMcq[] {
 
       // Ans: / Answer: / सही उत्तर: B or B) or B) text
       const ansMatch = line.match(/^(?:Ans|Answer|सही\s*उत्तर)\s*[:.]\s*\*?\s*([A-Da-d])/i);
-      if (ansMatch) {
-        ansLetter = ansMatch[1].toUpperCase();
-        collectingExp = false;
-        continue;
-      }
-      if (/^(?:\*{1,2}\s*)?सही\s*उत्तर\s*:\s*$/i.test(line)) {
-        continue;
-      }
+      if (ansMatch) { ansLetter = ansMatch[1].toUpperCase(); collectingExp = false; continue; }
 
       // Options: *A: text OR *A) text OR A: text OR A) text
       const optMatch = line.match(/^(\*?)\s*([A-Da-d])[:.)\s]\s*(.+)/);
@@ -265,7 +258,7 @@ function parseBulkMcq(text: string): CoachingMcq[] {
       // "consider the following statements" style MCQs) — append them to the
       // question as long as options haven't started yet and we're not mid-explanation.
       if (!optionsStarted && !collectingExp) {
-        question += '\n' + line;
+        question += (/[:?]$/.test(question) ? '\n' : ' ') + line;
       }
     }
 

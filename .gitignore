@@ -1,6 +1,0 @@
-node_modules/
-artifacts/iic-study-app/dist/
-test*.ts
-patch_*.js
-parse_mcq_*.js
-test*.js
