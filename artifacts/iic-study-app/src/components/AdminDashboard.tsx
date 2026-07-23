@@ -850,6 +850,10 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
     // ── Step 0: Fix double-answer lines ──────────────────────────────────────
     // Pattern: **सही उत्तर:\n**सही उत्तर:** B) ... → drop the first empty line
+    // Fix stray trailing empty answers
+    txt = txt.replace(/\n+\s*\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?)\s*[:：]\s*$/gi, '');
+
+    // Fix double-answer lines (drop the first empty line)
     txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?)\s*[:：]\s*\n+\s*(?=\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?))/gi, '');
 
     // ── Step 1: Strip [⚡], [🔥], [💡] etc. difficulty/category tags ─────────

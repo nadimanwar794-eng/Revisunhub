@@ -13,6 +13,10 @@ function normalizeMcqPaste(raw: string): string {
   let txt = raw.replace(/\r\n/g, "\n");
   txt = txt.replace(/^---+\s*$/gm, "");
   txt = txt.replace(/^###\s+.+$/gm, "");
+  // Fix double-answer lines and stray empty answers
+  txt = txt.replace(/\n+\s*\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?)\s*[:：]\s*$/gi, '');
+  txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?)\s*[:：]\s*\n+\s*(?=\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?))/gi, '');
+
   txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?)\s*[:：]\s*([^*]+?)\s*\*\*/gi, (_m, v) => `\n✅ Correct Answer: ${v.trim()}`);
   txt = txt.replace(/\*\*(?:सही\s*उत्तर|Ans(?:wer)?)\s*[:：]?\*\*\s*/gi, "✅ Correct Answer: ");
   txt = txt.replace(/(?:^|\n)\s*(?:Ans(?:wer)?|सही\s*उत्तर)\s*[:：]\s*/gi, "\n✅ Correct Answer: ");
