@@ -30,7 +30,7 @@ function normalizeMcqPaste(raw: string): string {
   txt = txt.replace(/\*\*/g, "");
   let qNum = 0;
   txt = txt.replace(/__PRASHNA__\s*/g, () => { qNum += 1; return `\n**Question ${qNum}**\n❓ Question: `; });
-  return txt;
+      return txt;
 }
 
 interface Props {

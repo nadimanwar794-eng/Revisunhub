@@ -104,8 +104,8 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
     const lines = block.split('\n').map(l => l.trim()).filter(l => l);
     if (lines.length < 3) return null;
 
-    // First line: **Q1:** / Q1. / Q1) / **प्रश्न 1:** / प्रश्न 1. / plain question text
-    const questionLineMatch = lines[0].match(/^\*{0,2}\s*(?:Q\s*\d*\s*[:.)\s]|प्रश्न\s*\d*\s*[:.])\*{0,2}\s*([\s\S]+)/i)
+    // First line: **Q1:** / Q1. / Q1) / **प्रश्न 1:** / प्रश्न 1. / 1: / plain question text
+    const questionLineMatch = lines[0].match(/^\*{0,2}\s*(?:Q\s*\d*\s*[:.)\s]|प्रश्न\s*\d*\s*[:.]|\d+\s*[:.])\*{0,2}\s*([\s\S]+)/i)
         || lines[0].match(/^(?:Q\s*\d+[\.\)]\s*)?([\s\S]+)/i);
     if (!questionLineMatch) return null;
 
@@ -173,6 +173,17 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
                 answerLine = cleaned;
             } else if (!answerLine && extracted) {
                 answerLine = extracted;
+            }
+
+            // Look ahead for the actual answer if answerLine is empty
+            if (!answerLine) {
+                 for(let j = i+1; j < lines.length; j++) {
+                     if (lines[j] && !isAnswerLine(lines[j]) && !isExplainLine(lines[j])) {
+                         answerLine = lines[j];
+                         i = j; // skip consumed lines
+                         break;
+                     }
+                 }
             }
             continue;
         }
