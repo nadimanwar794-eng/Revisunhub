@@ -580,9 +580,11 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
     if (!isHtmlContent || !htmlPlainText) return [];
     return splitIntoTopics(htmlPlainText);
   }, [isHtmlContent, htmlPlainText]);
-  // The active topic list: use stripped-text topics when showing HTML in chunk mode,
-  // otherwise use the normal topics (from raw content).
-  const activeTopicList = (isHtmlContent && htmlViewMode === 'chunk' && htmlChunkTopics.length > 0)
+  // The active topic list:
+  // - In 3-tab mode (NOTE_PAGES), ALWAYS use `topics` (from activeNoteContent = current tab's text).
+  //   htmlChunkTopics comes from the full unsplit content and would show everything mixed.
+  // - In normal HTML chunk mode (no 3-tab split), use htmlChunkTopics for plain-text chunking.
+  const activeTopicList = (NOTE_PAGES.length === 0 && isHtmlContent && htmlViewMode === 'chunk' && htmlChunkTopics.length > 0)
     ? htmlChunkTopics
     : topics;
 

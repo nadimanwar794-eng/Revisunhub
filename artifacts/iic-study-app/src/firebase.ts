@@ -1328,10 +1328,27 @@ const _savePerItemCollection = async (
     return;
   }
 
+  // Firestore hard limit: 1 MB per document. We guard at 800 KB (80%) to
+  // leave room for Firestore metadata overhead and future field additions.
+  // Documents that exceed this are saved to RTDB only — they will still be
+  // readable because _subscribePerItemCollection merges RTDB for missing IDs.
+  const FS_DOC_LIMIT_BYTES = 800 * 1024; // 800 KB safety threshold
+
   // Write/update every document in this batch
   sanitized.forEach((entry: any) => {
     if (!entry?.id) return;
-    writes.push(setDoc(doc(db, collectionName, entry.id), entry));
+    const entryBytes = _estimateBytes(entry);
+    if (entryBytes >= FS_DOC_LIMIT_BYTES) {
+      // Too large for Firestore — RTDB only (10 MB limit, no per-doc cap).
+      // The subscription will fetch this from RTDB via the missing-IDs fallback.
+      console.warn(
+        `[IIC] _savePerItemCollection(${collectionName}): entry "${entry.id}" is ${Math.round(entryBytes / 1024)} KB — ` +
+        `skipping Firestore write (limit 800 KB), saving to RTDB only.`
+      );
+    } else {
+      writes.push(setDoc(doc(db, collectionName, entry.id), entry));
+    }
+    // RTDB always gets the full document regardless of size
     writes.push(set(ref(rtdb, `${rtdbBasePath}/${entry.id}`), entry));
     // ── Backup mirror (NEVER deleted by any cleanup) ─────────────────────────
     writes.push(set(ref(rtdb, `__backup__/${rtdbBasePath}/${entry.id}`), entry));
@@ -1353,12 +1370,25 @@ const _savePerItemCollection = async (
     writes.push(set(ref(rtdb, rtdbIndexPath), indexPayload));
     console.log(`[IIC] _savePerItemCollection(${collectionName}): index merged — existing ${existingIds.length} + new ${newIds.length} → ${mergedIds.length} total IDs`);
   } catch (e) {
-    // If index read fails, fall back to writing only what we know — still safe
-    // because we never shrink below newIds
-    console.warn(`[IIC] _savePerItemCollection(${collectionName}): index read failed, falling back to newIds only:`, e);
-    const indexPayload = { ids: newIds };
-    writes.push(setDoc(doc(db, "config", indexFsDocId), indexPayload));
-    writes.push(set(ref(rtdb, rtdbIndexPath), indexPayload));
+    // Firestore index read failed — try RTDB as secondary fallback before giving up.
+    // NEVER write partial newIds as the index: that would erase all existing entries
+    // that weren't in this save batch (the original data-loss bug).
+    console.warn(`[IIC] _savePerItemCollection(${collectionName}): Firestore index read failed, trying RTDB fallback:`, e);
+    try {
+      const rtdbSnap = await get(ref(rtdb, rtdbIndexPath));
+      const rtdbIds: string[] = rtdbSnap.val()?.ids ?? [];
+      const mergedIds: string[] = [...new Set([...rtdbIds, ...newIds])];
+      const indexPayload = { ids: mergedIds };
+      writes.push(setDoc(doc(db, "config", indexFsDocId), indexPayload));
+      writes.push(set(ref(rtdb, rtdbIndexPath), indexPayload));
+      console.log(`[IIC] _savePerItemCollection(${collectionName}): RTDB fallback index merged — ${rtdbIds.length} existing + ${newIds.length} new → ${mergedIds.length} total IDs`);
+    } catch (e2) {
+      // Both Firestore AND RTDB index reads failed.
+      // Skip the index update entirely — better to leave the old index intact
+      // (new entry won't show until next successful save) than to overwrite it
+      // with only partial IDs and erase all existing entries.
+      console.error(`[IIC] _savePerItemCollection(${collectionName}): both index reads failed — skipping index update to protect existing entries. New IDs will appear on next save.`, e2);
+    }
   }
 };
 
@@ -1384,7 +1414,27 @@ const _subscribePerItemCollection = (
   // Only emit when BOTH collection AND index are confirmed.
   const _rebuild = () => {
     if (!collectionConfirmed || !indexConfirmed) return;
-    onUpdate(order.map(id => itemMap[id]).filter(Boolean));
+    const result = order.map(id => itemMap[id]).filter(Boolean);
+
+    // If any index IDs are missing from itemMap (e.g. document was too large
+    // for Firestore and was saved to RTDB only), fetch them from RTDB now.
+    const missingIds = order.filter(id => !itemMap[id]);
+    if (missingIds.length > 0) {
+      Promise.all(missingIds.map(id => get(ref(rtdb, `${rtdbBasePath}/${id}`))))
+        .then(snaps => {
+          let added = false;
+          snaps.forEach(snap => {
+            if (snap.exists() && snap.key) {
+              itemMap[snap.key] = snap.val();
+              added = true;
+            }
+          });
+          if (added) onUpdate(order.map(id => itemMap[id]).filter(Boolean));
+        })
+        .catch(() => {}); // non-fatal — best-effort
+    }
+
+    onUpdate(result);
   };
 
   // Firestore collection — source of truth for item data
@@ -1679,6 +1729,27 @@ export const saveChapterData = async (key: string, data: any, _historyMeta?: { u
     // 1. Sanitize Data
     const sanitizedData = sanitizeForFirestore(data);
 
+    // ── Inject _meta: readable board/class/subject/lesson fields ─────────────
+    // Har document mein explicit metadata hoga taaki Firebase console mein
+    // sirf key decode kiye bina bhi pata chale kiska content hai.
+    // Key format: nst_content_{BOARD}_{CLASS}_{SUBJECT...}_{LESSON_ID}
+    if (key.startsWith('nst_content_')) {
+      try {
+        const withoutPrefix = key.slice('nst_content_'.length);
+        const parts = withoutPrefix.split('_');
+        if (parts.length >= 3) {
+          sanitizedData._meta = {
+            board:     parts[0],
+            class:     parts[1],
+            subject:   parts.slice(2, parts.length - 1).join(' '),
+            lesson:    parts[parts.length - 1],
+            key,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+      } catch (_metaErr) { /* non-fatal */ }
+    }
+
     // 2. Cache Locally (Primary Source of Truth for this user session) +
     //    update the in-memory cache so next read is instant and fresh.
     await storage.setItem(key, sanitizedData);
@@ -1691,13 +1762,21 @@ export const saveChapterData = async (key: string, data: any, _historyMeta?: { u
     // ── Backup mirror: RTDB __backup__/content_data/{key} — never deleted ────
     promises.push(set(ref(rtdb, `__backup__/content_data/${key}`), sanitizedData));
 
-    // ── V2 Immortal Storage: har mode ka alag Firestore document ─────────────
-    // Fire-and-forget — does not block the main save. Data kabhi delete nahi hoga.
-    import('./utils/lessonStorage').then(({ saveChapterDataV2 }) => {
-      saveChapterDataV2(key, sanitizedData, _historyMeta ?? {}).catch(e =>
-        console.warn('[V2] saveChapterDataV2 failed (non-fatal):', e)
-      );
-    }).catch(() => {});
+    // ── V2 Primary Storage: mode-wise alag documents ─────────────────────────
+    // Reading Notes → lesson_free_notes/{key}
+    // Writing Notes → lesson_html_notes/{key}
+    // MCQ/Flashcard/Q&A → lesson_mcq/{key}
+    // Video → lesson_video/{key}
+    // Audio → lesson_audio/{key}
+    // PDF → lesson_pdf/{key}
+    // Yeh ab PRIMARY save hai — awaited, not fire-and-forget.
+    try {
+      const { saveChapterDataV2 } = await import('./utils/lessonStorage');
+      await saveChapterDataV2(key, sanitizedData, _historyMeta ?? {});
+    } catch (v2Err) {
+      // V2 fail hone pe V1 (content_data) still saved hai — data safe hai.
+      console.warn('[V2] saveChapterDataV2 failed (V1 backup is intact):', v2Err);
+    }
 
     // 4. Update content_index for real-time stats on home screen
     if (key.startsWith('nst_content_')) {
@@ -1797,8 +1876,6 @@ export const getChapterData = async (key: string) => {
     // 1. ⚡ In-memory cache — instant (microseconds)
     if (CHAPTER_MEM_CACHE.has(key)) {
         const cached = CHAPTER_MEM_CACHE.get(key);
-        // Background refresh so next call still benefits if RTDB has updates.
-        // (Fire-and-forget — does NOT block return.)
         _backgroundRefreshChapter(key);
         return cached;
     }
@@ -1808,7 +1885,6 @@ export const getChapterData = async (key: string) => {
         const stored = await storage.getItem(key);
         if (stored) {
             _memCachePut(key, stored);
-            // Same background refresh so memory cache catches latest server data.
             _backgroundRefreshChapter(key);
             return stored;
         }
@@ -1816,7 +1892,29 @@ export const getChapterData = async (key: string) => {
         // continue to network
     }
 
-    // 3. Network — RTDB first, then Firestore fallback
+    // 3. V2 mode-wise collections (PRIMARY network source)
+    //    Reading Notes  → lesson_free_notes/{key}
+    //    Writing Notes  → lesson_html_notes/{key}
+    //    MCQ            → lesson_mcq/{key}
+    //    Video          → lesson_video/{key}
+    //    Audio          → lesson_audio/{key}
+    //    PDF            → lesson_pdf/{key}
+    if (key.startsWith('nst_content_')) {
+        try {
+            const { getChapterDataV2 } = await import('./utils/lessonStorage');
+            const v2Data = await getChapterDataV2(key);
+            if (v2Data) {
+                _memCachePut(key, v2Data);
+                await storage.setItem(key, v2Data);
+                return v2Data;
+            }
+        } catch (v2Err) {
+            console.warn('[V2] getChapterDataV2 failed, falling back to V1:', v2Err);
+        }
+    }
+
+    // 4. V1 fallback — RTDB first, then Firestore
+    //    (old chapters jo V2 mein migrate nahi hue, ya V2 empty hai)
     try {
         const snapshot = await get(ref(rtdb, `content_data/${key}`));
         if (snapshot.exists()) {

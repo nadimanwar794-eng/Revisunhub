@@ -37,8 +37,8 @@ const THEME_STYLES: Record<ThemeVariant, {
     badge: 'text-gray-500',
   },
   blue: {
-    bg: 'bg-[#050d1f]',
-    text: 'text-white',
+    bg: 'bg-[#000000]',
+   text: 'text-white',
     subtext: 'text-blue-400/70',
     boxBg: 'bg-blue-950/60',
     boxBorder: 'border-blue-900/60',
@@ -171,28 +171,18 @@ export const AppLoadingScreen: React.FC<AppLoadingScreenProps> = ({ onComplete, 
     setTimeout(() => setLogoTapped(false), 600);
   };
 
-  const t = THEME_STYLES[themeVariant];
-  const iconColor1 = themeVariant === 'light' ? 'text-blue-500' : 'text-blue-400';
-  const iconColor2 = themeVariant === 'light' ? 'text-violet-600' : 'text-purple-400';
-  const iconColor3 = themeVariant === 'light' ? 'text-rose-500' : 'text-rose-400';
-  const iconColor4 = themeVariant === 'light' ? 'text-emerald-600' : 'text-emerald-400';
-  const iconColor5 = themeVariant === 'light' ? 'text-amber-500' : 'text-amber-400';
-  const iconColor6 = themeVariant === 'light' ? 'text-indigo-600' : 'text-indigo-400';
-  const iconColor7 = themeVariant === 'light' ? 'text-teal-600' : 'text-teal-400';
-  const iconColor8 = themeVariant === 'light' ? 'text-orange-500' : 'text-orange-400';
+  const t = THEME_STYLES.black;
+  const iconColor1 = 'text-blue-400';
+  const iconColor2 = 'text-purple-400';
+  const iconColor3 = 'text-rose-400';
+  const iconColor4 = 'text-emerald-400';
+  const iconColor5 = 'text-amber-400';
+  const iconColor6 = 'text-indigo-400';
+  const iconColor7 = 'text-teal-400';
+  const iconColor8 = 'text-orange-400';
 
   return (
-    <div className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center ${t.bg} ${t.text} overflow-hidden w-full mx-auto`}>
-      {/* Animated background gradient */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-20">
-        <div className={`absolute top-[-10%] left-[-10%] w-[120%] h-[120%] ${
-          themeVariant === 'blue'
-            ? 'bg-[radial-gradient(circle_at_center,rgba(59,130,246,0.4)_0%,transparent_55%)]'
-            : themeVariant === 'black'
-            ? 'bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.25)_0%,transparent_55%)]'
-            : 'bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.15)_0%,transparent_55%)]'
-        } animate-[spin_15s_linear_infinite]`} />
-      </div>
+    <div className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-black text-white overflow-hidden w-full mx-auto`}>
 
       <div className="relative z-10 flex flex-col items-center w-full px-8">
         <button

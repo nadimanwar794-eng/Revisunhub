@@ -39,7 +39,7 @@ A student exam-prep platform (school boards + competitive/government exams) with
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Coaching ke har section (Speedy Science, Social Science, Sar Sangrah, Lucent, Current Affairs, custom books, aur MCQ Practice) mein MCQs ek-ek karke Lucent-style viewer mein dikhne chahiye; ek saath list nahi.
 
 ## Smart Crash Protection System
 

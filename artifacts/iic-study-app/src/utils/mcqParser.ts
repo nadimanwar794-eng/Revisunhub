@@ -1,6 +1,39 @@
 import { MCQItem } from '../types';
 
 /**
+ * Normalize the markdown-heavy paste format used by coaching books before
+ * parsing. The lightning marker is only a visual tag; it must never decide
+ * whether a question has numbered statements.
+ */
+export function normalizeMcqPaste(raw: string): string {
+    let text = raw.replace(/\r\n/g, '\n');
+
+    // Remove empty duplicate answer labels such as:
+    // **सही उत्तर:
+    // **सही उत्तर:** B) ...
+    text = text.replace(
+        /^[ \t]*(?:\*{1,2})?\s*(?:सही\s*उत्तर|Ans(?:wer)?)\s*[:：]\s*(?:\*{1,2})?\s*$/gim,
+        '',
+    );
+    text = text.replace(
+        /\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?)\s*[:：]\s*\n+\s*(?=\*\*\s*(?:सही\s*उत्तर|Ans(?:wer)?))/gi,
+        '',
+    );
+
+    // Strip visual/category markers from the beginning of question lines.
+    text = text.replace(
+        /^\s*\[(?:[⚡🔥💡🎯⭐✨🏆⚠️🌟][^\]]*?|[^\]]{1,10})\]\s*/gm,
+        '',
+    );
+
+    // Markdown bold is presentation-only here. Removing it also turns
+    // **सही उत्तर:** B) ... into the parser-friendly सही उत्तर: B) ...
+    text = text.replace(/\*\*/g, '');
+
+    return text;
+}
+
+/**
  * Parses a raw text containing MCQ questions formatted with specific emojis and headers
  * into an array of MCQItem objects.
  *
@@ -225,6 +258,7 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
 export function parseMCQText(text: string): { questions: MCQItem[], notes: {title: string, content: string}[] } {
   const questions: MCQItem[] = [];
   const notes: {title: string, content: string}[] = [];
+  text = normalizeMcqPaste(text);
 
   // ── Extract <NOTE: title>...</NOTE: title> blocks first ──────────────────
   // These are explicit note sections the user pastes alongside MCQs.

@@ -16,7 +16,11 @@ import { onSessionComplete, queueSession, consumeSessionQueue, SessionCompletePa
 import { SessionSummaryBanner } from './components/SessionSummaryBanner';
 import { GroupedSessionBanner } from './components/GroupedSessionBanner';
 import { loadRoutineData } from './utils/routineStorage';
+import { hydrateRevisionTracker } from './utils/revisionFirebase';
+import { setRevisionTrackerUser } from './utils/revisionTrackerV2';
+import { hydrateRoutineData } from './utils/routineFirebaseSync';
 import { applyDeduction, getTotalCredits } from './utils/creditSystem';
+import { consumeDeferredStudyCoins } from './utils/studyRewards';
 import { signInAnonymously } from 'firebase/auth';
 import { fetchChapters, fetchLessonContent } from './services/groq';
 import { AppLoadingScreen } from './components/AppLoadingScreen';
@@ -422,48 +426,62 @@ const App: React.FC = () => {
     const user = state.user;
     if (!user?.id) return;
 
-    // ── Step 1: Coin sync ───────────────────────────────────────────────────
+    // Study coins are held outside the profile until Home is opened.
+    // Consume the whole pool in one payout so separate study modes are combined.
+    const deferredStudyCoins = consumeDeferredStudyCoins(user.id);
+    if (deferredStudyCoins > 0) {
+      const updatedUser = { ...user, credits: (user.credits || 0) + deferredStudyCoins };
+      setState(prev => ({ ...prev, user: updatedUser }));
+      saveUserToLive(updatedUser);
+      fireCreditNotify({
+        type: 'EARN',
+        amount: deferredStudyCoins,
+        remaining: updatedUser.credits || 0,
+        source: 'reading',
+      });
+    }
+
+    // ── Step 1: Keep the legacy score-sync marker current ───────────────────
+    // Study coins are now held in the deferred study-reward pool below and
+    // paid together on Home. Do not convert score deltas here.
     const syncKey = `nst_credit_sync_score_${user.id}`;
     const raw = localStorage.getItem(syncKey);
     const currentScore = user.totalScore || 0;
-    let coinsFromSync = 0;
 
     if (raw === null) {
-      // Pehli baar: sirf baseline set karo
       localStorage.setItem(syncKey, String(currentScore));
     } else {
       const lastSynced = parseInt(raw, 10);
       const delta = currentScore - lastSynced;
       if (delta > 0) {
         localStorage.setItem(syncKey, String(currentScore));
-        const routineOn = loadRoutineData(user.id).enabled;
-        const ratio = routineOn ? (1 / 6) : 0.125;
-        coinsFromSync = Math.floor(delta * ratio);
-        if (coinsFromSync > 0) {
-          const newCredits = (user.credits || 0) + coinsFromSync;
-          const updatedUser = { ...user, credits: newCredits };
-          setState(prev => ({ ...prev, user: updatedUser }));
-          saveUserToLive(updatedUser);
-        }
       }
     }
 
     // ── Step 2: Session queue consume karo ─────────────────────────────────
-    const queue = consumeSessionQueue();
+    let queue = consumeSessionQueue();
     if (queue.length === 0) {
-      // Koi session nahi — agar sirf coins mile to CreditToast dikhao
-      if (coinsFromSync > 0) {
-        fireCreditNotify({ type: 'EARN', amount: coinsFromSync, remaining: (user.credits || 0) + coinsFromSync, source: 'reading' });
+      if (deferredStudyCoins <= 0) return;
+      queue = [{
+        type: 'LESSON',
+        subject: '',
+        chapter: 'Study Rewards',
+        timeSecs: 0,
+        activityType: 'Study',
+        coinsEarned: deferredStudyCoins,
+      }];
+    } else if (deferredStudyCoins > 0) {
+      // Flashcard and older study payloads may not carry coin metadata even
+      // though the shared pending pool contains the earned total.
+      const reportedCoins = queue.reduce((sum, session) => sum + (session.coinsEarned || 0), 0);
+      const missingCoins = Math.max(0, deferredStudyCoins - reportedCoins);
+      if (missingCoins > 0) {
+        const last = queue.length - 1;
+        queue[last] = {
+          ...queue[last],
+          coinsEarned: (queue[last].coinsEarned || 0) + missingCoins,
+        };
       }
-      return;
-    }
-
-    // Sync se mile coins ko last session mein add karo
-    if (coinsFromSync > 0) {
-      queue[queue.length - 1] = {
-        ...queue[queue.length - 1],
-        coinsEarned: (queue[queue.length - 1].coinsEarned ?? 0) + coinsFromSync,
-      };
     }
 
     // Har session ka credit history record karo + bonusPts augment karo
@@ -530,15 +548,8 @@ const App: React.FC = () => {
       const ratio = routineOn ? (1 / 6) : 0.125;
       const expectedCoins = Math.floor(earned * ratio);
       finalCoins = Math.max(earnedC, expectedCoins);
-      if (finalCoins > earnedC) {
-        // Gap fill karo — ye credits abhi tak balance mein nahi hain
-        const toAdd = finalCoins - earnedC;
-        const newCredits = (_sessUser.credits || 0) + toAdd;
-        const updatedUser = { ..._sessUser, credits: newCredits };
-        setState(prev => ({ ...prev, user: updatedUser }));
-        saveUserToLive(updatedUser);
-      }
-      // Home-tab sync key update karo — warna home sync yahi pts dobara convert karega
+      // The study screen has already placed these coins in the shared pending
+      // pool. This function only creates the Home session summary.
       localStorage.setItem(`nst_credit_sync_score_${_sessUser.id}`, String(_sessUser.totalScore || 0));
     }
     queueSession({
@@ -665,24 +676,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (studentTab !== 'HOME') return;
-    if (pendingLessonCreditsRef.current <= 0) return;
-    // Start 4-second timer — apply coins 4s after landing on HOME
-    pendingLessonTimerRef.current = setTimeout(() => {
-      const coins = pendingLessonCreditsRef.current;
-      if (coins <= 0) return;
-      pendingLessonCreditsRef.current = 0;
-      // Add to user balance
-      const currentUser = state.user;
-      if (!currentUser) return;
-      const newCredits = (currentUser.credits || 0) + coins;
-      const updated = { ...currentUser, credits: newCredits };
-      setState(prev => ({ ...prev, user: updated }));
-      saveUserToLive(updated);
-      fireCreditNotify({ type: 'EARN', amount: coins, remaining: newCredits, source: 'reading' });
-    }, 4000);
-    return () => {
-      if (pendingLessonTimerRef.current) clearTimeout(pendingLessonTimerRef.current);
-    };
+    // LessonView now writes directly to the same deferred study pool.
+    return undefined;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studentTab]);
 
@@ -1167,6 +1162,30 @@ const App: React.FC = () => {
   }, [isOnline]);
 
   // --- LIVE SETTINGS & USER SYNC (REALTIME) ---
+  // Revision Hub has a local-first UI, but Firebase is the source of truth
+  // across cache clears and devices. Hydrate once whenever the active account
+  // changes; the mounted hub listens for the completion event and reloads.
+  useEffect(() => {
+      const userId = state.user?.id;
+      if (!userId || state.originalAdmin) {
+          setRevisionTrackerUser(null);
+          return;
+      }
+      hydrateRevisionTracker(userId).catch(err => {
+          console.warn('[IIC] Revision tracker restore skipped:', err);
+      });
+  }, [state.user?.id, state.originalAdmin]);
+
+  // Routine config/coins/claims Firebase restore — runs once per login.
+  // MyRoutine listens for 'iic-routine-hydrated' and reloads state.
+  useEffect(() => {
+      const userId = state.user?.id;
+      if (!userId || state.originalAdmin) return;
+      hydrateRoutineData(userId).catch(err => {
+          console.warn('[IIC] Routine hydration skipped:', err);
+      });
+  }, [state.user?.id, state.originalAdmin]);
+
   useEffect(() => {
       let unsubscribeUser: (() => void) | undefined;
 
@@ -1919,22 +1938,21 @@ const App: React.FC = () => {
       return;
     }
 
-    try {
-      const schoolProfile = await getSchoolUserProfile(user.id);
-      if (schoolProfile) {
-        setState(prev => ({ ...prev, user, view: 'SCHOOL_ECOSYSTEM' as any }));
-        return;
-      }
-    } catch (_) { /* not a school user, continue normal flow */ }
+    // School + Coaching profile checks parallel mein chalao — slow network pe time bachta hai
+    const [schoolProfile, coachingProfile] = await Promise.all([
+      getSchoolUserProfile(user.id).catch(() => null),
+      getCoachingUserProfile(user.id).catch(() => null),
+    ]);
 
-    // Check if this user is a Coaching Ecosystem user
-    try {
-      const coachingProfile = await getCoachingUserProfile(user.id);
-      if (coachingProfile) {
-        setState(prev => ({ ...prev, user, view: 'COACHING_ECOSYSTEM' as any }));
-        return;
-      }
-    } catch (_) { /* not a coaching user, continue normal flow */ }
+    if (schoolProfile) {
+      setState(prev => ({ ...prev, user, view: 'SCHOOL_ECOSYSTEM' as any }));
+      return;
+    }
+
+    if (coachingProfile) {
+      setState(prev => ({ ...prev, user, view: 'COACHING_ECOSYSTEM' as any }));
+      return;
+    }
 
     // Check if onboarding is needed
     if ((user.role === 'STUDENT' || user.role === 'TEACHER') && !user.profileCompleted) {
@@ -3452,7 +3470,7 @@ const App: React.FC = () => {
       </header>
       )}
 
-      <main id="main-content" className={`flex-1 w-full max-w-6xl mx-auto ${isFullScreen ? 'p-0' : 'p-4 mb-8'}`}>
+      <main id="main-content" className={`flex-1 w-full max-w-6xl mx-auto ${isFullScreen || state.view === ('STUDENT_DASHBOARD' as any) ? 'p-0' : 'p-4 mb-8'}`}>
         {!state.user ? (
             <ErrorBoundary fallbackLabel="Login" compact>
               <Auth onLogin={handleLogin} logActivity={logActivity} appSettings={state.settings} />

@@ -1024,16 +1024,16 @@
 .dark-mode-blue nav[aria-label="Primary"] button span[class*="text-slate-4"] {
     color: #2a3d5e !important;
 }
-/* Active tab glow pill — premium dark tinted glow */
-.dark-mode nav[aria-label="Primary"] .nav-active-glow {
-    background: rgba(59,130,246,0.14) !important;
-    box-shadow: 0 0 12px rgba(59,130,246,0.12) !important;
-    border: 1px solid rgba(59,130,246,0.18) !important;
-}
-.dark-mode-blue nav[aria-label="Primary"] .nav-active-glow {
-    background: rgba(99,102,241,0.16) !important;
-    box-shadow: 0 0 14px rgba(99,102,241,0.14) !important;
-    border: 1px solid rgba(99,102,241,0.22) !important;
+/* Active tab glow pill — invisible in dark modes so only the icon fill +
+   top accent bar signals the active tab (matches how white mode looks). */
+.dark-mode nav[aria-label="Primary"] .nav-active-glow,
+.dark-mode-blue nav[aria-label="Primary"] .nav-active-glow,
+.dark-mode-black nav[aria-label="Primary"] .nav-active-glow {
+    background: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    outline: none !important;
 }
 
 .dark-mode .text-slate-900,

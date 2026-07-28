@@ -19,6 +19,8 @@ interface Props {
   maintenanceMessage?: string;
   /** Override retry minutes shown when crashTarget is set */
   maintenanceRetryMinutes?: number;
+  /** Custom fallback renderer — overrides compact/crashTarget fallback. Receives (error, onRetry). */
+  fallback?: (error: Error | null, onRetry: () => void) => ReactNode;
 }
 
 interface State {
@@ -119,6 +121,11 @@ export class ErrorBoundary extends Component<Props, State> {
 
     const isOffline = !navigator.onLine;
     const label = this.props.fallbackLabel ?? 'page';
+
+    // Custom fallback takes priority over built-in renders
+    if (this.props.fallback) {
+      return this.props.fallback(this.state.error, this.handleRetry) as React.ReactElement;
+    }
 
     // Smart Crash Protection: show professional maintenance screen instead of React error
     if (this.props.crashTarget === 'studentDashboard' && !isOffline) {

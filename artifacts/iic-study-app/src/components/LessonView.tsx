@@ -18,7 +18,7 @@ import { WriteModeCorrection } from "./WriteModeCorrection";
 import { SpeakButton } from './SpeakButton';
 import { McqSpeakButtons } from './McqSpeakButtons';
 import { ChunkedNotesReader } from './ChunkedNotesReader';
-import { renderMathInHtml } from '../utils/mathUtils';
+import { renderMathInHtml, formatExplanationHtml } from '../utils/mathUtils';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import { stopSpeaking } from '../utils/ttsHighlighter';
 import { speakText, stripHtml } from '../utils/textToSpeech';
@@ -38,6 +38,7 @@ import { ReadingScoreHUD } from './ReadingScoreHUD';
 import { PdfViewer } from './PdfViewer';
 import { useAppTheme } from '../utils/themeContext';
 import { fireSessionComplete } from '../utils/sessionNotify';
+import { deferStudyCoins } from '../utils/studyRewards';
 
 
 interface Props {
@@ -322,9 +323,8 @@ export const LessonView: React.FC<Props> = ({
   // Fractional coin accumulator — carries sub-1 amounts between reading events
   const coinFracAccumRef = useRef(0);
 
-  // ── Pending session coins — collected during session, applied 4s after HOME ──
+  // ── Pending session coins — collected during session, applied on HOME return ──
   const pendingSessionCreditsRef = useRef(0);
-  const [pendingCreditDisplay, setPendingCreditDisplay] = useState(0);
 
   const awardMcqSessionCoins = useCallback((
     totalPts: number,
@@ -347,17 +347,8 @@ export const LessonView: React.FC<Props> = ({
     // Save coins so flushSessionEvents can include them in MCQ session payload
     mcqFlushCrRef.current += coins;
 
-    const newCredits = (_user.credits || 0) + coins;
-    const updatedWithCoins = { ..._user, credits: newCredits };
-    _onUpdateUser(updatedWithCoins);
-    saveUserToLive(updatedWithCoins);
-
-    fireCreditNotify({
-      type: 'EARN',
-      amount: coins,
-      remaining: newCredits,
-      source: 'mcq',
-    });
+    // Study coins stay pending until the student returns to Home.
+    deferStudyCoins(_user.id, coins);
   }, []);
 
   const handleReadingScoreEarned = useCallback((pts: number, activity: string) => {
@@ -400,8 +391,8 @@ export const LessonView: React.FC<Props> = ({
 
       // Coins deferred — accumulate for session-end (no immediate balance update / notification)
       if (coins > 0) {
+        deferStudyCoins(_user.id, coins);
         pendingSessionCreditsRef.current += coins;
-        setPendingCreditDisplay(pendingSessionCreditsRef.current);
         creditsEarnedThisSessionRef.current = true;
       }
     }
@@ -424,9 +415,9 @@ export const LessonView: React.FC<Props> = ({
     // ── Routine credit gating: credits only on first visit ────────────────────
     if (!isFirstTimeRef.current) return;
 
-    // Defer — collect in session box, apply 4s after HOME
+    // Defer — apply on HOME return
+    deferStudyCoins(userRef.current?.id, credits);
     pendingSessionCreditsRef.current += credits;
-    setPendingCreditDisplay(pendingSessionCreditsRef.current);
     creditsEarnedThisSessionRef.current = true;
   }, []);
 
@@ -1037,9 +1028,16 @@ export const LessonView: React.FC<Props> = ({
           const strippedContent = filteredContent
               .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
               .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+              // Block-level closers → newline so 📌/📖/📝/💡 section markers
+              // stay on separate lines; without this, splitNoteSections' heading
+              // regex ([^\n]*) grabs the entire content as one giant heading and
+              // repeats it across all three tabs (Book Text / Smart Notes / आसान समझ).
+              .replace(/<\/?\s*(?:p|div|h[1-6]|li|ul|ol|tr|td|th|section|article|blockquote|pre|br)\s*[^>]*>/gi, '\n')
               .replace(/<[^>]*>/g, ' ')
               .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-              .replace(/\s+/g, ' ').trim();
+              .replace(/[^\S\n]+/g, ' ')   // collapse spaces/tabs but keep newlines
+              .replace(/\n{3,}/g, '\n\n')  // max 2 consecutive newlines
+              .trim();
 
           const isPremiumUser = !!(user?.isPremium || (user?.subscriptionTier && user.subscriptionTier !== 'FREE'));
           const HTML_UNLOCK_COST = 10;
@@ -1444,32 +1442,26 @@ export const LessonView: React.FC<Props> = ({
                   )}
               {/* Next Chapter bar — shown at bottom when next chapter is available */}
               {onNext && (
-                <div className={`flex-shrink-0 border-t border-slate-100 bg-white px-4 py-2.5${isImmersive ? ' hidden' : ''}`}>
+                <div className={`flex-shrink-0 border-t border-slate-200/60 bg-white px-4 py-2.5${isImmersive ? ' hidden' : ''}`}>
                   <button
                     onClick={() => {
                       if (user && onUpdateUser) { setPendingNextChapter(true); }
                       else { onNext(); }
                     }}
-                    className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl text-white font-black text-sm active:scale-[0.98] transition-all shadow-md"
-                    style={{ background: 'linear-gradient(90deg, #6366f1, #8b5cf6)' }}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-900 border border-slate-700/60 active:scale-[0.98] transition-all group shadow-sm"
                   >
-                    <span>📖 Agla Chapter</span>
-                    <span className="flex items-center gap-1.5 text-xs opacity-90">
-                      {nextTitle && <span className="truncate max-w-[140px]">{nextTitle}</span>}
-                      <ChevronRight size={16} />
-                    </span>
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center shrink-0 group-hover:bg-indigo-500/30 transition-colors">
+                      <BookOpen size={15} className="text-indigo-400" />
+                    </div>
+                    <div className="flex-1 text-left min-w-0">
+                      <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-[0.14em]">Agla Chapter</p>
+                      {nextTitle && <p className="text-sm font-semibold text-white truncate mt-0.5">{nextTitle}</p>}
+                    </div>
+                    <ChevronRight size={16} className="text-slate-500 shrink-0 group-hover:text-indigo-400 transition-colors" />
                   </button>
                 </div>
               )}
               {floatingBtn}
-              {/* ── Pending coin box ── */}
-              {pendingCreditDisplay > 0 && (
-                <div style={{ position:'fixed', bottom:132, right:16, zIndex:54, background:'rgba(10,10,20,0.88)', backdropFilter:'blur(10px)', WebkitBackdropFilter:'blur(10px)', borderRadius:20, padding:'5px 11px', display:'flex', alignItems:'center', gap:5, border:'1px solid rgba(251,191,36,0.35)', boxShadow:'0 2px 12px rgba(251,191,36,0.15)', pointerEvents:'none' }}>
-                  <span style={{ fontSize:13 }}>🪙</span>
-                  <span style={{ color:'#fbbf24', fontWeight:900, fontSize:13, lineHeight:1 }}>+{pendingCreditDisplay}</span>
-                  <span style={{ color:'#64748b', fontSize:9, fontWeight:600, lineHeight:1 }}>session</span>
-                </div>
-              )}
               {coinModal}
               {nextChapterModal}
               </div>
@@ -1595,22 +1587,6 @@ export const LessonView: React.FC<Props> = ({
                           visible={true}
                           levelColor="#818cf8"
                       />
-                  )}
-                  {/* ── Pending coin box ── */}
-                  {pendingCreditDisplay > 0 && (
-                    <div style={{
-                      position: 'fixed', bottom: 132, right: 16, zIndex: 54,
-                      background: 'rgba(10,10,20,0.88)', backdropFilter: 'blur(10px)',
-                      WebkitBackdropFilter: 'blur(10px)', borderRadius: 20,
-                      padding: '5px 11px', display: 'flex', alignItems: 'center', gap: 5,
-                      border: '1px solid rgba(251,191,36,0.35)',
-                      boxShadow: '0 2px 12px rgba(251,191,36,0.15)',
-                      pointerEvents: 'none',
-                    }}>
-                      <span style={{ fontSize: 13 }}>🪙</span>
-                      <span style={{ color: '#fbbf24', fontWeight: 900, fontSize: 13, lineHeight: 1 }}>+{pendingCreditDisplay}</span>
-                      <span style={{ color: '#64748b', fontSize: 9, fontWeight: 600, lineHeight: 1 }}>session</span>
-                    </div>
                   )}
                   {floatingBtn}
               </div>
@@ -1752,14 +1728,6 @@ export const LessonView: React.FC<Props> = ({
                   </div>
               </div>
           {floatingBtn}
-          {/* ── Pending coin box ── */}
-          {pendingCreditDisplay > 0 && (
-            <div style={{ position:'fixed', bottom:132, right:16, zIndex:54, background:'rgba(10,10,20,0.88)', backdropFilter:'blur(10px)', WebkitBackdropFilter:'blur(10px)', borderRadius:20, padding:'5px 11px', display:'flex', alignItems:'center', gap:5, border:'1px solid rgba(251,191,36,0.35)', boxShadow:'0 2px 12px rgba(251,191,36,0.15)', pointerEvents:'none' }}>
-              <span style={{ fontSize:13 }}>🪙</span>
-              <span style={{ color:'#fbbf24', fontWeight:900, fontSize:13, lineHeight:1 }}>+{pendingCreditDisplay}</span>
-              <span style={{ color:'#64748b', fontSize:9, fontWeight:600, lineHeight:1 }}>session</span>
-            </div>
-          )}
           </div>
       );
   }
@@ -2550,25 +2518,28 @@ export const LessonView: React.FC<Props> = ({
                                        const answered = projectorSelected !== null;
 
                                        let bg = '#f8fafc';
-                                       let border = '3px solid #e2e8f0';
+                                       let border = '1px solid #e2e8f0';
                                        let textColor = '#1e293b';
-                                       let dotBg = '#3b82f6';
+                                       let radioBorder = '2px solid #94a3b8';
+                                       let radioFill = 'transparent';
                                        let icon: React.ReactNode = null;
 
                                        if (projectorReveal) {
-                                           if (isCorrect) { bg = '#dcfce7'; border = '3px solid #22c55e'; textColor = '#15803d'; dotBg = '#22c55e'; icon = <CheckCircle size={32} color="#22c55e" />; }
+                                           if (isCorrect) { bg = '#dcfce7'; border = '2px solid #22c55e'; textColor = '#15803d'; radioBorder = '2px solid #22c55e'; radioFill = '#22c55e'; icon = <CheckCircle size={28} color="#22c55e" />; }
                                        } else if (answered) {
-                                           if (isSelected && isCorrect) { bg = '#dcfce7'; border = '3px solid #22c55e'; textColor = '#15803d'; dotBg = '#22c55e'; icon = <CheckCircle size={32} color="#22c55e" />; }
-                                           else if (isSelected && !isCorrect) { bg = '#fef2f2'; border = '3px solid #ef4444'; textColor = '#991b1b'; dotBg = '#ef4444'; icon = <span style={{ fontSize:28, fontWeight:900, color:'#ef4444' }}>✗</span>; }
-                                           else if (isCorrect) { bg = '#dcfce7'; border = '3px solid #22c55e'; textColor = '#15803d'; dotBg = '#22c55e'; icon = <CheckCircle size={32} color="#22c55e" />; }
+                                           if (isSelected && isCorrect) { bg = '#dcfce7'; border = '2px solid #22c55e'; textColor = '#15803d'; radioBorder = '2px solid #22c55e'; radioFill = '#22c55e'; icon = <CheckCircle size={28} color="#22c55e" />; }
+                                           else if (isSelected && !isCorrect) { bg = '#fef2f2'; border = '2px solid #ef4444'; textColor = '#991b1b'; radioBorder = '2px solid #ef4444'; radioFill = '#ef4444'; icon = <span style={{ fontSize:24, fontWeight:900, color:'#ef4444' }}>✗</span>; }
+                                           else if (isCorrect) { bg = '#dcfce7'; border = '2px solid #22c55e'; textColor = '#15803d'; radioBorder = '2px solid #22c55e'; radioFill = '#22c55e'; icon = <CheckCircle size={28} color="#22c55e" />; }
                                        }
 
                                        return (
                                            <div key={oi}
                                                onClick={() => { if (!answered && !projectorReveal) setProjectorSelected(oi); }}
-                                               style={{ display:'flex', alignItems:'center', gap:16, background:bg, border, borderRadius:16, padding:'18px 24px', cursor: (answered || projectorReveal) ? 'default' : 'pointer', transition:'background 0.2s, border 0.2s' }}>
-                                               <span style={{ background: dotBg, color:'#fff', borderRadius:999, width:40, height:40, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, fontWeight:900, flexShrink:0 }}>{optionLetters[oi]}</span>
-                                               <div style={{ fontSize:24, fontWeight:600, color:textColor, lineHeight:1.4, flex:1 }}
+                                               style={{ display:'flex', alignItems:'center', gap:16, background:bg, border, borderRadius:14, padding:'16px 20px', cursor: (answered || projectorReveal) ? 'default' : 'pointer', transition:'background 0.2s, border 0.2s' }}>
+                                               <span style={{ width:24, height:24, borderRadius:'50%', border: radioBorder, background: radioFill, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                                                   {radioFill !== 'transparent' && <span style={{ width:10, height:10, borderRadius:'50%', background:'#fff' }} />}
+                                               </span>
+                                               <div style={{ fontSize:22, fontWeight:500, color:textColor, lineHeight:1.4, flex:1 }}
                                                    dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} />
                                                {icon}
                                            </div>
@@ -3188,7 +3159,7 @@ export const LessonView: React.FC<Props> = ({
                                                                    </div>
                                                                    <SpeakButton text={q.explanation} className="p-1 text-blue-400 hover:bg-blue-100" iconSize={14} />
                                                                </div>
-                                                               <div className="text-slate-600 text-sm leading-relaxed prose prose-sm max-w-none w-full" dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.explanation) }} />
+                                                               <div className="text-slate-600 text-sm leading-relaxed prose prose-sm max-w-none w-full" dangerouslySetInnerHTML={{ __html: formatExplanationHtml(q.explanation) }} />
                                                            </div>
                                                        )}
                                                    </div>
@@ -3401,7 +3372,7 @@ export const LessonView: React.FC<Props> = ({
                                                            </div>
                                                            <SpeakButton text={q.explanation} className="p-1 text-blue-400 hover:bg-blue-100" iconSize={14} />
                                                        </div>
-                                                       <div className="text-slate-600 text-sm leading-relaxed prose prose-sm max-w-none w-full" dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.explanation) }} />
+                                                       <div className="text-slate-600 text-sm leading-relaxed prose prose-sm max-w-none w-full" dangerouslySetInnerHTML={{ __html: formatExplanationHtml(q.explanation) }} />
                                                    </div>
                                                )}
                                                {q.commonMistake && (
@@ -3491,7 +3462,7 @@ export const LessonView: React.FC<Props> = ({
                                         })}
                                     </div>
                                     <div className="ml-9 p-2 bg-slate-50 text-[10px] text-slate-600 italic rounded">
-                                        <span className="font-bold">Explanation:</span> <span dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.explanation || 'N/A') }}></span>
+                                        <span className="font-bold">Explanation:</span> <span dangerouslySetInnerHTML={{ __html: formatExplanationHtml(q.explanation || "N/A") }}></span>
                                     </div>
                                 </div>
                             );
@@ -3530,16 +3501,19 @@ export const LessonView: React.FC<Props> = ({
                                <div className="flex-[2]"></div> // Spacer if no next button on last page
                            )}
 
-                           {/* Submit Button - Always visible if condition met, or on last page */}
-                           {(canSubmit || !hasMore) && (
-                               <button
-                                   onClick={handleSubmitRequest}
-                                   disabled={!canSubmit}
-                                   className={`flex-[2] py-3 font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg ${canSubmit ? 'bg-green-600 text-white shadow-green-100' : 'bg-slate-200 text-slate-500'}`}
-                               >
-                                   Submit <Trophy size={20} />
-                               </button>
-                           )}
+                           {/* Submit Button - Always visible; disabled with hint until threshold met */}
+                           <button
+                               onClick={handleSubmitRequest}
+                               disabled={!canSubmit}
+                               className={`flex-[2] py-3 font-bold rounded-xl flex flex-col items-center justify-center gap-0.5 shadow-lg transition-all ${canSubmit ? 'bg-green-600 text-white shadow-green-100' : 'bg-slate-100 text-slate-400 border border-slate-200'}`}
+                           >
+                               <span className="flex items-center gap-1.5">Submit <Trophy size={18} /></span>
+                               {!canSubmit && (
+                                   <span className="text-[9px] font-black leading-none opacity-70">
+                                       {minRequired - attemptedCount} more to go
+                                   </span>
+                               )}
+                           </button>
                        </>
                    )}
 

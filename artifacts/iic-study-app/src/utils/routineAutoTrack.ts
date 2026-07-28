@@ -306,3 +306,73 @@ export function markLessonRewarded(lessonId: string): void {
   d.lessonRewarded[lessonId] = true;
   save(d);
 }
+
+// ── Progress display helpers ──────────────────────────────────────────────────
+
+/** Format seconds into human-readable duration, e.g. "2h 18m" or "8m 22s" */
+export function formatDuration(seconds: number): string {
+  if (seconds <= 0) return '';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  return `${s}s`;
+}
+
+/**
+ * 5-level color system based on completion %:
+ * 0% → Red, 1-25% → Orange, 26-50% → Yellow, 51-75% → Blue, 76-100% → Green
+ */
+export function getProgressColor5(pct: number): { bg: string; text: string; border: string; label: string } {
+  if (pct >= 76) return { bg: '#dcfce7', text: '#16a34a', border: '#86efac', label: 'Completed' };
+  if (pct >= 51) return { bg: '#dbeafe', text: '#2563eb', border: '#93c5fd', label: 'Almost Done' };
+  if (pct >= 26) return { bg: '#fef9c3', text: '#ca8a04', border: '#fde047', label: 'Half Read' };
+  if (pct >= 1)  return { bg: '#ffedd5', text: '#ea580c', border: '#fdba74', label: 'Started' };
+  return { bg: '#f1f5f9', text: '#94a3b8', border: '#e2e8f0', label: 'Not Started' };
+}
+
+/** Tick marks: ✓=1%, ✓✓=25%, ✓✓✓=50%, ✓✓✓✓=100% */
+export function getProgressTicks(pct: number): string {
+  if (pct >= 100) return '✓✓✓✓';
+  if (pct >= 50)  return '✓✓✓';
+  if (pct >= 25)  return '✓✓';
+  if (pct >= 1)   return '✓';
+  return '';
+}
+
+/** Aggregate read + time stats for a single lesson (used on lesson cards) */
+export function getLessonStats(lessonId: string, totalPages: number): {
+  pagesRead: number; totalTime: number; pct: number;
+} {
+  const d = load();
+  let pagesRead = 0;
+  let totalTime = 0;
+  for (let i = 0; i < totalPages; i++) {
+    const key = `${lessonId}__${i}`;
+    if (d.pageReads[key]) pagesRead++;
+    totalTime += d.timings[key] || 0;
+  }
+  const pct = totalPages > 0 ? Math.round((pagesRead / totalPages) * 100) : 0;
+  return { pagesRead, totalTime, pct };
+}
+
+/** Aggregate read + time stats across multiple lessons (for subject / book cards) */
+export function getMultiLessonStats(lessons: Array<{ id: string; pageCount: number }>): {
+  totalLessons: number; lessonsStarted: number; totalPages: number; pagesRead: number; totalTime: number; pct: number;
+} {
+  const d = load();
+  let totalPages = 0, pagesRead = 0, totalTime = 0, lessonsStarted = 0;
+  for (const { id, pageCount } of lessons) {
+    let started = false;
+    for (let i = 0; i < pageCount; i++) {
+      const key = `${id}__${i}`;
+      if (d.pageReads[key]) { pagesRead++; started = true; }
+      totalTime += d.timings[key] || 0;
+    }
+    totalPages += pageCount;
+    if (started) lessonsStarted++;
+  }
+  const pct = totalPages > 0 ? Math.round((pagesRead / totalPages) * 100) : 0;
+  return { totalLessons: lessons.length, lessonsStarted, totalPages, pagesRead, totalTime, pct };
+}

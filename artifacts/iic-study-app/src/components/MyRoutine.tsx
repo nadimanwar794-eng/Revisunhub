@@ -20,6 +20,7 @@ import {
 } from '../utils/routineStorage';
 import { saveUserToLive } from '../firebase';
 import { getLevelInfo } from '../utils/levelSystem';
+import { scheduleRoutineSync, syncRoutineNow } from '../utils/routineFirebaseSync';
 import {
   isRoutineMcqDone, getAutoTrackSnapshot, getRoutineMcqScore,
   getStarRating, getMistakeCount, getMaskCount, getLessonTotalTime,
@@ -99,6 +100,20 @@ const SUBJECT_META: Record<string, { icon: React.ReactNode; color: string; bg: s
   mathematics:       { icon: <Zap size={18} />,          color: 'text-purple-600',  bg: 'bg-purple-50',  border: 'border-purple-200' },
 };
 const DEFAULT_META = { icon: <BookOpen size={18} />, color: 'text-slate-600', bg: 'bg-slate-50', border: 'border-slate-200' };
+
+// ── Toggle track color map (explicit hex — avoids Tailwind JIT purge of dynamic class names) ─
+const SUBJECT_TOGGLE_COLOR: Record<string, string> = {
+  'text-blue-600':    '#3b82f6',
+  'text-green-600':   '#22c55e',
+  'text-emerald-600': '#10b981',
+  'text-cyan-600':    '#06b6d4',
+  'text-amber-600':   '#f59e0b',
+  'text-indigo-600':  '#6366f1',
+  'text-orange-600':  '#f97316',
+  'text-teal-600':    '#14b8a6',
+  'text-purple-600':  '#a855f7',
+  'text-slate-600':   '#64748b',
+};
 
 const CAT_LABEL: Record<SubjectCategory, string> = {
   SCIENCE:       '🔬 Science',
@@ -370,7 +385,7 @@ function LessonDetailRow({ lesson, idx, isCurrent, mcqHistory }: {
   );
 }
 
-// ── Subject Card (Subjects tab) — redesigned ──────────────────────────────────
+// ── Subject Card (Subjects tab) — simplified ──────────────────────────────────
 function SubjectCard({
   sub, lessons, mcqHistory, coins, onToggleApply, onChangeStart, onCoinFlash,
 }: {
@@ -378,23 +393,9 @@ function SubjectCard({
   coins: number; onToggleApply: () => void; onChangeStart: (idx: number) => void;
   onCoinFlash: (msg: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const [targetStart, setTargetStart] = useState(sub.startLessonIndex);
-  const meta        = SUBJECT_META[sub.id] || DEFAULT_META;
-  const snap        = getAutoTrackSnapshot();
-  const completedCount = lessons.filter(l => {
-    const tp = l.pages?.length || 0;
-    if (tp === 0) return false;
-    // Per-page criteria: every page must be read AND have its page MCQ done
-    return Array.from({ length: tp }, (_, i) => {
-      const read    = !!snap.pageReads[`${l.id}__${i}`];
-      const pageMcq = !!snap.pageMcqDone?.[`${l.id}__${i}`];
-      return read && pageMcq;
-    }).every(Boolean);
-  }).length;
-  const pct = lessons.length > 0 ? Math.round((completedCount / lessons.length) * 100) : 0;
+  const meta     = SUBJECT_META[sub.id] || DEFAULT_META;
   const skipCost = getSkipCost(sub.startLessonIndex, targetStart);
-  const visible = expanded ? lessons : [];
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -408,120 +409,79 @@ function SubjectCard({
   };
 
   return (
-    <div className={`rounded-2xl border overflow-hidden transition-all shadow-sm ${sub.routineApplied ? `${meta.border}` : 'border-slate-200'} bg-white`}>
-      {/* Header row */}
-      <div className="flex items-center gap-3 p-3.5 cursor-pointer active:bg-slate-50" onClick={() => setExpanded(e => !e)}>
-        {/* Subject icon */}
-        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 ${sub.routineApplied ? `${meta.bg} ${meta.color}` : 'bg-slate-100 text-slate-400'}`}>
+    <div className={`rounded-2xl border overflow-hidden transition-all shadow-sm ${sub.routineApplied ? meta.border : 'border-slate-200'} bg-white`}>
+      {/* Header: subject name + toggle */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${sub.routineApplied ? `${meta.bg} ${meta.color}` : 'bg-slate-100 text-slate-400'}`}>
           {meta.icon}
         </div>
-
-        {/* Subject info */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="font-black text-slate-800 text-sm truncate">{sub.name}</p>
-          </div>
+          <p className="font-black text-slate-800 text-sm truncate">{sub.name}</p>
           <p className="text-[10px] text-slate-500 font-medium">{CAT_LABEL[sub.category]}</p>
-          {/* Lesson count + progress */}
-          <div className="flex items-center gap-2 mt-1">
-            <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-              <div className={`h-full rounded-full transition-all ${sub.routineApplied ? (meta.color.replace('text-', 'bg-')) : 'bg-slate-300'}`}
-                style={{ width: `${pct}%` }} />
-            </div>
-            <span className="text-[10px] font-black text-slate-500 shrink-0">{completedCount}/{lessons.length}</span>
-          </div>
         </div>
+        <button
+          onClick={handleToggle}
+          className="relative rounded-full transition-all duration-300 shrink-0"
+          style={{
+            minWidth: 44, width: 44, height: 24,
+            backgroundColor: sub.routineApplied
+              ? (SUBJECT_TOGGLE_COLOR[meta.color] ?? '#6366f1')
+              : '#94a3b8', /* slate-400 — clearly visible in both states */
+          }}
+        >
+          <span
+            className="absolute top-0.5 bg-white rounded-full shadow-md transition-all duration-300"
+            style={{ width: 19, height: 19, left: sub.routineApplied ? 23 : 2 }}
+          />
+        </button>
+      </div>
 
-        {/* Right side: toggle + chevron */}
-        <div className="flex flex-col items-end gap-2 shrink-0">
-          {/* Big toggle */}
+      {/* Lesson navigator */}
+      <div className="border-t border-slate-100 px-4 pb-3.5 pt-3">
+        <div className="flex items-center gap-2">
           <button
-            onClick={handleToggle}
-            className={`relative w-12 h-6 rounded-full transition-all duration-300 ${sub.routineApplied ? (meta.color.replace('text-', 'bg-').replace('-600', '-500')) : 'bg-slate-200'}`}
+            onClick={() => {
+              const next = Math.max(0, targetStart - 1);
+              setTargetStart(next);
+            }}
+            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center active:bg-slate-200 transition shrink-0"
           >
-            <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${sub.routineApplied ? 'left-6' : 'left-0.5'}`} />
+            <Minus size={14} className="text-slate-600" />
           </button>
-          {/* Lesson count badge */}
-          <span className="text-[9px] font-black text-slate-400">{lessons.length} lessons</span>
-        </div>
-        <div className="pl-1 shrink-0">
-          {expanded ? <ChevronUp size={14} className="text-slate-300" /> : <ChevronDown size={14} className="text-slate-300" />}
-        </div>
-      </div>
 
-      {/* Stats strip */}
-      <div className="flex border-t border-slate-100 divide-x divide-slate-100">
-        <div className="flex-1 py-2 text-center">
-          <p className="text-[9px] text-slate-400 font-medium">Total</p>
-          <p className="text-xs font-black text-slate-700">{lessons.length}</p>
-        </div>
-        <div className="flex-1 py-2 text-center">
-          <p className="text-[9px] text-slate-400 font-medium">Done</p>
-          <p className="text-xs font-black text-emerald-600">{completedCount}</p>
-        </div>
-        <div className="flex-1 py-2 text-center">
-          <p className="text-[9px] text-slate-400 font-medium">Remaining</p>
-          <p className="text-xs font-black text-amber-600">{lessons.length - completedCount}</p>
-        </div>
-        <div className="flex-1 py-2 text-center">
-          <p className="text-[9px] text-slate-400 font-medium">Progress</p>
-          <p className="text-xs font-black text-blue-600">{pct}%</p>
-        </div>
-      </div>
-
-      {/* Expanded: lesson list + start control */}
-      {expanded && (
-        <div className="border-t border-slate-100 px-3.5 pb-3.5 pt-3 space-y-2">
-          {/* Lessons */}
-          {visible.slice(0, 5).map((lesson, idx) => (
-            <LessonDetailRow
-              key={lesson.id} lesson={lesson} idx={idx}
-              isCurrent={idx === sub.currentLessonIndex} mcqHistory={mcqHistory}
-            />
-          ))}
-          {lessons.length > 5 && (
-            <button onClick={e => { e.stopPropagation(); setExpanded(true); }}
-              className="w-full text-xs font-black text-blue-600 py-2 bg-blue-50 rounded-xl border border-blue-100 active:bg-blue-100">
-              ▼ {lessons.length - 5} aur lessons hain
-            </button>
-          )}
-
-          {/* Start point changer */}
-          <div className="bg-slate-50 rounded-2xl p-3.5 mt-1 border border-slate-100">
-            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">📍 Shuru kahan se?</p>
-            <div className="flex items-center gap-3">
-              <button onClick={() => setTargetStart(t => Math.max(0, t - 1))}
-                className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center active:bg-slate-100 shadow-sm">
-                <Minus size={14} className="text-slate-600" />
-              </button>
-              <div className="flex-1 text-center bg-white rounded-xl border border-slate-200 py-2.5 px-3">
-                <p className="font-black text-slate-800 text-sm">Lesson {targetStart + 1}</p>
-                <p className="text-[10px] text-slate-400 font-medium truncate">{lessons[targetStart]?.lessonTitle || ''}</p>
-                {skipCost > 0 && (
-                  <p className="text-[10px] text-amber-600 font-black mt-0.5">Cost: −{skipCost}🪙</p>
-                )}
-                {skipCost === 0 && targetStart !== sub.startLessonIndex && (
-                  <p className="text-[10px] text-emerald-600 font-black mt-0.5">Free!</p>
-                )}
-              </div>
-              <button onClick={() => setTargetStart(t => Math.min(lessons.length - 1, t + 1))}
-                className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center active:bg-slate-100 shadow-sm">
-                <Plus size={14} className="text-slate-600" />
-              </button>
-            </div>
-            {targetStart !== sub.startLessonIndex && (
-              <button onClick={() => {
-                if (skipCost > coins) { onCoinFlash(`Coins kam hain! Chahiye: ${skipCost}🪙`); return; }
-                onChangeStart(targetStart);
-                onCoinFlash(skipCost > 0 ? `Start changed! −${skipCost}🪙` : 'Start point changed! Free 🎉');
-              }}
-                className="mt-3 w-full py-2.5 rounded-xl bg-blue-600 text-white text-xs font-black active:scale-95 transition shadow-md">
-                {skipCost > 0 ? `✓ Apply (−${skipCost}🪙 deduct hoga)` : '✓ Apply (Free)'}
-              </button>
-            )}
+          <div className="flex-1 text-center bg-slate-50 rounded-xl border border-slate-100 py-2 px-2">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider leading-none mb-0.5">Lesson {targetStart + 1}</p>
+            <p className="text-[13px] font-bold text-slate-800 leading-tight truncate">
+              {lessons[targetStart]?.lessonTitle || `Lesson ${targetStart + 1}`}
+            </p>
+            {skipCost > 0 && <p className="text-[9px] text-amber-600 font-black mt-0.5">−{skipCost}🪙</p>}
+            {skipCost === 0 && targetStart !== sub.startLessonIndex && <p className="text-[9px] text-emerald-600 font-black mt-0.5">Free!</p>}
           </div>
+
+          <button
+            onClick={() => {
+              const next = Math.min(lessons.length - 1, targetStart + 1);
+              setTargetStart(next);
+            }}
+            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center active:bg-slate-200 transition shrink-0"
+          >
+            <Plus size={14} className="text-slate-600" />
+          </button>
         </div>
-      )}
+
+        {targetStart !== sub.startLessonIndex && (
+          <button
+            onClick={() => {
+              if (skipCost > coins) { onCoinFlash(`Coins kam hain! Chahiye: ${skipCost}🪙`); return; }
+              onChangeStart(targetStart);
+              onCoinFlash(skipCost > 0 ? `Start changed! −${skipCost}🪙` : 'Start point changed! Free 🎉');
+            }}
+            className="mt-2.5 w-full py-2 rounded-xl bg-blue-600 text-white text-xs font-black active:scale-95 transition shadow-sm"
+          >
+            {skipCost > 0 ? `✓ Apply (−${skipCost}🪙 deduct hoga)` : '✓ Apply (Free)'}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -917,23 +877,28 @@ function getAvailableSubjectSlots(notes: LucentEntry[]): Array<{
 }
 
 // ── Routine Setup Sheet (one-time: School/Competition → Class/Books, saved to data) ──
-function RoutineSetupSheet({ allNotes, currentMode, currentClass, currentBooks, onSave, onClose }: {
+
+function RoutineSetupSheet({ allNotes, currentMode, currentBoard, currentClass, currentBooks, onSave, onClose }: {
   allNotes: LucentEntry[];
   currentMode: 'SCHOOL' | 'COMPETITION' | null;
+  currentBoard: string | null;
   currentClass: string | null;
   currentBooks: string[];
-  onSave: (mode: 'SCHOOL' | 'COMPETITION', classLevel: string | null, books: string[]) => void;
+  onSave: (mode: 'SCHOOL' | 'COMPETITION', board: string | null, classLevel: string | null, books: string[]) => void;
   onClose: () => void;
 }) {
-  const [step, setStep] = useState<'type' | 'class' | 'books'>(
-    currentMode === 'SCHOOL' ? 'class' : currentMode === 'COMPETITION' ? 'books' : 'type'
-  );
   const [mode, setMode] = useState<'SCHOOL' | 'COMPETITION' | null>(currentMode);
+  const [board, setBoard] = useState<string | null>(currentBoard);
+  const [classLevel, setClassLevel] = useState(currentClass || '');
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set(currentBooks));
 
   const availableClasses = useMemo(() => {
     const s = new Set<string>();
-    allNotes.forEach(n => { const cl = (n as any).classLevel; if (cl) s.add(String(cl)); });
+    allNotes.forEach(n => {
+      const cl = (n as any).classLevel;
+      // School mode mein sirf numeric classes dikhao — COMPETITION etc. exclude karo
+      if (cl && !isNaN(Number(cl))) s.add(String(cl));
+    });
     return Array.from(s).sort((a, b) => Number(a) - Number(b));
   }, [allNotes]);
 
@@ -943,124 +908,116 @@ function RoutineSetupSheet({ allNotes, currentMode, currentClass, currentBooks, 
     return Array.from(s).sort();
   }, [allNotes]);
 
-  const toggleBook = (book: string) => setSelectedBooks(prev => {
-    const n = new Set(prev); n.has(book) ? n.delete(book) : n.add(book); return n;
-  });
+  const selectedBook = Array.from(selectedBooks)[0] || '';
+  const canSave = mode === 'SCHOOL' ? !!classLevel : mode === 'COMPETITION' ? !!selectedBook : false;
 
-  // Step 1: Exam type
-  if (step === 'type') return (
+  return (
     <div className="fixed inset-0 z-[600] flex items-end bg-slate-900/60 backdrop-blur-sm" onClick={onClose}>
       <div className="w-full bg-white rounded-t-3xl" onClick={e => e.stopPropagation()}>
         <div className="flex justify-center pt-3 pb-1"><div className="w-10 h-1 rounded-full bg-slate-200" /></div>
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
           <div>
             <h2 className="text-base font-black text-slate-800">⚙️ Routine Setup</h2>
-            <p className="text-[11px] font-medium text-slate-400 mt-0.5">Exam type chuno — sirf ek baar</p>
+            <p className="text-[11px] font-medium text-slate-400 mt-0.5">Apna study path chuno</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center active:scale-90"><X size={16} /></button>
         </div>
-        <div className="px-5 py-6 pb-10 grid grid-cols-2 gap-4">
-          <button onClick={() => { setMode('SCHOOL'); setStep('class'); }}
-            className="flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-blue-200 bg-blue-50 active:scale-95 transition">
-            <span className="text-4xl">🏫</span>
-            <div className="text-center">
-              <p className="font-black text-blue-800 text-sm">School</p>
-              <p className="text-[10px] text-blue-500 font-medium mt-0.5">Class 6–12</p>
-            </div>
-          </button>
-          <button onClick={() => { setMode('COMPETITION'); setStep('books'); }}
-            className="flex flex-col items-center gap-3 p-5 rounded-2xl border-2 border-orange-200 bg-orange-50 active:scale-95 transition">
-            <span className="text-4xl">🏆</span>
-            <div className="text-center">
-              <p className="font-black text-orange-800 text-sm">Competition</p>
-              <p className="text-[10px] text-orange-500 font-medium mt-0.5">Entrance exams</p>
-            </div>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  // Step 2a: Class picker (School)
-  if (step === 'class') return (
-    <div className="fixed inset-0 z-[600] flex items-end bg-slate-900/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full bg-white rounded-t-3xl" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-center pt-3 pb-1"><div className="w-10 h-1 rounded-full bg-slate-200" /></div>
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-          <button onClick={() => setStep('type')} className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center active:scale-90"><ChevronLeft size={16} /></button>
-          <div>
-            <h2 className="text-base font-black text-slate-800">🏫 Apni Class Chuno</h2>
-            <p className="text-[11px] font-medium text-slate-400 mt-0.5">Isi class ke subjects category me dikhenge</p>
-          </div>
-        </div>
-        <div className="px-5 py-5 pb-10">
-          <div className="grid grid-cols-4 gap-3">
-            {['6','7','8','9','10','11','12'].map(cl => {
-              const hasNotes = availableClasses.includes(cl);
-              const isCurrent = currentClass === cl && currentMode === 'SCHOOL';
-              return (
-                <button key={cl}
-                  onClick={() => onSave('SCHOOL', cl, [])}
-                  disabled={!hasNotes}
-                  className={`aspect-square rounded-2xl border-2 flex flex-col items-center justify-center gap-1 font-black text-xl active:scale-95 transition
-                    ${isCurrent ? 'border-blue-500 bg-blue-600 text-white' : hasNotes ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'}`}>
-                  {cl}
-                  {hasNotes && !isCurrent && <span className="text-[8px] font-bold text-blue-400 uppercase">notes ✓</span>}
-                  {isCurrent && <span className="text-[8px] font-bold text-blue-200 uppercase">selected</span>}
+        <div className="px-5 py-5 pb-8 space-y-4">
+          <div className="block">
+            <span className="block text-xs font-black text-slate-600 mb-1.5">Study path</span>
+            <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white">
+              {([
+                { value: 'SCHOOL', label: 'School', emoji: '🏫' },
+                { value: 'COMPETITION', label: 'Competition', emoji: '🏆' },
+              ] as { value: 'SCHOOL' | 'COMPETITION'; label: string; emoji: string }[]).map((opt, i, arr) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => {
+                    setMode(opt.value);
+                    if (opt.value === 'SCHOOL') setSelectedBooks(new Set());
+                    if (opt.value === 'COMPETITION') setClassLevel('');
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-slate-50 transition-colors ${i < arr.length - 1 ? 'border-b border-slate-100' : ''}`}
+                >
+                  <span className="text-lg">{opt.emoji}</span>
+                  <span className={`flex-1 text-sm font-black ${mode === opt.value ? (opt.value === 'COMPETITION' ? 'text-orange-600' : 'text-blue-700') : 'text-slate-700'}`}>{opt.label}</span>
+                  {/* Radio circle */}
+                  <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${mode === opt.value ? (opt.value === 'COMPETITION' ? 'border-orange-500' : 'border-blue-500') : 'border-slate-300'}`}>
+                    {mode === opt.value && (
+                      <span className={`w-2.5 h-2.5 rounded-full ${opt.value === 'COMPETITION' ? 'bg-orange-500' : 'bg-blue-500'}`} />
+                    )}
+                  </span>
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
-          {availableClasses.length === 0 && (
-            <p className="text-center text-sm text-slate-400 font-medium mt-6">Koi class notes nahi mili — pehle notes add karo.</p>
+
+          {mode === 'SCHOOL' && (
+            <label className="block">
+              <span className="block text-xs font-black text-slate-600 mb-1.5">Class</span>
+              <div className="relative">
+                <select
+                  value={classLevel}
+                  onChange={e => setClassLevel(e.target.value)}
+                  className="w-full appearance-none rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-3 pr-10 text-sm font-black text-blue-800 outline-none focus:border-blue-500"
+                >
+                  <option value="">Class chuno</option>
+                  {availableClasses.map(cl => <option key={cl} value={cl}>Class {cl}</option>)}
+                </select>
+                <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
+              </div>
+              {availableClasses.length === 0 && (
+                <span className="block text-xs text-slate-400 font-medium mt-2">Koi class notes nahi mili — pehle notes add karo.</span>
+              )}
+            </label>
+          )}
+
+          {mode === 'COMPETITION' && (
+            <label className="block">
+              <span className="block text-xs font-black text-slate-600 mb-1.5">Book name</span>
+              <div className="relative">
+                <select
+                  value={selectedBook}
+                  onChange={e => setSelectedBooks(e.target.value ? new Set([e.target.value]) : new Set())}
+                  className="w-full appearance-none rounded-xl border-2 border-orange-200 bg-orange-50 px-4 py-3 pr-10 text-sm font-black text-orange-800 outline-none focus:border-orange-500"
+                >
+                  <option value="">Book name chuno</option>
+                  {availableBooks.map(book => <option key={book} value={book}>{book}</option>)}
+                </select>
+                <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-orange-400" />
+              </div>
+              {availableBooks.length === 0 && (
+                <span className="block text-xs text-slate-400 font-medium mt-2">Koi book notes nahi mili — pehle notes add karo.</span>
+              )}
+            </label>
           )}
         </div>
-      </div>
-    </div>
-  );
-
-  // Step 2b: Book picker (Competition, multi-select)
-  if (step === 'books') return (
-    <div className="fixed inset-0 z-[600] flex items-end bg-slate-900/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full bg-white rounded-t-3xl max-h-[85dvh] flex flex-col" onClick={e => e.stopPropagation()}>
-        <div className="flex justify-center pt-3 pb-1 shrink-0"><div className="w-10 h-1 rounded-full bg-slate-200" /></div>
-        <div className="px-5 py-4 border-b border-slate-100 shrink-0 flex items-center gap-3">
-          <button onClick={() => setStep('type')} className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center active:scale-90"><ChevronLeft size={16} /></button>
-          <div>
-            <h2 className="text-base font-black text-slate-800">🏆 Books Chuno</h2>
-            <p className="text-[11px] font-medium text-slate-400 mt-0.5">Ek ya zyada books — inke subjects category me dikhenge</p>
+        <div className="px-5 pb-8 pt-3 border-t border-slate-100 shrink-0 space-y-2.5">
+          <button
+            onClick={() => {
+              if (!canSave) return;
+              if (mode === 'SCHOOL') onSave('SCHOOL', board, classLevel, []);
+              if (mode === 'COMPETITION') onSave('COMPETITION', null, null, [selectedBook]);
+            }}
+            disabled={!canSave}
+            className={`w-full py-3.5 rounded-2xl font-black text-sm transition active:scale-[0.98] ${canSave ? mode === 'COMPETITION' ? 'bg-orange-500 text-white shadow-sm' : 'bg-blue-600 text-white shadow-sm' : 'bg-slate-100 text-slate-400'}`}>
+            {!mode ? 'Pehle option chuno' : !canSave ? mode === 'SCHOOL' ? 'Class chuno' : 'Book name chuno' : 'Save Karo ✓'}
+          </button>
+          {/* Destination hint — tells user where they'll land after saving */}
+          <div className="flex items-center justify-center gap-1.5">
+            <span className="text-[10px] font-semibold text-slate-400">Save ke baad:</span>
+            <span className="inline-flex items-center gap-1 bg-slate-100 rounded-full px-2 py-0.5">
+              <span className="text-[10px]">📅</span>
+              <span className="text-[10px] font-black text-slate-600">Routine</span>
+              <span className="text-[10px] text-slate-400">tab</span>
+            </span>
+            <span className="text-[10px] text-slate-400">mein dikhega</span>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          {availableBooks.length === 0 ? (
-            <p className="text-center text-sm text-slate-400 font-medium mt-6">Koi book notes nahi mili — pehle notes add karo.</p>
-          ) : availableBooks.map(book => {
-            const isSel = selectedBooks.has(book);
-            return (
-              <button key={book} onClick={() => toggleBook(book)}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl border mb-2.5 transition-all text-left ${isSel ? 'bg-orange-50 border-orange-400' : 'border-slate-200 bg-white'}`}>
-                <span className="text-xl shrink-0">📖</span>
-                <p className="flex-1 text-sm font-bold text-slate-800">{book}</p>
-                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${isSel ? 'bg-orange-500 border-orange-500' : 'border-slate-300'}`}>
-                  {isSel && <span className="text-white text-[10px] font-black">✓</span>}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-        <div className="px-5 pb-8 pt-3 border-t border-slate-100 shrink-0">
-          <button
-            onClick={() => selectedBooks.size > 0 && onSave('COMPETITION', null, Array.from(selectedBooks))}
-            disabled={selectedBooks.size === 0}
-            className={`w-full py-3.5 rounded-2xl font-black text-sm transition active:scale-[0.98] ${selectedBooks.size > 0 ? 'bg-orange-500 text-white shadow-sm' : 'bg-slate-100 text-slate-400'}`}>
-            {selectedBooks.size === 0 ? 'Koi book nahi chuni' : `Save Karo (${selectedBooks.size} book${selectedBooks.size > 1 ? 's' : ''}) ✓`}
-          </button>
-        </div>
       </div>
     </div>
   );
-
-  return null;
 }
 
 // ── Add Category Sheet ────────────────────────────────────────────────────────
@@ -1238,7 +1195,7 @@ function AddCategorySheet({ allNotes, existingCategories, routineMode, selectedC
         </div>
 
         {/* Rotation Preview + Save */}
-        <div className="px-4 pb-6 pt-3 shrink-0 border-t border-slate-100">
+        <div className="px-4 pb-28 pt-3 shrink-0 border-t border-slate-100">
           {selected.size > 0 && (() => {
             const selectedItems = available.filter(item =>
               selected.has(`${item.bookName}||${item.classLevel || ''}||${item.subjectId}`)
@@ -1639,6 +1596,7 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
     setDataRaw(prev => {
       const next = updater(prev);
       saveRoutineData(userId, next);
+      scheduleRoutineSync(userId, next); // debounced Firebase backup
       return next;
     });
   }, [userId]);
@@ -1648,6 +1606,17 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
     window.addEventListener('focus', handler);
     return () => window.removeEventListener('focus', handler);
   }, []);
+
+  // Firebase hydration — reload state when cloud restore completes on this device
+  useEffect(() => {
+    const handler = () => {
+      const fresh = loadRoutineData(userId);
+      const reset = checkAndResetDaily(fresh);
+      setDataRaw(reset);
+    };
+    window.addEventListener('iic-routine-hydrated', handler);
+    return () => window.removeEventListener('iic-routine-hydrated', handler);
+  }, [userId]);
 
   // Sync totalLessons for categories when notes load
   useEffect(() => {
@@ -1825,35 +1794,47 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
         <RoutineSetupSheet
           allNotes={allNotes}
           currentMode={data.routineMode}
+          currentBoard={data.selectedBoard ?? null}
           currentClass={data.selectedClass}
           currentBooks={data.selectedBooks || []}
-          onSave={(mode, classLevel, books) => {
+          onSave={(mode, board, classLevel, books) => {
             setData(prev => {
-              // Filter existing category subjects to match new class/book syllabus
-              const bookSet = new Set(books);
-              const updatedCats = (prev.routineCategories || []).map(cat => {
-                const filteredSubjects = cat.subjects.filter(sub => {
-                  if (mode === 'SCHOOL' && classLevel) {
-                    // Keep subject if it belongs to the new class OR has no classLevel (default subject)
-                    return !sub.classLevel || String(sub.classLevel) === String(classLevel);
-                  }
-                  if (mode === 'COMPETITION' && books.length > 0) {
-                    // Keep subject if it belongs to a selected book OR has no bookName (default subject)
-                    return !sub.bookName || bookSet.has(sub.bookName);
-                  }
-                  return true;
-                });
-                return { ...cat, subjects: filteredSubjects, currentSubjectIndex: Math.min(cat.currentSubjectIndex, Math.max(0, filteredSubjects.length - 1)) };
-              }).filter(cat => cat.subjects.length > 0); // remove categories that became empty
+              // Build storage key for the current (old) class/book context
+              const oldKey = prev.routineMode === 'SCHOOL' && prev.selectedClass
+                ? `SCHOOL_${prev.selectedClass}`
+                : prev.routineMode === 'COMPETITION' && (prev.selectedBooks || []).length > 0
+                  ? `COMPETITION_${[...(prev.selectedBooks || [])].sort().join('+')}`
+                  : null;
 
-              return {
+              // Build storage key for the new class/book context
+              const newKey = mode === 'SCHOOL' && classLevel
+                ? `SCHOOL_${classLevel}`
+                : mode === 'COMPETITION' && books.length > 0
+                  ? `COMPETITION_${[...books].sort().join('+')}`
+                  : null;
+
+              // Save current categories under old key (so switching back restores them)
+              const byClass: Record<string, any[]> = { ...(prev.routineCategoriesByClass || {}) };
+              if (oldKey) {
+                byClass[oldKey] = prev.routineCategories || [];
+              }
+
+              // Restore saved categories for new key, or start fresh if never used before
+              const restoredCats = (newKey && byClass[newKey]) ? byClass[newKey] : [];
+
+              const next = {
                 ...prev,
                 routineMode: mode,
+                selectedBoard: board,
                 selectedClass: classLevel,
                 selectedBooks: books,
                 selectedBook: books[0] || null,
-                routineCategories: updatedCats,
+                routineCategories: restoredCats,
+                routineCategoriesByClass: byClass,
               };
+              // Immediate Firebase sync — config change is important
+              syncRoutineNow(userId, next);
+              return next;
             });
             setShowRoutineSetup(false);
           }}
@@ -1964,7 +1945,7 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
             {data.routineMode === 'SCHOOL' && data.selectedClass ? (
               <button onClick={() => setShowRoutineSetup(true)}
                 className="flex items-center gap-1 bg-blue-100 text-blue-700 text-[10px] font-black px-2 py-0.5 rounded-full active:opacity-70 transition">
-                🏫 Class {data.selectedClass} <span className="text-blue-400">✎</span>
+                🏫 {data.selectedBoard ? `${data.selectedBoard} · ` : ''}Class {data.selectedClass} <span className="text-blue-400">✎</span>
               </button>
             ) : data.routineMode === 'COMPETITION' && (data.selectedBooks?.length || data.selectedBook) ? (
               <button onClick={() => setShowRoutineSetup(true)}
@@ -2003,7 +1984,7 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
         }`}>{toast.msg}</div>
       )}
 
-      <div className="flex-1 overflow-y-auto overscroll-contain pb-10">
+      <div className="flex-1 overflow-y-auto overscroll-contain pb-24">
         {/* ON/OFF */}
         <div className="mx-4 mt-4 space-y-3">
           <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 flex items-center gap-4">

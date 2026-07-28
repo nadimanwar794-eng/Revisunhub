@@ -13,6 +13,12 @@
 
 import { doc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { db, sanitizeForFirestore } from '../firebase';
+import {
+  getTrackerMap,
+  mergeTrackerMaps,
+  replaceTrackerMap,
+  setRevisionTrackerUser,
+} from './revisionTrackerV2';
 import type { TopicBucket, TrackerMap } from './revisionTrackerV2';
 
 /** Replace `::` and Firestore-invalid chars so the key is a valid doc ID */
@@ -88,4 +94,28 @@ export async function loadRevisionBucketsFromFirebase(
   } catch {
     return {};
   }
+}
+
+/**
+ * Restore the active user's revision tracker on this device.
+ *
+ * Cloud reads are best-effort: an empty/error response never replaces local
+ * progress. Local-only entries are uploaded after the merge so an offline
+ * device can recover its work on the next phone as well.
+ */
+export async function hydrateRevisionTracker(userId: string): Promise<TrackerMap> {
+  if (!userId) return {};
+  setRevisionTrackerUser(userId);
+  const local = getTrackerMap();
+  const cloud = await loadRevisionBucketsFromFirebase(userId);
+  const hasCloudData = Object.keys(cloud).length > 0;
+  const merged = hasCloudData
+    ? mergeTrackerMaps(local, cloud)
+    : local;
+  replaceTrackerMap(merged);
+  if (Object.keys(merged).length > 0) syncAllRevisionBuckets(userId, merged);
+  window.dispatchEvent(new CustomEvent('iic-revision-tracker-hydrated', {
+    detail: { userId, count: Object.keys(merged).length },
+  }));
+  return merged;
 }

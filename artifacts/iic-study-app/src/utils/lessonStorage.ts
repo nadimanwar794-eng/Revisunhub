@@ -89,37 +89,79 @@ const sanitize = (obj: any): any => {
 export const extractModeData = (data: any, mode: LessonMode): any => {
   switch (mode) {
     case 'free_notes':
-      return { freeNotes: data.freeNotes ?? null };
+      return {
+        // Legacy flat fields
+        freeNotes:               data.freeNotes               ?? null,
+        chunkNotes:              data.chunkNotes              ?? null,
+        // School/competition mode-specific lists
+        schoolFreeNotesList:     data.schoolFreeNotesList     ?? null,
+        competitionFreeNotesList:data.competitionFreeNotesList?? null,
+        // Deep-dive / additional notes
+        schoolDeepDiveEntries:     data.schoolDeepDiveEntries     ?? null,
+        competitionDeepDiveEntries:data.competitionDeepDiveEntries?? null,
+        deepDiveEntries:           data.deepDiveEntries           ?? null,
+        schoolAdditionalNotes:     data.schoolAdditionalNotes     ?? null,
+        competitionAdditionalNotes:data.competitionAdditionalNotes?? null,
+        additionalNotes:           data.additionalNotes           ?? null,
+      };
 
     case 'premium_notes':
-      return { premiumNotes: data.premiumNotes ?? null };
+      return {
+        premiumNotes:               data.premiumNotes               ?? null,
+        premiumNoteSlots:           data.premiumNoteSlots           ?? null,
+        schoolPremiumNotesList:     data.schoolPremiumNotesList     ?? null,
+        competitionPremiumNotesList:data.competitionPremiumNotesList?? null,
+        schoolPdfPremiumSlots:      data.schoolPdfPremiumSlots      ?? null,
+        competitionPdfPremiumSlots: data.competitionPdfPremiumSlots ?? null,
+        // Premium content field
+        content: data.content ?? null,
+      };
 
     case 'topic_notes':
       return {
         topicNotes:            data.topicNotes            ?? null,
         teachingStrategyNotes: data.teachingStrategyNotes ?? null,
-        content:               data.content               ?? null,
+        teachingStrategyHtml:  data.teachingStrategyHtml  ?? null,
       };
 
     case 'html_notes':
-      return { htmlNotes: data.htmlNotes ?? null };
+      return {
+        htmlNotes:             data.htmlNotes             ?? null,
+        schoolHtmlSections:    data.schoolHtmlSections    ?? null,
+        competitionHtmlSections:data.competitionHtmlSections?? null,
+      };
 
     case 'mcq':
       return {
-        practice:  data.manualMcqData      ?? data.mcqList ?? null,
-        weekly:    data.weeklyTestMcqData   ?? null,
-        challenge: data.challengeMcqData    ?? null,
-        mistake:   data.mistakeMcqData      ?? null,
+        // Practice MCQs
+        practice:  data.manualMcqData   ?? data.mcqList ?? null,
+        // Weekly test MCQs
+        weekly:    data.weeklyTestMcqData ?? null,
+        // Challenge / extra MCQs
+        challenge: data.challengeMcqData  ?? null,
+        // Mistake-practice MCQs
+        mistake:   data.mistakeMcqData    ?? null,
       };
 
     case 'video':
       return {
-        videoPlaylist: data.videoPlaylist ?? null,
-        topicVideos:   data.topicVideos   ?? null,
+        // School mode videos
+        videoPlaylist:                data.videoPlaylist                ?? null,
+        schoolVideoPlaylist:          data.schoolVideoPlaylist          ?? null,
+        schoolPremiumVideoPlaylist:   data.schoolPremiumVideoPlaylist   ?? null,
+        // Competition mode videos
+        competitionVideoPlaylist:     data.competitionVideoPlaylist     ?? null,
+        competitionPremiumVideoPlaylist: data.competitionPremiumVideoPlaylist ?? null,
+        // Topic-level videos
+        topicVideos: data.topicVideos ?? null,
       };
 
     case 'audio':
-      return { audioPlaylist: data.audioPlaylist ?? null };
+      return {
+        audioPlaylist:            data.audioPlaylist            ?? null,
+        schoolAudioPlaylist:      data.schoolAudioPlaylist      ?? null,
+        competitionAudioPlaylist: data.competitionAudioPlaylist ?? null,
+      };
 
     case 'pdf':
       return {
@@ -138,14 +180,22 @@ export const mergeModeData = (modes: Partial<Record<LessonMode, any>>): any => {
   const result: any = {};
   const m = modes;
 
+  // Reading Notes (free + deep-dive + additional)
   if (m.free_notes)    Object.assign(result, m.free_notes);
+  // Premium Notes + PDF slots
   if (m.premium_notes) Object.assign(result, m.premium_notes);
+  // Topic Notes + teaching strategy
   if (m.topic_notes)   Object.assign(result, m.topic_notes);
+  // Writing Notes (HTML)
   if (m.html_notes)    Object.assign(result, m.html_notes);
+  // Video (school + competition + topic)
   if (m.video)         Object.assign(result, m.video);
+  // Audio (school + competition)
   if (m.audio)         Object.assign(result, m.audio);
+  // PDF
   if (m.pdf)           Object.assign(result, m.pdf);
 
+  // MCQ — restore legacy field names for backward compat
   if (m.mcq) {
     if (m.mcq.practice)  result.manualMcqData      = m.mcq.practice;
     if (m.mcq.weekly)    result.weeklyTestMcqData   = m.mcq.weekly;

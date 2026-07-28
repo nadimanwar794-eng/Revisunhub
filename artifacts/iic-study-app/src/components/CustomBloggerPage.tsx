@@ -76,7 +76,7 @@ export const CustomBloggerPage: React.FC<Props> = ({ onBack, settings }) => {
             </div>
         </div>
         
-        <div className="p-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="px-0 py-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {driveId && (
                 <div className="mb-6">
                     <div className="rounded-xl overflow-hidden shadow-md bg-black relative" style={{ aspectRatio: '16/9' }}>
