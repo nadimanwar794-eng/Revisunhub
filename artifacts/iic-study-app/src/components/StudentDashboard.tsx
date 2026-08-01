@@ -241,6 +241,7 @@ import { UniversalVideoView } from "./UniversalVideoView"; // NEW
 import { RevisionHubV2 } from "./RevisionHubV2"; // NEW: Revision Hub V2 with auto-note search
 import { RevisionHubScreen } from "./RevisionHubScreen"; // NEW: Revision Hub full-screen with top tabs
 import { MyRoutine } from "./MyRoutine"; // My Routine full-screen
+import { DailyEventPage } from "./DailyEventPage"; // Daily Hub: Routine + Revision + Mistakes + Tracker
 import { CustomBloggerPage } from "./CustomBloggerPage";
 import { ReferralPopup } from "./ReferralPopup";
 import { SpeakButton } from "./SpeakButton";
@@ -1688,6 +1689,9 @@ export const StudentDashboard: React.FC<Props> = ({
     deducted: number;
     current: number;
     type: 'ADD' | 'DEDUCT';
+    xpPrevious?: number;
+    xpEarned?: number;
+    xpCurrent?: number;
   } | null>(null);
   const creditToastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -2025,6 +2029,10 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showSidebar, setShowSidebar] = useState(false);
   const [bgTtsOn, setBgTtsOn] = useState(false);
   const [_topBarInfoPhase, _setTopBarInfoPhase] = useState(0); // 0 = tier, 1 = expiry
+  // XP badge state + refs — useEffect is below (after showRevisionHubScreen/showMyRoutine declarations)
+  const [showXpBadge, setShowXpBadge] = useState(false);
+  const xpBadgeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const xpBadgeIsOnHomeRef = React.useRef(false);
   const [rewardEffect, setRewardEffect] = useState<{ amount: number; label: string } | null>(null);
   const triggerRewardEffect = (amount: number, label = 'Credits') => {
     setRewardEffect({ amount, label });
@@ -2907,11 +2915,13 @@ export const StudentDashboard: React.FC<Props> = ({
           const _coinEarned = Math.max(1, Math.floor(earned * _coinMult));
           const _prevCR = getTotalCredits(freshU);
           const _newCR  = _prevCR + _coinEarned;
+          const _prevXP = freshU.totalScore || 0;
+          const _newXP  = _prevXP + earned;
           deferStudyCoins(freshU.id, _coinEarned);
-          handleUserUpdate({ ...freshU, totalScore: (freshU.totalScore || 0) + earned });
+          handleUserUpdate({ ...freshU, totalScore: _newXP });
           // Always show top banner for timer coin earn (guaranteed, doesn't rely on handleUserUpdate diff)
           if (creditToastTimerRef.current) clearTimeout(creditToastTimerRef.current);
-          setCreditDeductToast({ visible: true, previous: _prevCR, deducted: _coinEarned, current: _newCR, type: 'ADD' });
+          setCreditDeductToast({ visible: true, previous: _prevCR, deducted: _coinEarned, current: _newCR, type: 'ADD', xpPrevious: _prevXP, xpEarned: earned, xpCurrent: _newXP });
           creditToastTimerRef.current = setTimeout(() => setCreditDeductToast(null), 2000);
           triggerRewardEffect(earned, `+${earned} pts ${tabEmoji} ${rewardReason}`);
         }
@@ -3203,13 +3213,14 @@ export const StudentDashboard: React.FC<Props> = ({
           const _coinEarned = Math.max(1, Math.floor(earned * _coinMult));
           const _prevCR = getTotalCredits(freshU);
           const _newCR  = _prevCR + _coinEarned;
-          const _newScore = (freshU.totalScore || 0) + earned;
+          const _prevXP2 = freshU.totalScore || 0;
+          const _newScore = _prevXP2 + earned;
           deferStudyCoins(freshU.id, _coinEarned);
           handleUserUpdate({ ...freshU, totalScore: _newScore });
           // Update credit-sync key so HOME-tab sync does NOT double-convert these pts to credits
           try { localStorage.setItem(`nst_credit_sync_score_${freshU.id}`, String(_newScore)); } catch {}
           if (creditToastTimerRef.current) clearTimeout(creditToastTimerRef.current);
-          setCreditDeductToast({ visible: true, previous: _prevCR, deducted: _coinEarned, current: _newCR, type: 'ADD' });
+          setCreditDeductToast({ visible: true, previous: _prevCR, deducted: _coinEarned, current: _newCR, type: 'ADD', xpPrevious: _prevXP2, xpEarned: earned, xpCurrent: _newScore });
           creditToastTimerRef.current = setTimeout(() => setCreditDeductToast(null), 2000);
           triggerRewardEffect(earned, `+${earned} pts ${tabEmoji} ${rewardReason}!`);
         }
@@ -3321,8 +3332,26 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showStarredPage, setShowStarredPage] = useState(false);
   const [showRevisionHubScreen, setShowRevisionHubScreen] = useState(false);
   const [showMyRoutine, setShowMyRoutine] = useState(false);
-  // Lesson whose routine completion earned a one-time 50% OFF Revision Hub session.
-  const [routineRevisionDiscountLessonId, setRoutineRevisionDiscountLessonId] = useState<string | null>(null);
+  const [showDailyEventPage, setShowDailyEventPage] = useState(false);
+  // XP badge useEffect — yahan rakhna zaroori hai (showRevisionHubScreen/showMyRoutine/showChat ke baad)
+  // Pehle rakhne se TDZ crash hota tha (dependency array mein undeclared vars)
+  React.useEffect(() => {
+    const isOnHome = activeTab === 'HOME' && !showRevisionHubScreen && !showMyRoutine && !showChat;
+    const wasOnHome = xpBadgeIsOnHomeRef.current;
+    xpBadgeIsOnHomeRef.current = isOnHome;
+    if (isOnHome && !wasOnHome) {
+      setShowXpBadge(true);
+      if (xpBadgeTimerRef.current) clearTimeout(xpBadgeTimerRef.current);
+      xpBadgeTimerRef.current = setTimeout(() => setShowXpBadge(false), 5000);
+    } else if (!isOnHome) {
+      if (xpBadgeTimerRef.current) clearTimeout(xpBadgeTimerRef.current);
+      setShowXpBadge(false);
+    }
+    return () => { if (xpBadgeTimerRef.current) clearTimeout(xpBadgeTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, showRevisionHubScreen, showMyRoutine, showChat]);
+  // lessonTitle for auto-navigation when opening Revision Hub from Routine/Daily Event (coins already paid).
+  const [initialRevisionLessonTitle, setInitialRevisionLessonTitle] = useState<string | null>(null);
   // Routine gate popup — shown when user tries to open a lesson in a routineApplied subject
   const [routineGate, setRoutineGate] = useState<{ entry: any; pageIdx: number } | null>(null);
   // Fire window events when RevisionHub opens/closes so App.tsx can defer HomeStatsToast
@@ -3756,18 +3785,42 @@ export const StudentDashboard: React.FC<Props> = ({
     return () => { try { __routineTimeFlushRef.current(); } catch {} };
   }, [hwActiveHwId]);
 
-  // ── My Routine: timer-gated page-read (min lines×2s before marking read) ────
+  // ── My Routine: mark page read only after MIN reading time ──────────────────
+  // Formula: READING_REWARD_BASE(5) × 5 × 60% = 15 seconds
+  // Page tab "read" count hogi jab user ne us page pe kam se kam 15 second padha ho.
+  const ROUTINE_PAGE_READ_MIN_SEC = Math.round(5 * 5 * 0.60); // 15 seconds
   useEffect(() => {
     if (!lucentNoteViewer?.id) return;
     const _lid = lucentNoteViewer.id;
     const _pi  = lucentPageIndex;
     if (isRoutinePageRead(_lid, _pi)) return; // already marked — skip
-    const _pg = lucentNoteViewer?.pages?.[_pi];
-    const _rawText = (_pg?.chunkNotes || '').trim() || stripHtml(_pg?.htmlNotes || '') || (_pg?.content || '');
-    const _lines = Math.max(3, _rawText.split('\n').filter((l: string) => l.trim().length > 1).length);
-    const _minMs = Math.min(_lines * 2000, 120_000); // 2s per line, max 2 min
-    const t = setTimeout(() => { markRoutinePageRead(_lid, _pi); }, _minMs);
-    return () => clearTimeout(t);
+
+    const checkAndMark = () => {
+      if (isRoutinePageRead(_lid, _pi)) return true; // already done
+      // Stored time from previous visits on this page
+      const storedSecs = getPageTime(_lid, _pi);
+      // Live time in current session (since page opened)
+      const enterTs = (window as any).__routinePageEnterTs;
+      const liveSecs = (enterTs && (window as any).__routinePageLid === _lid && (window as any).__routinePageIdx === _pi)
+        ? Math.round((Date.now() - enterTs) / 1000)
+        : 0;
+      const totalSecs = storedSecs + liveSecs;
+      if (totalSecs >= ROUTINE_PAGE_READ_MIN_SEC) {
+        markRoutinePageRead(_lid, _pi);
+        return true;
+      }
+      return false;
+    };
+
+    // Check immediately (in case user revisited and already has enough time)
+    if (checkAndMark()) return;
+
+    // Poll every second until threshold reached or page changes
+    const timer = setInterval(() => {
+      if (checkAndMark()) clearInterval(timer);
+    }, 1000);
+
+    return () => clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lucentPageIndex, lucentNoteViewer?.id]);
 
@@ -5974,6 +6027,7 @@ export const StudentDashboard: React.FC<Props> = ({
     showStarredPage,
     showCompMcqHub,
     showMistakePractice,
+    showDailyEventPage,
     showRulesPage,
     showAllNotesCatalog:  !!(showAllNotesCatalog),
     showTopicDirectory,
@@ -6011,6 +6065,7 @@ export const StudentDashboard: React.FC<Props> = ({
     showStarredPage,
     showCompMcqHub,
     showMistakePractice,
+    showDailyEventPage,
     showRulesPage,
     showAllNotesCatalog:  !!(showAllNotesCatalog),
     showTopicDirectory,
@@ -6130,6 +6185,7 @@ export const StudentDashboard: React.FC<Props> = ({
       if (s.showChat)            { setShowChat(false);                return; }
       if (s.showNotifPage)       { setShowNotifPage(false);           return; }
       if (s.showStarredPage)     { setShowStarredPage(false);         return; }
+      if (s.showDailyEventPage)    { setShowDailyEventPage(false);     return; }
       if (s.showRevisionHubScreen) { setShowRevisionHubScreen(false); return; }
       if (s.showCompMcqHub)      { setShowCompMcqHub(false);         return; }
       if (s.showMistakePractice) { setShowMistakePractice(false);    return; }
@@ -6271,8 +6327,11 @@ export const StudentDashboard: React.FC<Props> = ({
       }, 2000);
     } else if (newCredits > prevCredits) {
       const added = newCredits - prevCredits;
+      const _prevXP = user.totalScore || 0;
+      const _newXP  = updatedUser.totalScore || 0;
+      const _xpGained = Math.max(0, _newXP - _prevXP);
       if (creditToastTimerRef.current) clearTimeout(creditToastTimerRef.current);
-      setCreditDeductToast({ visible: true, previous: prevCredits, deducted: added, current: newCredits, type: 'ADD' });
+      setCreditDeductToast({ visible: true, previous: prevCredits, deducted: added, current: newCredits, type: 'ADD', xpPrevious: _prevXP, xpEarned: _xpGained > 0 ? _xpGained : undefined, xpCurrent: _xpGained > 0 ? _newXP : undefined });
       creditToastTimerRef.current = setTimeout(() => {
         setCreditDeductToast(null);
       }, 2000);
@@ -6568,7 +6627,7 @@ export const StudentDashboard: React.FC<Props> = ({
           </div>
 
           {/* Lesson list */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex-1 overflow-y-auto p-4 pb-[72px] space-y-3">
             {classLessons.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-4">
                 <span className="text-5xl">📚</span>
@@ -9287,7 +9346,7 @@ export const StudentDashboard: React.FC<Props> = ({
             </span>
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex-1 overflow-y-auto p-4 pb-[72px] space-y-3">
             {lucentChapterEntries.map(entry => {
               const topicNames = [...new Set((entry.pages || []).map(page => (page.topicName || '').trim()).filter(Boolean))];
               const hasMcqs = (entry.pages || []).some(page => page.mcqs && page.mcqs.length > 0);
@@ -10001,6 +10060,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     onNotesReaderOpen={() => setCoachingNotesReaderOpen(true)}
                     onNotesReaderClose={() => setCoachingNotesReaderOpen(false)} />
                   )}
+
 
                   {/* ── QUICK ACTION CARDS ── */}
                   <div>
@@ -12634,7 +12694,7 @@ export const StudentDashboard: React.FC<Props> = ({
         style={{ background: tierTheme.topBarGrad }}
       >
         {/* Main Header Row */}
-        <div className="flex items-center justify-between w-full px-3 pt-3 pb-2">
+        <div className="flex items-center justify-between w-full px-3 pt-2.5 pb-1.5">
           {/* LEFT: logo + app name + verified badge — only the badge tap opens What's New */}
           <div className="flex items-center gap-2 shrink-0">
             <span className="font-black text-[23px] leading-tight tracking-tight uppercase text-white whitespace-nowrap">
@@ -12645,14 +12705,6 @@ export const StudentDashboard: React.FC<Props> = ({
               onClick={() => onTabChange("CUSTOM_PAGE")}
             >
               <BadgeCheck size={19} className="text-blue-300 shrink-0" />
-            </button>
-            {/* Daily Event — upcoming feature */}
-            <button
-              className="active:scale-90 transition-transform ml-0.5"
-              onClick={() => showAlert('📆 Daily Event feature jald aa raha hai! Har roz naye challenges aur rewards milenge.', 'INFO')}
-              title="Daily Event (Coming Soon)"
-            >
-              <span style={{ fontSize: 17, lineHeight: 1 }}>📆</span>
             </button>
           </div>
 
@@ -13307,26 +13359,51 @@ export const StudentDashboard: React.FC<Props> = ({
         {/* Divider between Row 1 and Row 2 */}
         <div className="mx-3 h-px bg-white/20" />
 
-        {/* SECOND LINE: greeting + Level / Credits / Subscription pills */}
-        <div className="flex items-center justify-between w-full mt-0 pt-0.5 px-4 pb-1">
+        {/* SECOND LINE: greeting | XP | credits — single clean row */}
+        <div className="flex items-center justify-between w-full mt-0 pt-0.5 px-4 pb-1.5 gap-2">
 
-          {/* Left: two-line greeting */}
+          {/* Left: greeting */}
           {(() => {
             const fullName = user.name || "Student";
             const isLong = fullName.length > 10;
             const overflowPx = isLong ? Math.min(90, (fullName.length - 10) * 7) : 0;
             return (
-              <div className="flex items-center gap-2 shrink-0 min-w-0">
-                <div className="flex flex-col shrink-0 min-w-0">
-                  <div className="overflow-hidden" style={isLong ? { maskImage: 'linear-gradient(to right, black 72%, transparent 100%)', maxWidth: '168px' } : {}}>
-                    <span
-                      className={`text-[13px] font-black text-white leading-tight whitespace-nowrap inline-block${isLong ? ' nst-name-scroll' : ''}`}
-                      style={isLong ? { '--nst-scroll': `-${overflowPx}px` } as React.CSSProperties : {}}
-                    >
-                      Hey, {fullName} 👋
-                    </span>
-                  </div>
-                </div>
+              <div className="overflow-hidden shrink-0" style={isLong ? { maskImage: 'linear-gradient(to right, black 78%, transparent 100%)', maxWidth: '120px' } : {}}>
+                <span
+                  className={`text-[13px] font-black text-white leading-tight whitespace-nowrap inline-block${isLong ? ' nst-name-scroll' : ''}`}
+                  style={isLong ? { '--nst-scroll': `-${overflowPx}px` } as React.CSSProperties : {}}
+                >
+                  Hey, {fullName} 👋
+                </span>
+              </div>
+            );
+          })()}
+
+          {/* Centre: XP progress — HOME pe 5 sec ke liye dikhta hai, phir hide */}
+          {(() => {
+            const _nextLvl      = getNextLevelInfo(user.totalScore || 0);
+            const _isMax        = !_nextLvl;
+            const _currentScore = user.totalScore || 0;
+            const _nextScore    = _nextLvl ? _nextLvl.minScore : _currentScore;
+            const _fmt = (n: number) => n >= 1_00_000 ? `${(n/1_00_000).toFixed(n%1_00_000===0?0:1)}L` : n >= 1000 ? `${(n/1000).toFixed(n%1000===0?0:1)}K` : String(n);
+            return (
+              <div
+                className="flex-1 flex justify-center overflow-hidden"
+                style={{
+                  maxWidth: showXpBadge ? 160 : 0,
+                  opacity: showXpBadge ? 1 : 0,
+                  transition: 'max-width 0.35s ease, opacity 0.3s ease',
+                  pointerEvents: showXpBadge ? 'auto' : 'none',
+                }}
+              >
+                <span
+                  className="whitespace-nowrap px-2.5 py-0.5 rounded-full"
+                  style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: 600, letterSpacing: '0.01em', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.15)' }}
+                >
+                  {_isMax
+                    ? `Lv.${_userLevelInfo.level} · MAX`
+                    : `Lv.${_userLevelInfo.level} · ${_fmt(_currentScore)} / ${_fmt(_nextScore)} XP`}
+                </span>
               </div>
             );
           })()}
@@ -13493,16 +13570,35 @@ export const StudentDashboard: React.FC<Props> = ({
               <div className="shrink-0">
                 <button
                   onClick={() => onTabChange('STORE' as any)}
-                  className="inline-flex items-center gap-[2px] px-2 py-[3px] rounded-full text-[8px] font-black text-white whitespace-nowrap active:scale-90 transition-transform"
+                  className="inline-flex items-center gap-[2px] px-2 py-[3px] rounded-full text-white whitespace-nowrap active:scale-90 transition-transform text-[8px] font-black leading-none"
                 >
                   <Crown size={9} />
-                  <span>{user.credits} CR</span>
+                  {user.credits} CR
                 </button>
               </div>
             )}
 
           </div>
         </div>
+
+        {/* Level progress bar — bottom of top bar */}
+        {(() => {
+          const _progress = getLevelProgress(user.totalScore || 0);
+          const _isMax    = !getNextLevelInfo(user.totalScore || 0);
+          return (
+            <div className="w-full relative" style={{ height: 3, background: 'rgba(255,255,255,0.13)' }}>
+              <div
+                style={{
+                  position: 'absolute', inset: '0 auto 0 0',
+                  width: `${_isMax ? 100 : _progress}%`,
+                  background: tierTheme.primary,
+                  boxShadow: `0 0 6px ${tierTheme.primary}99`,
+                  transition: 'width 0.8s cubic-bezier(0.34,1.1,0.64,1)',
+                }}
+              />
+            </div>
+          );
+        })()}
       </div>
 
       {/* LIFETIME POPUP — enhanced with white shimmer */}
@@ -16960,7 +17056,7 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto pb-8">
+            <div className="flex-1 overflow-y-auto pb-[72px]">
               {/* Topics tab */}
               {lucentLessonCompareTab === 'topics' && (
                 <div className="px-3 pt-3 space-y-2">
@@ -17667,6 +17763,9 @@ export const StudentDashboard: React.FC<Props> = ({
               }
               // Close Progress Dashboard overlay if open — prevents it bleeding into other tabs.
               setShowProgressDashboard(false);
+              // Close Daily Event Page overlay if open — it's a top-level overlay and must
+              // be dismissed when the user switches tabs via the bottom nav.
+              setShowDailyEventPage(false);
               // Close the Important Notes overlay if it's open — otherwise the
               // overlay (z-[200]) keeps covering the dashboard even after the
               // user taps Home / Homework / Profile / Revision in bottom nav.
@@ -17718,7 +17817,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 // When the Important Notes overlay is open, Home should NOT
                 // appear active — only ONE bottom-nav tab can be active at a
                 // time. Same rule applies to all sibling tabs below.
-                isActive: !showStarredPage && !showChat && !showRevisionHubScreen && !showMyRoutine && !showProgressDashboard && currentLogicalTab === "HOME",
+                isActive: !showStarredPage && !showChat && !showRevisionHubScreen && !showMyRoutine && !showDailyEventPage && !showProgressDashboard && currentLogicalTab === "HOME",
                 onClick: () => switchToLogicalTab("HOME"),
               },
 
@@ -17733,6 +17832,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   setShowChat(false);
                   setShowStarredPage(false);
                   setShowMyRoutine(false);
+                  setShowDailyEventPage(false);
                   if (showCommunityStarsPage) {
                     try { stopProfileStarRead(); } catch (_) {}
                     setShowCommunityStarsPage(false);
@@ -17769,6 +17869,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     setShowChat(false);
                     setShowStarredPage(false);
                     setShowRevisionHubScreen(false);
+                    setShowDailyEventPage(false);
                     if (showCommunityStarsPage) {
                       try { stopProfileStarRead(); } catch (_) {}
                       setShowCommunityStarsPage(false);
@@ -17790,6 +17891,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   setShowCompareView(false);
                   setShowRevisionHubScreen(false);
                   setShowMyRoutine(false);
+                  setShowDailyEventPage(false);
                   if (showCommunityStarsPage) {
                     try { stopProfileStarRead(); } catch (_) {}
                     setShowCommunityStarsPage(false);
@@ -17918,16 +18020,16 @@ export const StudentDashboard: React.FC<Props> = ({
                           />
                         )}
                         <Icon
-                          size={22}
-                          strokeWidth={tab.isActive ? 2.4 : 2}
-                          className="transition-colors duration-300"
-                          style={{ color: tab.isActive ? (_isNavDark ? ((tierTheme as any).navActive || '#7dd3fc') : tierTheme.primary) : (_isNavDark ? 'rgba(255,255,255,0.72)' : '#64748b') }}
-                          fill={
-                            tab.filledOnActive && tab.isActive && !isLocked
-                              ? "currentColor"
-                              : "none"
-                          }
-                        />
+                            size={22}
+                            strokeWidth={tab.isActive ? 2.4 : 2}
+                            className="transition-colors duration-300"
+                            style={{ color: tab.isActive ? (_isNavDark ? ((tierTheme as any).navActive || '#7dd3fc') : tierTheme.primary) : (_isNavDark ? 'rgba(255,255,255,0.72)' : '#64748b') }}
+                            fill={
+                              tab.filledOnActive && tab.isActive && !isLocked
+                                ? "currentColor"
+                                : "none"
+                            }
+                          />
                         {isLocked && (
                           <span className="absolute -top-0.5 -right-0.5 bg-red-500 rounded-full p-[2px] border border-white shadow-sm">
                             <Lock size={8} className="text-white" />
@@ -18240,7 +18342,7 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-3 pb-6">
+            <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-3 pb-[72px]">
               {inboxTab === 'MESSAGES' && (() => {
                 const now = Date.now();
                 const msgs = (user.inbox || []).filter(msg => {
@@ -21255,40 +21357,61 @@ RULES:
       })()}
 
 
+      {/* ── DAILY EVENT PAGE — top-level overlay (works from any tab) ── */}
+      {showDailyEventPage && (
+        <DailyEventPage
+          user={user}
+          settings={settings}
+          onBack={() => setShowDailyEventPage(false)}
+          onOpenRoutine={() => {
+            setShowDailyEventPage(false);
+            setShowMyRoutine(true);
+          }}
+          onOpenRevisionHub={(lessonId?: string, lessonTitle?: string) => {
+            if (lessonTitle) {
+              const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
+              if (_isAdm) {
+                setInitialRevisionLessonTitle(lessonTitle);
+                setShowDailyEventPage(false);
+                setShowRevisionHubScreen(true);
+                return;
+              }
+              setCoinGate({
+                cost: 50,
+                originalCost: 100,
+                discountPct: 50,
+                reason: 'Revision Hub MCQ Session (Routine 50% OFF)',
+                action: () => {
+                  setInitialRevisionLessonTitle(lessonTitle);
+                  setShowDailyEventPage(false);
+                  setShowRevisionHubScreen(true);
+                },
+              });
+              return;
+            }
+            setShowDailyEventPage(false);
+            setShowRevisionHubScreen(true);
+          }}
+          onPracticeMistakes={(mistakes) => {
+            setHomeMistakes(mistakes);
+            setShowDailyEventPage(false);
+            setShowMistakePractice(true);
+          }}
+        />
+      )}
+
       {/* REVISION HUB FULL-SCREEN — MCQ · Revision · History · Performance */}
       {showRevisionHubScreen && (
         <RevisionHubScreen
           user={user}
           settings={settings}
-          onBack={() => { setShowRevisionHubScreen(false); setRoutineRevisionDiscountLessonId(null); }}
+          initialLessonTitle={initialRevisionLessonTitle}
+          onBack={() => { setShowRevisionHubScreen(false); setInitialRevisionLessonTitle(null); }}
           onTabChange={onTabChange}
           onNavigateContent={(type, chapterId, topicName, subjectName) => {
             setShowRevisionHubScreen(false);
           }}
           onUpdateUser={handleUserUpdate}
-          onBeforeMcqOpen={(confirm) => {
-            // Routine reward: one-time 50% OFF Revision Hub session for the completed lesson.
-            if (routineRevisionDiscountLessonId) {
-              const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-              if (_isAdm) { setRoutineRevisionDiscountLessonId(null); confirm(); return; }
-              const discCost = 50;
-              const total = getTotalCredits(user);
-              if (total < discCost) {
-                showAlert(`⚠️ Coins kam hain! ${discCost} CR chahiye, aapke paas sirf ${total} CR hai.`, 'INFO');
-                return;
-              }
-              setCoinGate({
-                cost: discCost,
-                originalCost: 100,
-                discountPct: 50,
-                reason: 'Revision Hub MCQ Session (Routine 50% OFF)',
-                action: () => { setRoutineRevisionDiscountLessonId(null); confirm(); },
-              });
-              return;
-            }
-            showCoinGate(100, 'Revision Hub MCQ Session', confirm);
-          }}
-          onMcqAnswer={trackDailyMcqAnswer}
           onSendToMcqCommunity={(draft) => { setMcqCommunityDraft(draft); setShowMcqCommunityPopup(true); }}
         />
       )}
@@ -21531,6 +21654,63 @@ RULES:
           lucentNotes={(settings?.lucentNotes || []) as any[]}
           onBack={() => setShowMyRoutine(false)}
           onUserUpdate={handleUserUpdate}
+          settings={settings}
+          onOpenRevisionHub={(lessonId?: string, lessonTitle?: string) => {
+            if (lessonTitle) {
+              const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
+              if (_isAdm) {
+                setInitialRevisionLessonTitle(lessonTitle);
+                setShowMyRoutine(false);
+                setShowRevisionHubScreen(true);
+                return;
+              }
+              setCoinGate({
+                cost: 50,
+                originalCost: 100,
+                discountPct: 50,
+                reason: 'Revision Hub MCQ Session (Routine 50% OFF)',
+                action: () => {
+                  setInitialRevisionLessonTitle(lessonTitle);
+                  setShowMyRoutine(false);
+                  setShowRevisionHubScreen(true);
+                },
+              });
+              return;
+            }
+            setShowMyRoutine(false);
+            setShowRevisionHubScreen(true);
+          }}
+          onPracticeMistakes={(mistakes) => {
+            setHomeMistakes(mistakes);
+            setShowMyRoutine(false);
+            setShowMistakePractice(true);
+          }}
+          onGoToRevision={(lessonId, lessonTitle) => {
+            // Coming from Routine → 50-coin gate first, then open RevisionHub auto-navigated
+            if (lessonTitle) {
+              const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
+              if (_isAdm) {
+                setInitialRevisionLessonTitle(lessonTitle);
+                setShowMyRoutine(false);
+                setShowRevisionHubScreen(true);
+                return;
+              }
+              setCoinGate({
+                cost: 50,
+                originalCost: 100,
+                discountPct: 50,
+                reason: 'Revision Hub MCQ Session (Routine 50% OFF)',
+                action: () => {
+                  setInitialRevisionLessonTitle(lessonTitle);
+                  setShowMyRoutine(false);
+                  setShowRevisionHubScreen(true);
+                },
+              });
+              return;
+            }
+            setShowMyRoutine(false);
+            setShowRevisionHubScreen(true);
+          }}
         />
       )}
 
@@ -22161,7 +22341,7 @@ RULES:
               <p className="text-[11px] text-slate-500">{allNotifications.length} message{allNotifications.length !== 1 ? 's' : ''}</p>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="flex-1 overflow-y-auto p-4 pb-[72px] space-y-3">
             {allNotifications.length === 0 && (
               <div className="text-center py-16 text-slate-400">
                 <Bell size={40} className="mx-auto mb-3 opacity-30" />
@@ -25535,7 +25715,7 @@ RULES:
             </div>
           </div>
           {/* Content */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-10">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-[72px]">
 
             {/* TIER HEADER */}
             <div className="grid grid-cols-3 gap-1.5 sticky top-0 z-10 pb-2" style={{ background: tierTheme.profileBg }}>
@@ -26529,27 +26709,41 @@ RULES:
                 </span>
               </div>
 
-              {/* RIGHT: credit change pill */}
-              <div className="flex items-center gap-1.5 rounded-full px-3 py-1 shrink-0"
-                style={{ background: 'rgba(0,0,0,0.25)' }}>
-                {/* Previous */}
-                <span className="text-[12px] font-bold tabular-nums"
-                  style={{ color: 'rgba(255,255,255,0.6)' }}>
-                  {creditDeductToast.previous.toLocaleString('en-IN')}🪙
-                </span>
-                {/* Arrow */}
-                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>→</span>
-                {/* Delta */}
-                <span className="text-[13px] font-black tabular-nums"
-                  style={{ color: deltaColor }}>
-                  {sign}{creditDeductToast.deducted}
-                </span>
-                {/* Equals */}
-                <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>=</span>
-                {/* New total */}
-                <span className="text-[13px] font-black tabular-nums text-white">
-                  {creditDeductToast.current.toLocaleString('en-IN')}🪙
-                </span>
+              {/* RIGHT: credit + xp single row */}
+              <div className="flex items-center gap-0 shrink-0">
+                {/* Credits */}
+                <div className="flex items-center gap-[5px]">
+                  <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                    {creditDeductToast.previous.toLocaleString('en-IN')}🪙
+                  </span>
+                  <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>→</span>
+                  <span style={{ color: deltaColor, fontSize: 12, fontWeight: 900, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                    {sign}{creditDeductToast.deducted} CR
+                  </span>
+                  <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>=</span>
+                  <span style={{ color: '#fff', fontSize: 12, fontWeight: 900, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                    {creditDeductToast.current.toLocaleString('en-IN')}🪙
+                  </span>
+                </div>
+                {/* Divider + XP (only on ADD with xp data) */}
+                {isAdd && creditDeductToast.xpEarned != null && (
+                  <>
+                    <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.18)', flexShrink: 0, margin: '0 6px' }} />
+                    <div className="flex items-center gap-[5px]">
+                      <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: 700, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                        {(creditDeductToast.xpPrevious ?? 0).toLocaleString('en-IN')} XP
+                      </span>
+                      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>→</span>
+                      <span style={{ color: '#a78bfa', fontSize: 12, fontWeight: 900, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                        +{creditDeductToast.xpEarned} XP
+                      </span>
+                      <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>=</span>
+                      <span style={{ color: '#fff', fontSize: 12, fontWeight: 900, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                        {(creditDeductToast.xpCurrent ?? 0).toLocaleString('en-IN')} XP
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
