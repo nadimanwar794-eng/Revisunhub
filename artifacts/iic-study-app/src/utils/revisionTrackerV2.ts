@@ -45,15 +45,49 @@ export interface TopicBucket {
   lastSessionAccuracy?: number;
   // Last 3 MCQ sessions history — newest first. Used to show trend in Performance tab.
   sessionHistory?: { accuracy: number; tier: 'weak' | 'average' | 'strong' | 'mastered'; at: number }[];
+  // Last local/cloud mutation time. Used to merge an offline device with Firebase.
+  updatedAt?: number;
 }
 
 export type TrackerMap = Record<string, TopicBucket>;
 
 const STORAGE_KEY = 'nst_revision_tracker_v2';
+const LEGACY_STORAGE_KEY = STORAGE_KEY;
+let activeUserId: string | null = null;
+
+function userStorageKey(userId: string | null = activeUserId): string {
+  return userId ? `${STORAGE_KEY}_${encodeURIComponent(userId)}` : STORAGE_KEY;
+}
+
+/**
+ * Select the account whose revision tracker is active on this device.
+ *
+ * Revision Hub used to keep one global localStorage record, which could both
+ * leak data between accounts and disappear on a cache clear. Keep a one-time
+ * migration path for an existing install, then all future writes are scoped
+ * to the Firebase user id.
+ */
+export function setRevisionTrackerUser(userId: string | null | undefined): void {
+  activeUserId = userId ? String(userId) : null;
+  if (!activeUserId) return;
+
+  try {
+    const scopedKey = userStorageKey(activeUserId);
+    if (localStorage.getItem(scopedKey) === null) {
+      const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (legacy) {
+        localStorage.setItem(scopedKey, legacy);
+        // The old unscoped record could otherwise be copied into a different
+        // account the next time that account logs in on this device.
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+      }
+    }
+  } catch {}
+}
 
 function safeRead(): TrackerMap {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(userStorageKey());
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return (parsed && typeof parsed === 'object') ? parsed : {};
@@ -61,7 +95,7 @@ function safeRead(): TrackerMap {
 }
 
 function safeWrite(map: TrackerMap) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(map)); } catch {}
+  try { localStorage.setItem(userStorageKey(), JSON.stringify(map)); } catch {}
 }
 
 export function bucketKey(subjectId: string, chapterId: string, pageKey: string, topic: string) {
@@ -170,6 +204,7 @@ export function recordAttempt(args: RecordAttemptArgs) {
       prev.longSpacingMcqAt = undefined;
     }
     prev.lastAttemptAt = now;
+    prev.updatedAt = now;
     // keep latest labels in case admin renames things later
     prev.subjectName = args.subjectName ?? prev.subjectName;
     prev.chapterTitle = args.chapterTitle ?? prev.chapterTitle;
@@ -209,6 +244,39 @@ export function getAllBuckets(): TopicBucket[] {
   return Object.values(safeRead());
 }
 
+/** Return a copy of the active user's complete tracker map. */
+export function getTrackerMap(): TrackerMap {
+  return safeRead();
+}
+
+/**
+ * Replace the active user's local tracker after a cloud restore.
+ * This is intentionally explicit so a failed Firebase read never wipes local data.
+ */
+export function replaceTrackerMap(map: TrackerMap): void {
+  safeWrite(map || {});
+}
+
+/**
+ * Merge an offline map with the Firebase map. A newer local mutation wins;
+ * otherwise the cloud snapshot wins. Entries that exist on only one side are
+ * always retained so offline work is not silently discarded.
+ */
+export function mergeTrackerMaps(local: TrackerMap, cloud: TrackerMap): TrackerMap {
+  const merged: TrackerMap = { ...cloud };
+  for (const [key, localBucket] of Object.entries(local || {})) {
+    const cloudBucket = merged[key];
+    if (!cloudBucket) {
+      merged[key] = localBucket;
+      continue;
+    }
+    const localTime = localBucket.updatedAt || localBucket.lastAttemptAt || 0;
+    const cloudTime = cloudBucket.updatedAt || cloudBucket.lastAttemptAt || 0;
+    if (localTime > cloudTime) merged[key] = localBucket;
+  }
+  return merged;
+}
+
 export interface WeakBucket extends TopicBucket {
   accuracy: number;   // 0..1
   wrongCount: number;
@@ -227,7 +295,15 @@ export function getWeakBuckets(opts?: { minAttempts?: number; maxAccuracy?: numb
 /** A bucket counts as "trackable" if it has wrong questions OR is in the
  *  long-spacing maintenance window (notes/MCQ rerun queued). */
 function isTrackable(b: TopicBucket) {
-  return b.wrongQuestions.length > 0 || !!b.longSpacingNotesAt || !!b.longSpacingMcqAt;
+  // Always track: topics with wrong answers, long-spacing maintenance, OR
+  // freshly scheduled routine lessons (NOTES OR MCQ stage, never cycled yet).
+  return (
+    b.wrongQuestions.length > 0 ||
+    !!b.longSpacingNotesAt ||
+    !!b.longSpacingMcqAt ||
+    (b.stage === 'NOTES' && (b.cycleCount ?? 0) === 0) ||
+    (b.stage === 'MCQ'   && (b.cycleCount ?? 0) === 0)
+  );
 }
 
 /** Midnight at the START of today (00:00:00.000). */
@@ -286,8 +362,11 @@ export function markNotesReviewed(key: string, config?: RevisionConfig) {
     // MCQ due immediately after reading notes — show in today's list right away
     b.nextDueAt = Date.now();
   }
+  b.updatedAt = Date.now();
   map[key] = b;
   safeWrite(map);
+  // Notify RoutineRevisionBadge (and any other listeners) that revision state changed.
+  try { window.dispatchEvent(new CustomEvent('iic-revision-updated')); } catch {}
 }
 
 /** Mark an MCQ session done. accuracy = 0..1. Schedules next revision based on performance. */
@@ -343,12 +422,33 @@ export function markMcqDone(key: string, accuracy: number, config?: RevisionConf
   } else {
     b.nextDueAt = Date.now() + nextRevisionSecs * 1000;
   }
+  b.updatedAt = Date.now();
   map[key] = b;
   safeWrite(map);
+  // Notify RoutineRevisionBadge (and any other listeners) that revision state changed.
+  try { window.dispatchEvent(new CustomEvent('iic-revision-updated')); } catch {}
 }
 
 export function clearTracker() {
   safeWrite({});
+}
+
+/**
+ * Returns 0–100 accuracy % for all Revision Hub attempts linked to a lesson
+ * (matched by chapterId === lessonId). Returns null if no data exists yet.
+ */
+export function getLessonRevHubPercent(lessonId: string): number | null {
+  if (!lessonId) return null;
+  const map = safeRead();
+  let totalQ = 0, correctQ = 0;
+  for (const b of Object.values(map)) {
+    if (b.chapterId === lessonId) {
+      totalQ   += b.total   || 0;
+      correctQ += b.correct || 0;
+    }
+  }
+  if (totalQ === 0) return null;
+  return Math.round((correctQ / totalQ) * 100);
 }
 
 // ─── Topic Notes Direct Storage ─────────────────────────────────────────────
@@ -398,8 +498,22 @@ export function applyInitialSchedule(
   config?: RevisionConfig
 ) {
   const map = safeRead();
-  const b = map[key];
-  if (!b) return;
+  // Upsert: create a minimal bucket if it doesn't exist yet (handles key
+  // mismatch between per-question recordAttempt keys and per-topic applyInitialSchedule keys)
+  const parts = key.split('::');
+  const b: TopicBucket = map[key] ?? {
+    subjectId: parts[0] || key,
+    chapterId: parts[1] || key,
+    pageKey: parts[2] || key,
+    topic: parts[3] || key,
+    total: 0,
+    correct: 0,
+    lastAttemptAt: Date.now(),
+    wrongQuestions: [],
+    stage: 'NOTES' as const,
+    nextDueAt: 0,
+    cycleCount: 0,
+  };
 
   const thresholds = config?.thresholds ?? { strong: 65, average: 50, mastery: 80 };
   const intervals = config?.intervals ?? {
@@ -445,8 +559,99 @@ export function applyInitialSchedule(
   } else {
     b.nextDueAt = Date.now() + nextRevisionSecs * 1000;
   }
+  b.updatedAt = Date.now();
   map[key] = b;
   safeWrite(map);
+}
+
+/**
+ * Schedule a routine-completed lesson for Revision Hub review.
+ * Called when a student finishes a routine lesson — creates a NOTES-stage
+ * bucket that becomes due tomorrow so it appears in the Revision Hub the
+ * next day.  Skips silently if the lesson is already tracked.
+ */
+export function scheduleRoutineLessonForRevision(opts: {
+  lessonId: string;
+  subjectId: string;
+  subjectName?: string;
+  lessonTitle?: string;
+}): void {
+  try {
+    const map = safeRead();
+    const { lessonId, subjectId, subjectName, lessonTitle } = opts;
+    const k = bucketKey(subjectId, lessonId, lessonId, lessonTitle || lessonId);
+    // Don't overwrite an existing bucket that has real MCQ history
+    if (map[k] && (map[k].total > 0 || map[k].cycleCount)) return;
+    const now = Date.now();
+    map[k] = {
+      ...(map[k] || {}),
+      subjectId,
+      subjectName: subjectName || subjectId,
+      chapterId: lessonId,
+      chapterTitle: lessonTitle || lessonId,
+      pageKey: lessonId,
+      pageLabel: lessonTitle || lessonId,
+      topic: lessonTitle || lessonId,
+      total: map[k]?.total ?? 0,
+      correct: map[k]?.correct ?? 0,
+      lastAttemptAt: now,
+      wrongQuestions: map[k]?.wrongQuestions ?? [],
+      stage: 'NOTES',
+      // due immediately so it shows up in today's routine revision badge
+      nextDueAt: Date.now(),
+      cycleCount: map[k]?.cycleCount ?? 0,
+      lastTier: map[k]?.lastTier ?? 'average',
+      updatedAt: now,
+    };
+    safeWrite(map);
+  } catch { /* storage failure — ignore */ }
+}
+
+// ── Routine ↔ Revision Hub link ─────────────────────────────────────────────
+
+export interface LessonRevisionStatus {
+  key: string;
+  /** Current revision stage for this lesson */
+  stage: 'NOTES' | 'MCQ';
+  /** Due today or overdue → user should go to Revision Hub now */
+  isDueToday: boolean;
+  /** Revision done for this cycle — next due date is in the future */
+  isDoneForNow: boolean;
+  /** Number of completed revision cycles */
+  cycleCount: number;
+  /** 0–1 accuracy across all attempts */
+  accuracy: number;
+  topic: string;
+  nextDueAt?: number;
+}
+
+/**
+ * Returns the revision status for a lesson that was scheduled via
+ * scheduleRoutineLessonForRevision.  Returns null if no bucket exists yet
+ * (lesson not yet completed in Routine).
+ */
+export function getRevisionStatusForLesson(lessonId: string): LessonRevisionStatus | null {
+  const map = safeRead();
+  const todayStart = startOfToday();
+  // Buckets created by scheduleRoutineLessonForRevision always have
+  // chapterId === pageKey === lessonId.
+  const entry = Object.entries(map).find(([, b]) => b.chapterId === lessonId && b.pageKey === lessonId);
+  if (!entry) return null;
+  const [key, b] = entry;
+  const dueDay = b.nextDueAt ? startOfDay(b.nextDueAt) : 0;
+  const isDueToday = !b.nextDueAt || dueDay <= todayStart;
+  // "done for now" = at least one full cycle done AND next due is in the future
+  const isDoneForNow = (b.cycleCount ?? 0) > 0 && !!(b.nextDueAt && dueDay > todayStart);
+  return {
+    key,
+    stage: b.stage || 'NOTES',
+    isDueToday,
+    isDoneForNow,
+    cycleCount: b.cycleCount ?? 0,
+    accuracy: b.total > 0 ? b.correct / b.total : 0,
+    topic: b.topic || lessonId,
+    nextDueAt: b.nextDueAt,
+  };
 }
 
 // Build a list of search keywords for a weak bucket — topic name plus salient

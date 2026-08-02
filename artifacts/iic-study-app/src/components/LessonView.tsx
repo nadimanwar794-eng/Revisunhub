@@ -13,11 +13,13 @@ import rehypeKatex from 'rehype-katex';
 import { decodeHtml } from '../utils/htmlDecoder';
 import { storage } from '../utils/storage';
 import { getChapterData, saveUserHistory, saveTestResult, saveUserToLive, saveAdminMark2Topics, subscribeAdminMark2Topics, saveSuggestion } from '../firebase';
+import { getRoutineLessonCreditGiven, setRoutineLessonCreditGiven } from '../utils/routineFirebase';
 import { WriteModeCorrection } from "./WriteModeCorrection";
 import { SpeakButton } from './SpeakButton';
 import { McqSpeakButtons } from './McqSpeakButtons';
 import { ChunkedNotesReader } from './ChunkedNotesReader';
-import { renderMathInHtml } from '../utils/mathUtils';
+import { renderMathInHtml, formatExplanationHtml } from '../utils/mathUtils';
+import McqQuestionDisplay from './McqQuestionDisplay';
 import { stopSpeaking } from '../utils/ttsHighlighter';
 import { speakText, stripHtml } from '../utils/textToSpeech';
 import jsPDF from 'jspdf';
@@ -34,6 +36,9 @@ import { fireCreditNotify } from '../utils/creditNotify';
 import { ReadingScoreSession, ReadingScoreState } from '../utils/readingScoreEngine';
 import { ReadingScoreHUD } from './ReadingScoreHUD';
 import { PdfViewer } from './PdfViewer';
+import { useAppTheme } from '../utils/themeContext';
+import { fireSessionComplete } from '../utils/sessionNotify';
+import { deferStudyCoins } from '../utils/studyRewards';
 
 
 interface Props {
@@ -66,6 +71,8 @@ interface Props {
   /** Class 6-12: kya yeh subject ka pehla lesson hai? Pehla lesson sab ke liye free hota hai. */
   isFirstChapter?: boolean;
   onSendToMcqCommunity?: (draft: { question: string; options: [string,string,string,string]; correctAnswer: number; explanation: string }) => void;
+  /** Session khatam hone pe pending coins pass karo — App 4s baad HOME pe add karega */
+  onSessionCreditsEarned?: (credits: number) => void;
 }
 
 export const LessonView: React.FC<Props> = ({ 
@@ -96,7 +103,9 @@ export const LessonView: React.FC<Props> = ({
   onAdminEdit,
   isFirstChapter = false,
   onSendToMcqCommunity,
+  onSessionCreditsEarned,
 }) => {
+  const appTheme = useAppTheme();
   const [mcqState, setMcqState] = useState<Record<number, number | null>>({});
   const [mcqStreak, setMcqStreak] = useState(0);
   const [mcqScorePopup, setMcqScorePopup] = useState<number | null>(null);
@@ -117,6 +126,7 @@ export const LessonView: React.FC<Props> = ({
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [language, setLanguage] = useState<'English' | 'Hindi'>('English');
   const [notesViewMode, setNotesViewMode] = useState<'readable' | 'styled'>('readable');
+  const writeControlsRef = useRef<(() => void) | null>(null);
   const _modeToggleFn = useRef<((mode: 'readable' | 'styled') => void) | null>(null);
   const [pendingModeSwitch, setPendingModeSwitch] = useState<'readable' | 'styled' | null>(null);
   const _applyModeSwitchFn = useRef<((mode: 'readable' | 'styled') => void) | null>(null);
@@ -149,16 +159,172 @@ export const LessonView: React.FC<Props> = ({
   const userRef = useRef(user);
   useEffect(() => { userRef.current = user; }, [user]);
 
+  // ── Routine credit gating ─────────────────────────────────────────────────
+  // isFirstTimeRef: true  → credits flow normally (first-ever visit)
+  // isFirstTimeRef: false → pts only, no credits (repeat visit)
+  // Firebase check runs on mount; pessimistic default = true (first time).
+  // creditsEarnedThisSessionRef tracks whether this session actually earned anything
+  // so we only write to Firebase if the user actually did something.
+  const isFirstTimeRef = useRef(true);
+  const creditsEarnedThisSessionRef = useRef(false);
+
+  useEffect(() => {
+    const uid = user?.id;
+    const lid = chapter?.id;
+    if (!uid || !lid) return;
+    getRoutineLessonCreditGiven(uid, lid).then(alreadyGiven => {
+      isFirstTimeRef.current = !alreadyGiven;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, chapter?.id]);
+
+  // ── Session-complete accumulation (pts + credits per mode) ──────────────────
+  const sessionReadingPtsRef = useRef(0);
+  const sessionWritingPtsRef = useRef(0);
+  const sessionWritingCrRef  = useRef(0);
+  const sessionVideoPtsRef   = useRef(0);
+  const sessionVideoCrRef    = useRef(0);
+  const sessionAudioPtsRef   = useRef(0);
+  const sessionPdfPtsRef     = useRef(0);
+  const sessionQaPtsRef      = useRef(0);
+  // MCQ flush refs — set when showResults fires, read in flushSessionEvents on back
+  const mcqFlushPtsRef       = useRef(0);
+  const mcqFlushCrRef        = useRef(0);
+
+  // Per-mode time tracking — record when each mode first earned pts, accumulate on flush
+  const modeFirstEarnMsRef = useRef<Partial<Record<string, number>>>({});
+  const modeAccumSecsRef   = useRef<Partial<Record<string, number>>>({});
+
+  /** Record first-earn timestamp for a mode (idempotent). */
+  const markModeActive = (mode: string) => {
+    if (!modeFirstEarnMsRef.current[mode]) {
+      modeFirstEarnMsRef.current[mode] = Date.now();
+    }
+  };
+
+  /** Get accumulated seconds for a mode (first-earn → now). */
+  const getModeTimeSecs = (mode: string): number => {
+    const start = modeFirstEarnMsRef.current[mode];
+    if (!start) return modeAccumSecsRef.current[mode] || 0;
+    return (modeAccumSecsRef.current[mode] || 0) + Math.round((Date.now() - start) / 1000);
+  };
+
+  /** Fire per-mode session-complete events and reset accumulators. */
+  const flushSessionEvents = useCallback(() => {
+    // eslint-disable-next-line @typescript-eslint/no-shadow
+    const chapter = chapter?.title || '';
+    const subj = subject?.name || '';
+
+    if (sessionReadingPtsRef.current > 0) {
+      fireSessionComplete({ type: 'LESSON', subject: subj, chapter,
+        timeSecs: getModeTimeSecs('Reading'),
+        activityType: 'Reading', sessionScore: sessionReadingPtsRef.current });
+      sessionReadingPtsRef.current = 0;
+      modeFirstEarnMsRef.current['Reading'] = undefined;
+      modeAccumSecsRef.current['Reading'] = 0;
+    }
+    if (sessionWritingPtsRef.current > 0 || sessionWritingCrRef.current > 0) {
+      fireSessionComplete({ type: 'LESSON', subject: subj, chapter,
+        timeSecs: getModeTimeSecs('Writing'),
+        activityType: 'Writing',
+        sessionScore: sessionWritingPtsRef.current || undefined,
+        creditsEarned: sessionWritingCrRef.current || undefined });
+      sessionWritingPtsRef.current = 0; sessionWritingCrRef.current = 0;
+      modeFirstEarnMsRef.current['Writing'] = undefined;
+      modeAccumSecsRef.current['Writing'] = 0;
+    }
+    if (sessionVideoPtsRef.current > 0 || sessionVideoCrRef.current > 0) {
+      fireSessionComplete({ type: 'LESSON', subject: subj, chapter,
+        timeSecs: getModeTimeSecs('Video'),
+        activityType: 'Video',
+        sessionScore: sessionVideoPtsRef.current || undefined,
+        creditsEarned: sessionVideoCrRef.current || undefined });
+      sessionVideoPtsRef.current = 0; sessionVideoCrRef.current = 0;
+      modeFirstEarnMsRef.current['Video'] = undefined;
+      modeAccumSecsRef.current['Video'] = 0;
+    }
+    if (sessionAudioPtsRef.current > 0) {
+      fireSessionComplete({ type: 'LESSON', subject: subj, chapter,
+        timeSecs: getModeTimeSecs('Audio'),
+        activityType: 'Audio', sessionScore: sessionAudioPtsRef.current });
+      sessionAudioPtsRef.current = 0;
+      modeFirstEarnMsRef.current['Audio'] = undefined;
+      modeAccumSecsRef.current['Audio'] = 0;
+    }
+    if (sessionPdfPtsRef.current > 0) {
+      fireSessionComplete({ type: 'LESSON', subject: subj, chapter,
+        timeSecs: getModeTimeSecs('PDF'),
+        activityType: 'PDF', sessionScore: sessionPdfPtsRef.current });
+      sessionPdfPtsRef.current = 0;
+      modeFirstEarnMsRef.current['PDF'] = undefined;
+      modeAccumSecsRef.current['PDF'] = 0;
+    }
+    if (sessionQaPtsRef.current > 0) {
+      fireSessionComplete({ type: 'LESSON', subject: subj, chapter,
+        timeSecs: getModeTimeSecs('QA'),
+        activityType: 'QA', sessionScore: sessionQaPtsRef.current });
+      sessionQaPtsRef.current = 0;
+      modeFirstEarnMsRef.current['QA'] = undefined;
+      modeAccumSecsRef.current['QA'] = 0;
+    }
+    if (mcqFlushPtsRef.current > 0 || mcqFlushCrRef.current > 0) {
+      fireSessionComplete({ type: 'MCQ', subject: subj, chapter,
+        timeSecs: getModeTimeSecs('MCQ'),
+        activityType: 'MCQ',
+        sessionScore: mcqFlushPtsRef.current || undefined,
+        coinsEarned: mcqFlushCrRef.current || undefined });
+      mcqFlushPtsRef.current = 0;
+      mcqFlushCrRef.current = 0;
+      modeFirstEarnMsRef.current['MCQ'] = undefined;
+      modeAccumSecsRef.current['MCQ'] = 0;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chapter?.title, subject?.name]);
+
   const onUpdateUserRef = useRef(onUpdateUser);
   useEffect(() => { onUpdateUserRef.current = onUpdateUser; }, [onUpdateUser]);
+
+  /** Back button handler — flushes session events, passes pending coins, then calls onBack. */
+  const handleBack = useCallback(() => {
+    flushSessionEvents();
+    if (pendingSessionCreditsRef.current > 0) {
+      onSessionCreditsEarned?.(pendingSessionCreditsRef.current);
+      pendingSessionCreditsRef.current = 0;
+      setPendingCreditDisplay(0);
+    }
+    // ── Routine Firebase: mark credits given after first session ──────────────
+    // If this was a first-time session and the user actually earned credits/pts,
+    // write to Firebase so the next visit knows to give pts only (no credits).
+    if (isFirstTimeRef.current && creditsEarnedThisSessionRef.current) {
+      const uid = userRef.current?.id;
+      const lid = chapter?.id;
+      if (uid && lid) {
+        isFirstTimeRef.current = false; // prevent double-write if back is called again
+        setRoutineLessonCreditGiven(uid, lid).catch(() => {});
+      }
+    }
+    onBack();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flushSessionEvents, onBack, onSessionCreditsEarned, chapter?.id]);
 
   // ── Coin accumulation: fractional carry-over prevents small events losing coins ──
   // Reading coins are awarded immediately per interval but fractional amounts
   // carry forward so even +1 TTS events eventually convert to real coins.
   // MCQ coins are deferred to session-end (showResults) to avoid per-answer flooding.
   const mcqSessionPtsRef = useRef(0);
+  // Live MCQ pts accumulated this session (shown in MCQ top bar)
+  const [mcqLivePts, setMcqLivePts] = useState(0);
+  // Live reading pts accumulated this session (shown in readable-mode notes chip)
+  const [readingLivePts, setReadingLivePts] = useState(0);
+  // Score chip tooltip visibility
+  const [writingScoreTooltip, setWritingScoreTooltip] = useState(false);
+  const [videoScoreTooltip, setVideoScoreTooltip] = useState(false);
+  const [mcqScoreTooltip, setMcqScoreTooltip] = useState(false);
   // Fractional coin accumulator — carries sub-1 amounts between reading events
   const coinFracAccumRef = useRef(0);
+
+  // ── Pending session coins — collected during session, applied on HOME return ──
+  const pendingSessionCreditsRef = useRef(0);
 
   const awardMcqSessionCoins = useCallback((
     totalPts: number,
@@ -168,58 +334,98 @@ export const LessonView: React.FC<Props> = ({
     const _onUpdateUser = onUpdateUserRef.current;
     if (!_user || !_onUpdateUser) return;
 
+    // ── Routine credit gating: MCQ coins only on first visit ─────────────────
+    if (!isFirstTimeRef.current) return;
+
     const userLevel = getLevelFromScore(_user.totalScore || 0);
-    const ratio = userLevel >= 5 ? 0.5 : 0.25;
+    const ratio = userLevel >= 5 ? (1 / 6) : 0.125;
     const coins = Math.floor(totalPts * ratio);
     if (coins <= 0) return;
 
-    const newCredits = (_user.credits || 0) + coins;
-    const updatedWithCoins = { ..._user, credits: newCredits };
-    _onUpdateUser(updatedWithCoins);
-    saveUserToLive(updatedWithCoins);
+    creditsEarnedThisSessionRef.current = true;
 
-    fireCreditNotify({
-      type: 'EARN',
-      amount: coins,
-      remaining: newCredits,
-      source: 'mcq',
-    });
+    // Save coins so flushSessionEvents can include them in MCQ session payload
+    mcqFlushCrRef.current += coins;
+
+    // Study coins stay pending until the student returns to Home.
+    deferStudyCoins(_user.id, coins);
   }, []);
 
   const handleReadingScoreEarned = useCallback((pts: number, activity: string) => {
     const _user = userRef.current;
     const _onUpdateUser = onUpdateUserRef.current;
     if (!_user || !_onUpdateUser || pts <= 0) return;
+    // Accumulate per mode for session-complete breakdown
+    const act = activity?.toUpperCase() || '';
+    if (act.startsWith('VIDEO')) {
+      sessionVideoPtsRef.current += pts; markModeActive('Video');
+    } else if (act.startsWith('AUDIO')) {
+      sessionAudioPtsRef.current += pts; markModeActive('Audio');
+    } else if (act.startsWith('WRITE')) {
+      sessionWritingPtsRef.current += pts; markModeActive('Writing');
+    } else if (act.startsWith('PDF')) {
+      sessionPdfPtsRef.current += pts; markModeActive('PDF');
+    } else if (act.startsWith('QA')) {
+      sessionQaPtsRef.current += pts; markModeActive('QA');
+    } else {
+      sessionReadingPtsRef.current += pts; markModeActive('Reading');
+    }
+    // Update live reading chip for reading-mode activities only
+    if (!act.startsWith('VIDEO') && !act.startsWith('AUDIO')) {
+      setReadingLivePts(prev => prev + pts);
+    }
 
-    // Update totalScore immediately
+    // Update totalScore immediately — reading/MCQ pts only
     const scoreUpdated = { ..._user, totalScore: (_user.totalScore || 0) + pts };
 
-    // Fractional coin accumulator: add this event's coin-value to running total,
-    // then award only the integer part — remainder carries to the next event.
-    // This preserves parity with the old session-aggregate approach:
-    // e.g. four +1-TTS events at ×0.25 → 0+0+0+1 coin (not 0+0+0+0).
-    const userLevel = getLevelFromScore(_user.totalScore || 0);
-    const ratio = userLevel >= 5 ? 0.5 : 0.25;
-    coinFracAccumRef.current += pts * ratio;
-    const coins = Math.floor(coinFracAccumRef.current);
-    coinFracAccumRef.current -= coins; // keep fractional remainder
+    // ── Routine credit gating: coins only on first visit ─────────────────────
+    // If isFirstTimeRef is false (repeat visit), skip coin accumulation — pts only.
+    if (isFirstTimeRef.current) {
+      // Fractional coin accumulator: add this event's coin-value to running total,
+      // then award only the integer part — remainder carries to the next event.
+      const userLevel = getLevelFromScore(_user.totalScore || 0);
+      const ratio = userLevel >= 5 ? (1 / 6) : 0.125;
+      coinFracAccumRef.current += pts * ratio;
+      const coins = Math.floor(coinFracAccumRef.current);
+      coinFracAccumRef.current -= coins;
 
-    if (coins > 0) {
-      const newCredits = (_user.credits || 0) + coins;
-      const updatedWithCoins = { ...scoreUpdated, credits: newCredits };
-      _onUpdateUser(updatedWithCoins);
-      saveUserToLive(updatedWithCoins);
-      const src = activity.startsWith('WRITE') ? 'writing' : 'reading';
-      fireCreditNotify({ type: 'EARN', amount: coins, remaining: newCredits, source: src });
-    } else {
-      _onUpdateUser(scoreUpdated);
-      saveUserToLive(scoreUpdated);
+      // Coins deferred — accumulate for session-end (no immediate balance update / notification)
+      if (coins > 0) {
+        deferStudyCoins(_user.id, coins);
+        pendingSessionCreditsRef.current += coins;
+        creditsEarnedThisSessionRef.current = true;
+      }
     }
+    _onUpdateUser(scoreUpdated);
+    saveUserToLive(scoreUpdated);
+  }, []);
+
+  // Credits earned directly (video 60s, pdf 60s, writing 60s) — deferred to session-end
+  const handleCreditsEarned = useCallback((credits: number, activity: string) => {
+    if (credits <= 0) return;
+
+    // Accumulate per mode for session-complete breakdown
+    const act = activity?.toUpperCase() || '';
+    if (act.startsWith('VIDEO')) {
+      sessionVideoCrRef.current += credits; markModeActive('Video');
+    } else {
+      sessionWritingCrRef.current += credits; markModeActive('Writing');
+    }
+
+    // ── Routine credit gating: credits only on first visit ────────────────────
+    if (!isFirstTimeRef.current) return;
+
+    // Defer — apply on HOME return
+    deferStudyCoins(userRef.current?.id, credits);
+    pendingSessionCreditsRef.current += credits;
+    creditsEarnedThisSessionRef.current = true;
   }, []);
 
   // Award MCQ coins once when results are shown (session over)
   useEffect(() => {
     if (showResults && mcqSessionPtsRef.current > 0) {
+      // Save pts for flushSessionEvents BEFORE resetting
+      mcqFlushPtsRef.current += mcqSessionPtsRef.current;
       awardMcqSessionCoins(mcqSessionPtsRef.current);
       mcqSessionPtsRef.current = 0;
     }
@@ -239,11 +445,19 @@ export const LessonView: React.FC<Props> = ({
     onScoreEarned: handleReadingScoreEarned,
   } : undefined;
 
-  const writingScoreConfig = readingScoreConfig ? { ...readingScoreConfig, mode: 'writing' as const } : undefined;
+  // Writing mode: pts via onScoreEarned, 5% scroll/1min required
+  const writingScoreConfig = readingScoreConfig ? {
+    ...readingScoreConfig,
+    mode: 'writing' as const,
+  } : undefined;
 
   // ── Media (Video / Audio) time-based score session ───────────────────────
   const mediaScoreSessionRef = useRef<ReadingScoreSession | null>(null);
   const [mediaScoreState, setMediaScoreState] = useState<ReadingScoreState | null>(null);
+
+  // ── Writing HTML (Notes Maker styled mode) score session ─────────────────
+  const writingHtmlScoreSessionRef = useRef<ReadingScoreSession | null>(null);
+  const [writingHtmlScoreState, setWritingHtmlScoreState] = useState<ReadingScoreState | null>(null);
 
   useEffect(() => {
     // Detect if current content is video or audio
@@ -262,7 +476,6 @@ export const LessonView: React.FC<Props> = ({
     const isMediaContent = isVideoContent || isAudioContent;
 
     if (!isMediaContent || !user?.id) {
-      // Stop any running session
       if (mediaScoreSessionRef.current) {
         mediaScoreSessionRef.current.stop();
         mediaScoreSessionRef.current = null;
@@ -271,7 +484,6 @@ export const LessonView: React.FC<Props> = ({
       return;
     }
 
-    // Start a new session
     const _lessonLabel = [subject?.name, chapter?.title].filter(Boolean).join(' · ') || undefined;
     const session = new ReadingScoreSession(
       {
@@ -282,19 +494,67 @@ export const LessonView: React.FC<Props> = ({
         boostPercent: getActiveBoost(user as any),
         mode: isAudioContent ? 'audio' : 'video',
         lessonLabel: _lessonLabel,
+        // Video: 6s → +1 pts; Audio: 30s → pts
         onScoreEarned: handleReadingScoreEarned,
+        // Video: 60s → +10 credits (doesn't affect pts/totalScore)
+        onCreditsEarned: isVideoContent ? handleCreditsEarned : undefined,
       },
       (state) => setMediaScoreState(state),
     );
     mediaScoreSessionRef.current = session;
     session.start();
 
+    // YouTube play/pause detection via postMessage (enablejsapi=1)
+    // playerState: 1=playing, 2=paused, 0=ended, 3=buffering, -1=unstarted
+    const handleYtMessage = (e: MessageEvent) => {
+      if (typeof e.data !== 'string') return;
+      try {
+        const data = JSON.parse(e.data);
+        if (data.event === 'infoDelivery' && data.info?.playerState !== undefined) {
+          const playing = data.info.playerState === 1 || data.info.playerState === 3;
+          mediaScoreSessionRef.current?.setVideoPlaying(playing);
+        }
+        // Also handle onStateChange format
+        if (data.event === 'onStateChange' && data.info !== undefined) {
+          const playing = data.info === 1 || data.info === 3;
+          mediaScoreSessionRef.current?.setVideoPlaying(playing);
+        }
+      } catch {}
+    };
+
+    if (isVideoContent) {
+      window.addEventListener('message', handleYtMessage);
+    }
+
     return () => {
       session.stop();
       mediaScoreSessionRef.current = null;
+      if (isVideoContent) {
+        window.removeEventListener('message', handleYtMessage);
+      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content?.id, content?.type, user?.id]);
+
+  // Writing HTML (Notes Maker styled mode) score session — starts when user switches to styled mode
+  useEffect(() => {
+    if (notesViewMode !== 'styled' || !writingScoreConfig) {
+      if (writingHtmlScoreSessionRef.current) {
+        writingHtmlScoreSessionRef.current.stop();
+        writingHtmlScoreSessionRef.current = null;
+        setWritingHtmlScoreState(null);
+      }
+      return;
+    }
+    const session = new ReadingScoreSession(writingScoreConfig, setWritingHtmlScoreState);
+    writingHtmlScoreSessionRef.current = session;
+    session.start();
+    return () => {
+      session.stop();
+      writingHtmlScoreSessionRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesViewMode, writingScoreConfig?.userId]);
 
   // On mount: always re-apply stored desktop mode preference to the viewport
   useEffect(() => {
@@ -599,7 +859,7 @@ export const LessonView: React.FC<Props> = ({
           >
             {isImmersive ? '↩ Exit Focus' : '🎯 Focus Mode'}
           </button>
-          {displayData && displayData.length > 0 && (
+          {isAdmin && displayData && displayData.length > 0 && (
             <button
               onClick={() => { setProjectorQIndex(0); setProjectorReveal(false); setIsProjectorMode(true); setFabOpen(false); }}
               style={{ display: 'flex', alignItems: 'center', gap: '6px', background: '#d97706', color: '#fff', border: 'none', borderRadius: '24px', padding: '8px 14px', fontSize: '12px', fontWeight: 900, boxShadow: '0 4px 16px rgba(0,0,0,0.25)', cursor: 'pointer', whiteSpace: 'nowrap' }}
@@ -705,24 +965,23 @@ export const LessonView: React.FC<Props> = ({
       return (
           <div className="fixed inset-0 z-[200] bg-white flex flex-col">
               {/* Header */}
-              <header className="bg-white border-b border-slate-200 p-4 flex items-center justify-between shadow-sm sticky top-0 z-10">
-                  <div className="flex items-center gap-3"><button onClick={toggleFullScreen} className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-slate-200" title="Toggle Fullscreen"><Maximize size={20} /></button>
-                      {settings?.appLogo && <img src={settings.appLogo} className="w-8 h-8 object-contain" />}
-                      <div>
-                          <h2 className="font-black text-slate-800 uppercase text-sm">{settings?.appName || 'Free Notes'}</h2>
-                          <p className="text-[10px] text-orange-600 font-bold uppercase tracking-widest">Recommended Reading</p>
+              <header className="px-3 py-2.5 flex items-center gap-2.5 shadow-md sticky top-0 z-10" style={{ background: appTheme.topBarGrad }}>
+                  <button onClick={() => { setViewingNote(null); setViewingNoteChunkMode(false); }} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors"><X size={18}/></button>
+                  <div className="min-w-0 flex-1 flex items-center gap-2">
+                      {settings?.appLogo && <img src={settings.appLogo} className="w-7 h-7 object-contain rounded-lg shrink-0" />}
+                      <div className="min-w-0">
+                          <h2 className="font-black text-white uppercase text-[13px] truncate leading-tight">{settings?.appName || 'Free Notes'}</h2>
+                          <p className="text-[10px] text-amber-300 font-bold uppercase tracking-widest">📖 Recommended Reading</p>
                       </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setViewingNoteChunkMode(m => !m)}
-                      className={`p-2 rounded-full transition-colors ${viewingNoteChunkMode ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-                      title={viewingNoteChunkMode ? 'HTML Mode' : 'TTS Reader'}
-                    >
-                      <Volume2 size={18} />
-                    </button>
-                    <button onClick={() => { setViewingNote(null); setViewingNoteChunkMode(false); }} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200"><X size={20}/></button>
-                  </div>
+                  <button
+                    onClick={() => setViewingNoteChunkMode(m => !m)}
+                    className={`shrink-0 p-2 rounded-xl transition-colors ${viewingNoteChunkMode ? 'bg-amber-400/30 text-amber-300' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                    title={viewingNoteChunkMode ? 'HTML Mode' : 'TTS Reader'}
+                  >
+                    <Volume2 size={18} />
+                  </button>
+                  <button onClick={toggleFullScreen} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors" title="Toggle Fullscreen"><Maximize size={18} /></button>
               </header>
 
               {/* Content */}
@@ -769,9 +1028,16 @@ export const LessonView: React.FC<Props> = ({
           const strippedContent = filteredContent
               .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
               .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+              // Block-level closers → newline so 📌/📖/📝/💡 section markers
+              // stay on separate lines; without this, splitNoteSections' heading
+              // regex ([^\n]*) grabs the entire content as one giant heading and
+              // repeats it across all three tabs (Book Text / Smart Notes / आसान समझ).
+              .replace(/<\/?\s*(?:p|div|h[1-6]|li|ul|ol|tr|td|th|section|article|blockquote|pre|br)\s*[^>]*>/gi, '\n')
               .replace(/<[^>]*>/g, ' ')
               .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-              .replace(/\s+/g, ' ').trim();
+              .replace(/[^\S\n]+/g, ' ')   // collapse spaces/tabs but keep newlines
+              .replace(/\n{3,}/g, '\n\n')  // max 2 consecutive newlines
+              .trim();
 
           const isPremiumUser = !!(user?.isPremium || (user?.subscriptionTier && user.subscriptionTier !== 'FREE'));
           const HTML_UNLOCK_COST = 10;
@@ -971,9 +1237,9 @@ export const LessonView: React.FC<Props> = ({
                                           }
                                           if (!readableText) return null;
                                           return (
-                                              <div className="notes-html-content p-4 sm:p-6 border-b border-slate-100 whitespace-pre-wrap text-slate-700" style={{ fontSize: '15px', lineHeight: '1.8' }}>
-                                                  {readableText}
-                                              </div>
+                                              <div className="notes-html-content p-4 sm:p-6 border-b border-slate-100 text-slate-700" style={{ fontSize: '15px', lineHeight: '1.8' }}
+                                                  dangerouslySetInnerHTML={{ __html: renderMathInHtml(readableText) }}
+                                              />
                                           );
                                       })()}
                                       {/* Write mode HTML */}
@@ -1009,42 +1275,79 @@ export const LessonView: React.FC<Props> = ({
                           {rotateToast}
                       </div>
                   )}
-                  {/* Header — 2-row write mode bar */}
-                  <header className={`bg-white border-b border-slate-100 px-3 pt-2 pb-2 flex-shrink-0 z-10 shadow-sm${isImmersive || schoolMode ? ' hidden' : ''}`}>
-                      {/* Row 1: Back + Title + WRITE badge + Close */}
+                  {/* Header — write mode bar */}
+                  <header className={`px-3 pt-2 pb-2 flex-shrink-0 z-10 shadow-md${isImmersive || schoolMode ? ' hidden' : ''}`} style={{ background: appTheme.topBarGrad }}>
                       <div className="flex items-center gap-2">
-                          <button onClick={onBack} className="shrink-0 p-2 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors"><ArrowLeft size={18} /></button>
+                          <button onClick={handleBack} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors"><ArrowLeft size={18} /></button>
                           <div className="min-w-0 flex-1">
-                              <h2 className="text-[13px] font-black text-slate-800 truncate leading-tight">{content.title}</h2>
+                              <h2 className="text-[13px] font-black text-white truncate leading-tight">{content.title}</h2>
+                              <p className="text-[10px] font-bold text-amber-300 uppercase tracking-wide truncate">{notesViewMode === 'styled' ? '✍️ Writing Mode' : '📖 Reading Mode'}</p>
                           </div>
-                          <span className="shrink-0 text-[8px] font-black uppercase tracking-[0.18em] text-indigo-400/70 select-none whitespace-nowrap">✏️ WRITE</span>
-                          <button onClick={onBack} className="shrink-0 p-2 bg-slate-50 hover:bg-red-50 hover:text-red-500 text-slate-400 rounded-xl transition-colors"><X size={17} /></button>
-                      </div>
-                      {/* Row 2: Controls */}
-                      <div className="flex items-center gap-2 mt-1.5">
+                          {/* Live score chip — both reading & writing modes */}
+                          <div className="relative shrink-0" style={{ zIndex: 50 }}>
+                              <span
+                                  onClick={() => { setWritingScoreTooltip(true); setTimeout(() => setWritingScoreTooltip(false), 2500); }}
+                                  style={{ fontSize: '10px', fontWeight: 900, color: notesViewMode === 'styled' ? '#10b981' : '#6366f1', background: notesViewMode === 'styled' ? 'rgba(16,185,129,0.12)' : 'rgba(99,102,241,0.12)', border: `1px solid ${notesViewMode === 'styled' ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.3)'}`, borderRadius: 99, padding: '2px 8px', cursor: 'pointer', display: 'block' }}>
+                                  📖 {readingLivePts}
+                              </span>
+                              {writingScoreTooltip && (
+                                  <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)', borderTop: '2px solid #10b981', border: '1.5px solid rgba(99,102,241,0.2)', borderTopWidth: 2, borderTopColor: '#10b981', borderRadius: 12, padding: '7px 12px', whiteSpace: 'nowrap', zIndex: 100, boxShadow: '0 4px 20px rgba(16,185,129,0.15), inset 0 -1px 0 #c7d2fe', animation: 'rshud-slide 0.18s ease', display: 'flex', alignItems: 'center', gap: 8, minWidth: 260 }}>
+                                      <span style={{ fontSize: 14, flexShrink: 0 }}>✍️</span>
+                                      <span style={{ fontSize: 10, fontWeight: 900, color: '#059669', textTransform: 'uppercase', letterSpacing: '0.06em', flexShrink: 0 }}>Writing Score</span>
+                                      <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                          <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Score</span>
+                                          <span style={{ fontSize: 13, fontWeight: 900, color: '#10b981', lineHeight: 1.2 }}>+{notesViewMode === 'styled' ? (writingHtmlScoreState?.totalSessionScore ?? 0) : readingLivePts}</span>
+                                      </div>
+                                      <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                          <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Progress</span>
+                                          <span style={{ fontSize: 13, fontWeight: 900, color: '#16a34a', lineHeight: 1.2 }}>{notesViewMode === 'styled' ? `${Math.round(writingHtmlScoreState?.progressPercent ?? 0)}%` : '--'}</span>
+                                      </div>
+                                      <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                          <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Next</span>
+                                          <span style={{ fontSize: 11, fontWeight: 900, color: (notesViewMode === 'styled' && writingHtmlScoreState?.isPermanentlyStopped) ? '#ef4444' : '#f59e0b', lineHeight: 1.2 }}>
+                                              {notesViewMode === 'styled'
+                                                ? writingHtmlScoreState?.isPermanentlyStopped ? 'Scroll karo'
+                                                  : writingHtmlScoreState?.isPaused ? 'Paused'
+                                                  : `+10 in ${writingHtmlScoreState?.nextRewardInSec ?? 60}s`
+                                                : '+5 in 30s'}
+                                          </span>
+                                      </div>
+                                      <div style={{ flex: 1 }} />
+                                      <button onClick={() => setWritingScoreTooltip(false)} style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 11, fontWeight: 900, cursor: 'pointer', flexShrink: 0, padding: 0 }}>✕</button>
+                                  </div>
+                              )}
+                          </div>
                           {/* Language pill */}
                           {!schoolMode && (
                               <button onClick={() => setLanguage(l => l === 'English' ? 'Hindi' : 'English')}
-                                  className="shrink-0 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-black text-slate-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 flex items-center gap-1 transition-all">
+                                  className="shrink-0 px-2.5 py-1 bg-white/10 border border-white/20 rounded-lg text-[11px] font-black text-white/80 hover:bg-white/20 flex items-center gap-1 transition-all">
                                   <Globe size={11} /> {language === 'English' ? 'हि' : 'EN'}
                               </button>
                           )}
                           {/* Admin Edit button */}
                           {isAdmin && onAdminEdit && (
-                              <button onClick={onAdminEdit} className="shrink-0 p-2 bg-orange-50 hover:bg-orange-100 rounded-xl text-orange-600 border border-orange-200 transition-colors" title="Edit / Delete Notes (Admin)">
+                              <button onClick={onAdminEdit} className="shrink-0 p-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-xl text-amber-300 border border-amber-400/30 transition-colors" title="Edit / Delete Notes (Admin)">
                                   <Pencil size={17} />
                               </button>
                           )}
-                          {/* ⋮ More menu — pushed to the right */}
+                          {/* ⋮ More menu */}
                           {!schoolMode && (
-                              <div className="relative shrink-0 ml-auto">
+                              <div className="relative shrink-0">
                                   {showMoreMenu && <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />}
                                   <button onClick={() => setShowMoreMenu(s => !s)}
-                                      className={`p-2 rounded-xl transition-colors ${showMoreMenu ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
+                                      className={`p-2 rounded-xl transition-colors ${showMoreMenu ? 'bg-white/25 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}>
                                       <MoreVertical size={17} />
                                   </button>
                                   {showMoreMenu && (
                                       <div className="absolute right-0 top-11 z-50 bg-white border border-slate-100 rounded-2xl shadow-2xl w-56 py-2 overflow-hidden">
+                                          <button onClick={() => { writeControlsRef.current?.(); setShowMoreMenu(false); }}
+                                              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 font-semibold transition-colors">
+                                              <LayoutGrid size={15} className="text-slate-400 shrink-0" /> Controls
+                                          </button>
+                                          <div className="my-1.5 border-t border-slate-100" />
                                           <button onClick={() => { handleRotate(); setShowMoreMenu(false); }}
                                               className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 font-semibold transition-colors">
                                               <RotateCcw size={15} className="text-slate-400 shrink-0" /> Screen Rotate
@@ -1068,6 +1371,7 @@ export const LessonView: React.FC<Props> = ({
                                   )}
                               </div>
                           )}
+                          <button onClick={handleBack} className="shrink-0 p-2 bg-white/10 hover:bg-red-500/20 hover:text-red-300 text-white/70 rounded-xl transition-colors"><X size={17} /></button>
                       </div>
                   </header>
 
@@ -1138,20 +1442,22 @@ export const LessonView: React.FC<Props> = ({
                   )}
               {/* Next Chapter bar — shown at bottom when next chapter is available */}
               {onNext && (
-                <div className={`flex-shrink-0 border-t border-slate-100 bg-white px-4 py-2.5${isImmersive ? ' hidden' : ''}`}>
+                <div className={`flex-shrink-0 border-t border-slate-200/60 bg-white px-4 py-2.5${isImmersive ? ' hidden' : ''}`}>
                   <button
                     onClick={() => {
                       if (user && onUpdateUser) { setPendingNextChapter(true); }
                       else { onNext(); }
                     }}
-                    className="w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl text-white font-black text-sm active:scale-[0.98] transition-all shadow-md"
-                    style={{ background: 'linear-gradient(90deg, #6366f1, #8b5cf6)' }}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-900 border border-slate-700/60 active:scale-[0.98] transition-all group shadow-sm"
                   >
-                    <span>📖 Agla Chapter</span>
-                    <span className="flex items-center gap-1.5 text-xs opacity-90">
-                      {nextTitle && <span className="truncate max-w-[140px]">{nextTitle}</span>}
-                      <ChevronRight size={16} />
-                    </span>
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center shrink-0 group-hover:bg-indigo-500/30 transition-colors">
+                      <BookOpen size={15} className="text-indigo-400" />
+                    </div>
+                    <div className="flex-1 text-left min-w-0">
+                      <p className="text-[9px] font-semibold text-slate-400 uppercase tracking-[0.14em]">Agla Chapter</p>
+                      {nextTitle && <p className="text-sm font-semibold text-white truncate mt-0.5">{nextTitle}</p>}
+                    </div>
+                    <ChevronRight size={16} className="text-slate-500 shrink-0 group-hover:text-indigo-400 transition-colors" />
                   </button>
                 </div>
               )}
@@ -1167,13 +1473,13 @@ export const LessonView: React.FC<Props> = ({
               <div className="fixed inset-0 z-50 bg-[#111] flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)', paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}>
                   <header className={`bg-black/90 backdrop-blur-md text-white p-4 absolute top-0 left-0 right-0 z-10 flex items-center justify-between border-b border-white/10${isImmersive ? ' hidden' : ''}`} style={{ top: 'env(safe-area-inset-top)' }}>
                       <div className="flex items-center gap-3"><button onClick={toggleFullScreen} className="p-2 bg-slate-100 rounded-full text-slate-600 hover:bg-slate-200" title="Toggle Fullscreen"><Maximize size={20} /></button>
-                          <button onClick={onBack} className="p-2 bg-white/10 rounded-full"><ArrowLeft size={20} /></button>
+                          <button onClick={handleBack} className="p-2 bg-white/10 rounded-full"><ArrowLeft size={20} /></button>
                           <div>
                               <h2 className="text-sm font-bold text-white/90">{content.title}</h2>
                               <p className="text-[10px] text-teal-400 font-bold uppercase tracking-widest">Image Notes</p>
                           </div>
                       </div>
-                      <button onClick={onBack} className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition-colors backdrop-blur-md"><X size={20} /></button>
+                      <button onClick={handleBack} className="p-2 bg-white/10 rounded-full hover:bg-white/20 transition-colors backdrop-blur-md"><X size={20} /></button>
                   </header>
                   <div className="flex-1 min-h-0 overflow-auto pt-16 flex items-center justify-center" onContextMenu={preventMenu}>
                       <img
@@ -1214,7 +1520,7 @@ export const LessonView: React.FC<Props> = ({
                   >
                     <div className="flex items-center gap-2 px-3 pt-3 pb-1">
                       <button
-                        onClick={onBack}
+                        onClick={handleBack}
                         className="p-2 rounded-full active:scale-90 transition-transform"
                         style={{ background: 'rgba(255,255,255,0.12)' }}
                       >
@@ -1224,8 +1530,43 @@ export const LessonView: React.FC<Props> = ({
                         <h2 className="font-bold text-white text-[13px] leading-snug truncate">{content.title}</h2>
                         <p className="text-[9px] font-semibold uppercase tracking-widest" style={{ color: 'rgba(255,255,255,0.38)' }}>Tap screen to hide controls</p>
                       </div>
+                      {/* Live session score chip */}
+                      {mediaScoreState && (
+                        <div className="relative shrink-0" style={{ zIndex: 50 }}>
+                          <span
+                            onClick={() => { setVideoScoreTooltip(true); setTimeout(() => setVideoScoreTooltip(false), 2500); }}
+                            style={{ fontSize: '10px', fontWeight: 900, color: '#4ade80', background: 'rgba(34,197,94,0.18)', border: '1px solid rgba(34,197,94,0.35)', borderRadius: 99, padding: '2px 8px', letterSpacing: '0.02em', cursor: 'pointer', display: 'block' }}>
+                            📖 {mediaScoreState.totalSessionScore}
+                          </span>
+                          {videoScoreTooltip && (
+                            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)', borderTop: '2px solid #6366f1', border: '1.5px solid rgba(99,102,241,0.2)', borderTopWidth: 2, borderTopColor: '#6366f1', borderRadius: 12, padding: '7px 12px', whiteSpace: 'nowrap', zIndex: 100, boxShadow: '0 4px 20px rgba(99,102,241,0.15), inset 0 -1px 0 #c7d2fe', animation: 'rshud-slide 0.18s ease', display: 'flex', alignItems: 'center', gap: 8, minWidth: 260 }}>
+                              <span style={{ fontSize: 14, flexShrink: 0 }}>🎬</span>
+                              <span style={{ fontSize: 10, fontWeight: 900, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.06em', flexShrink: 0 }}>Video Score</span>
+                              <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Score</span>
+                                <span style={{ fontSize: 13, fontWeight: 900, color: '#6366f1', lineHeight: 1.2 }}>+{mediaScoreState.totalSessionScore}</span>
+                              </div>
+                              <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Progress</span>
+                                <span style={{ fontSize: 13, fontWeight: 900, color: '#16a34a', lineHeight: 1.2 }}>{Math.round(mediaScoreState.progressPercent ?? 0)}%</span>
+                              </div>
+                              <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Next</span>
+                                <span style={{ fontSize: 11, fontWeight: 900, color: mediaScoreState.isPaused ? '#ef4444' : '#f59e0b', lineHeight: 1.2 }}>
+                                  {mediaScoreState.isPaused ? 'Paused' : `+5 in ${mediaScoreState.nextRewardInSec ?? 30}s`}
+                                </span>
+                              </div>
+                              <div style={{ flex: 1 }} />
+                              <button onClick={() => setVideoScoreTooltip(false)} style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 11, fontWeight: 900, cursor: 'pointer', flexShrink: 0, padding: 0 }}>✕</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <button
-                        onClick={onBack}
+                        onClick={handleBack}
                         className="p-2 rounded-full active:scale-90 transition-transform"
                         style={{ background: 'rgba(255,255,255,0.12)' }}
                       >
@@ -1264,6 +1605,7 @@ export const LessonView: React.FC<Props> = ({
               isPremium={!!(user?.isPremium || (user?.subscriptionTier && user.subscriptionTier !== 'FREE'))}
               boostPercent={getActiveBoost(user as any)}
               onScoreEarned={handleReadingScoreEarned}
+              onCreditsEarned={handleCreditsEarned}
               onNext={onNext}
               nextTitle={nextTitle}
               onSchoolModeSwitch={schoolMode && onSchoolModeSwitch ? onSchoolModeSwitch : undefined}
@@ -1282,49 +1624,49 @@ export const LessonView: React.FC<Props> = ({
                       {rotateToast}
                   </div>
               )}
-              {/* Header — 2-row write mode bar */}
-              <header className={`bg-white border-b border-slate-100 px-3 pt-2 pb-2 sticky top-0 z-10 shadow-sm${isImmersive || schoolMode ? ' hidden' : ''}`}>
-                  {/* Row 1: Back + Title + WRITE badge + Close */}
+              {/* Header — write mode bar */}
+              <header className={`px-3 pt-2 pb-2 sticky top-0 z-10 shadow-md${isImmersive || schoolMode ? ' hidden' : ''}`} style={{ background: appTheme.topBarGrad }}>
                   <div className="flex items-center gap-2">
-                      <button onClick={onBack} className="shrink-0 p-2 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors"><ArrowLeft size={18} /></button>
+                      <button onClick={handleBack} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors"><ArrowLeft size={18} /></button>
                       <div className="min-w-0 flex-1">
-                          <h2 className="text-[13px] font-black text-slate-800 truncate leading-tight">{content.title}</h2>
+                          <h2 className="text-[13px] font-black text-white truncate leading-tight">{content.title}</h2>
+                          <p className="text-[10px] font-bold text-amber-300 uppercase tracking-wide">📖 Notes</p>
                       </div>
-                      <span className="shrink-0 text-[8px] font-black uppercase tracking-[0.18em] text-indigo-400/70 select-none whitespace-nowrap">✏️ WRITE</span>
-                      <button onClick={onBack} className="shrink-0 p-2 bg-slate-50 hover:bg-red-50 hover:text-red-500 text-slate-400 rounded-xl transition-colors"><X size={17} /></button>
-                  </div>
-                  {/* Row 2: Controls */}
-                  <div className="flex items-center gap-2 mt-1.5">
+                      {/* School mode controls */}
+                      {schoolMode && onSchoolModeSwitch && (
+                          <button onClick={onSchoolModeSwitch} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors"><LayoutGrid size={17} /></button>
+                      )}
+                      {schoolMode && (
+                          <button onClick={() => schoolControlsRef?.current?.()} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors"><MoreVertical size={17} /></button>
+                      )}
                       {/* Language pill */}
                       {!schoolMode && (
                           <button onClick={() => setLanguage(l => l === 'English' ? 'Hindi' : 'English')}
-                              className="shrink-0 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-black text-slate-600 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 flex items-center gap-1 transition-all">
+                              className="shrink-0 px-2.5 py-1 bg-white/10 border border-white/20 rounded-lg text-[11px] font-black text-white/80 hover:bg-white/20 flex items-center gap-1 transition-all">
                               <Globe size={11} /> {language === 'English' ? 'हि' : 'EN'}
                           </button>
                       )}
-                      {/* School mode controls */}
-                      {schoolMode && onSchoolModeSwitch && (
-                          <button onClick={onSchoolModeSwitch} className="shrink-0 p-2 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors"><LayoutGrid size={17} /></button>
-                      )}
-                      {schoolMode && (
-                          <button onClick={() => schoolControlsRef?.current?.()} className="shrink-0 p-2 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors"><MoreVertical size={17} /></button>
-                      )}
                       {/* Admin Edit button */}
                       {isAdmin && onAdminEdit && (
-                          <button onClick={onAdminEdit} className="shrink-0 p-2 bg-orange-50 hover:bg-orange-100 rounded-xl text-orange-600 border border-orange-200 transition-colors" title="Edit / Delete Notes (Admin)">
+                          <button onClick={onAdminEdit} className="shrink-0 p-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-xl text-amber-300 border border-amber-400/30 transition-colors" title="Edit / Delete Notes (Admin)">
                               <Pencil size={17} />
                           </button>
                       )}
-                      {/* ⋮ More menu — pushed to the right */}
+                      {/* ⋮ More menu */}
                       {!schoolMode && (
-                          <div className="relative shrink-0 ml-auto">
+                          <div className="relative shrink-0">
                               {showMoreMenu && <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />}
                               <button onClick={() => setShowMoreMenu(s => !s)}
-                                  className={`p-2 rounded-xl transition-colors ${showMoreMenu ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
+                                  className={`p-2 rounded-xl transition-colors ${showMoreMenu ? 'bg-white/25 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}>
                                   <MoreVertical size={17} />
                               </button>
                               {showMoreMenu && (
                                   <div className="absolute right-0 top-11 z-50 bg-white border border-slate-100 rounded-2xl shadow-2xl w-56 py-2 overflow-hidden">
+                                      <button onClick={() => { writeControlsRef.current?.(); setShowMoreMenu(false); }}
+                                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 font-semibold transition-colors">
+                                          <LayoutGrid size={15} className="text-slate-400 shrink-0" /> Controls
+                                      </button>
+                                      <div className="my-1.5 border-t border-slate-100" />
                                       <button onClick={() => { handleRotate(); setShowMoreMenu(false); }}
                                           className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 font-semibold transition-colors">
                                           <RotateCcw size={15} className="text-slate-400 shrink-0" /> Screen Rotate
@@ -1348,6 +1690,7 @@ export const LessonView: React.FC<Props> = ({
                               )}
                           </div>
                       )}
+                      <button onClick={handleBack} className="shrink-0 p-2 bg-white/10 hover:bg-red-500/20 hover:text-red-300 text-white/70 rounded-xl transition-colors"><X size={17} /></button>
                   </div>
               </header>
               <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-white">
@@ -1355,16 +1698,15 @@ export const LessonView: React.FC<Props> = ({
                       <ChunkedNotesReader
                           content={content.content || ''}
                           language={language === 'Hindi' ? 'hi-IN' : 'en-US'}
-                          topBarLabel={content.title}
                           noteKey={noteKey}
                           isStarred={isTopicStarred}
                           onStarToggle={isAdmin ? toggleTopicStar : undefined}
                           preferChunkMode
-                          hideTopBar={isImmersive}
+                          hideTopBar={schoolMode ? isImmersive : true}
                           hideFix={schoolMode}
                           hideDesktopToggle={schoolMode}
                           suppressStickyControls={schoolMode}
-                          triggerControlsRef={schoolControlsRef}
+                          triggerControlsRef={schoolMode ? schoolControlsRef : writeControlsRef}
                           onMoreOptions={schoolMode && onSchoolModeSwitch ? onSchoolModeSwitch : undefined}
                           onDesktopModeChange={setIsDesktopMode}
                           readingScoreConfig={writingScoreConfig}
@@ -1407,7 +1749,7 @@ export const LessonView: React.FC<Props> = ({
                 <div>📖 <b>{chapter?.title || content.title}</b></div>
                 {content.subjectName && <div className="text-slate-500 mt-0.5">📚 {content.subjectName}</div>}
               </div>
-              <button onClick={onBack} className="px-6 py-2.5 rounded-xl bg-slate-700 text-white font-bold text-sm hover:bg-slate-800 active:scale-95 transition shadow-md">
+              <button onClick={handleBack} className="px-6 py-2.5 rounded-xl bg-slate-700 text-white font-bold text-sm hover:bg-slate-800 active:scale-95 transition shadow-md">
                   Go Back
               </button>
           </div>
@@ -1477,6 +1819,7 @@ export const LessonView: React.FC<Props> = ({
           setShowResumePrompt(false);
           setAnalysisUnlocked(false);
           setShowResults(false);
+          setMcqLivePts(0);
       };
 
       const handleRecreate = () => {
@@ -1551,6 +1894,8 @@ export const LessonView: React.FC<Props> = ({
                       }
                       // Accumulate MCQ pts for one-time coin award at session end
                       mcqSessionPtsRef.current += totalPts;
+                      setMcqLivePts(prev => prev + totalPts);
+                      markModeActive('MCQ');
                       showMcqScore(totalPts);
                   }
               } else {
@@ -1685,6 +2030,7 @@ export const LessonView: React.FC<Props> = ({
             saveUserHistory(user.id, historyItem);
             saveTestResult(user.id, historyItem);
         }
+
     };
 
     // Keep submitRef updated for Anti-Cheat
@@ -2128,19 +2474,30 @@ export const LessonView: React.FC<Props> = ({
                    const optionLetters = ['A','B','C','D','E'];
                    return createPortal(
                        <div style={{ position:'fixed', inset:0, zIndex:99999, background:'#ffffff', display:'flex', flexDirection:'column', overflow:'hidden' }}>
-                           {/* Top bar */}
-                           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 20px', borderBottom:'3px solid #e2e8f0', background:'#1e293b', flexShrink:0 }}>
-                               <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-                                   <Tv size={28} color="#fbbf24" />
-                                   <span style={{ color:'#fbbf24', fontWeight:900, fontSize:20, letterSpacing:2 }}>PROJECTOR MODE</span>
+                           {/* Top bar — clean, matches MCQ Practice bar style */}
+                           <div style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', borderBottom:'1px solid #f1f5f9', background:'#ffffff', flexShrink:0, boxShadow:'0 1px 4px rgba(0,0,0,0.06)' }}>
+                               {/* Close */}
+                               <button
+                                   onClick={() => setIsProjectorMode(false)}
+                                   style={{ flexShrink:0, padding:'8px', background:'#f8fafc', border:'none', borderRadius:12, color:'#64748b', cursor:'pointer', display:'flex', alignItems:'center' }}
+                               ><X size={18} /></button>
+                               {/* Title block */}
+                               <div style={{ flex:1, minWidth:0 }}>
+                                   <div style={{ fontSize:13, fontWeight:900, color:'#1e293b', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', lineHeight:1.2 }}>{chapter.title}</div>
+                                   <div style={{ fontSize:10, fontWeight:700, color:'#d97706', textTransform:'uppercase', letterSpacing:'0.05em', lineHeight:1.2, display:'flex', alignItems:'center', gap:4 }}>
+                                       <Tv size={10} /> PROJECTOR MODE
+                                   </div>
                                </div>
-                               <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-                                   <span style={{ color:'#94a3b8', fontWeight:700, fontSize:18 }}>{projectorQIndex + 1} / {total}</span>
-                                   <button
-                                       onClick={() => setIsProjectorMode(false)}
-                                       style={{ background:'#ef4444', color:'#fff', border:'none', borderRadius:12, padding:'8px 18px', fontSize:16, fontWeight:900, cursor:'pointer' }}
-                                   >✕ Band Karo</button>
+                               {/* Q counter pill */}
+                               <div style={{ flexShrink:0, display:'flex', alignItems:'center', gap:4, background:'#f8fafc', border:'1px solid #e2e8f0', borderRadius:12, padding:'6px 10px' }}>
+                                   <span style={{ fontSize:11, fontWeight:900, color:'#1e293b' }}>{projectorQIndex + 1}</span>
+                                   <span style={{ fontSize:10, color:'#94a3b8', fontWeight:700 }}>/ {total}</span>
                                </div>
+                               {/* Reveal answer toggle */}
+                               <button
+                                   onClick={() => setProjectorReveal(r => !r)}
+                                   style={{ flexShrink:0, padding:'7px 10px', background: projectorReveal ? '#dcfce7' : '#f8fafc', border: projectorReveal ? '1px solid #86efac' : '1px solid #e2e8f0', borderRadius:12, color: projectorReveal ? '#16a34a' : '#64748b', fontSize:11, fontWeight:900, cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}
+                               ><Eye size={13} /> {projectorReveal ? 'Hide Ans' : 'Show Ans'}</button>
                            </div>
 
                            {/* Question */}
@@ -2161,25 +2518,28 @@ export const LessonView: React.FC<Props> = ({
                                        const answered = projectorSelected !== null;
 
                                        let bg = '#f8fafc';
-                                       let border = '3px solid #e2e8f0';
+                                       let border = '1px solid #e2e8f0';
                                        let textColor = '#1e293b';
-                                       let dotBg = '#3b82f6';
+                                       let radioBorder = '2px solid #94a3b8';
+                                       let radioFill = 'transparent';
                                        let icon: React.ReactNode = null;
 
                                        if (projectorReveal) {
-                                           if (isCorrect) { bg = '#dcfce7'; border = '3px solid #22c55e'; textColor = '#15803d'; dotBg = '#22c55e'; icon = <CheckCircle size={32} color="#22c55e" />; }
+                                           if (isCorrect) { bg = '#dcfce7'; border = '2px solid #22c55e'; textColor = '#15803d'; radioBorder = '2px solid #22c55e'; radioFill = '#22c55e'; icon = <CheckCircle size={28} color="#22c55e" />; }
                                        } else if (answered) {
-                                           if (isSelected && isCorrect) { bg = '#dcfce7'; border = '3px solid #22c55e'; textColor = '#15803d'; dotBg = '#22c55e'; icon = <CheckCircle size={32} color="#22c55e" />; }
-                                           else if (isSelected && !isCorrect) { bg = '#fef2f2'; border = '3px solid #ef4444'; textColor = '#991b1b'; dotBg = '#ef4444'; icon = <span style={{ fontSize:28, fontWeight:900, color:'#ef4444' }}>✗</span>; }
-                                           else if (isCorrect) { bg = '#dcfce7'; border = '3px solid #22c55e'; textColor = '#15803d'; dotBg = '#22c55e'; icon = <CheckCircle size={32} color="#22c55e" />; }
+                                           if (isSelected && isCorrect) { bg = '#dcfce7'; border = '2px solid #22c55e'; textColor = '#15803d'; radioBorder = '2px solid #22c55e'; radioFill = '#22c55e'; icon = <CheckCircle size={28} color="#22c55e" />; }
+                                           else if (isSelected && !isCorrect) { bg = '#fef2f2'; border = '2px solid #ef4444'; textColor = '#991b1b'; radioBorder = '2px solid #ef4444'; radioFill = '#ef4444'; icon = <span style={{ fontSize:24, fontWeight:900, color:'#ef4444' }}>✗</span>; }
+                                           else if (isCorrect) { bg = '#dcfce7'; border = '2px solid #22c55e'; textColor = '#15803d'; radioBorder = '2px solid #22c55e'; radioFill = '#22c55e'; icon = <CheckCircle size={28} color="#22c55e" />; }
                                        }
 
                                        return (
                                            <div key={oi}
                                                onClick={() => { if (!answered && !projectorReveal) setProjectorSelected(oi); }}
-                                               style={{ display:'flex', alignItems:'center', gap:16, background:bg, border, borderRadius:16, padding:'18px 24px', cursor: (answered || projectorReveal) ? 'default' : 'pointer', transition:'background 0.2s, border 0.2s' }}>
-                                               <span style={{ background: dotBg, color:'#fff', borderRadius:999, width:40, height:40, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, fontWeight:900, flexShrink:0 }}>{optionLetters[oi]}</span>
-                                               <div style={{ fontSize:24, fontWeight:600, color:textColor, lineHeight:1.4, flex:1 }}
+                                               style={{ display:'flex', alignItems:'center', gap:16, background:bg, border, borderRadius:14, padding:'16px 20px', cursor: (answered || projectorReveal) ? 'default' : 'pointer', transition:'background 0.2s, border 0.2s' }}>
+                                               <span style={{ width:24, height:24, borderRadius:'50%', border: radioBorder, background: radioFill, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                                                   {radioFill !== 'transparent' && <span style={{ width:10, height:10, borderRadius:'50%', background:'#fff' }} />}
+                                               </span>
+                                               <div style={{ fontSize:22, fontWeight:500, color:textColor, lineHeight:1.4, flex:1 }}
                                                    dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} />
                                                {icon}
                                            </div>
@@ -2214,54 +2574,89 @@ export const LessonView: React.FC<Props> = ({
                    );
                })()}
 
-               {/* MCQ Top Bar — clean, professional */}
-               <div className={`bg-white border-b border-slate-100 px-3 py-2 flex items-center gap-2 sticky top-0 z-10 shadow-sm${isImmersive ? ' hidden' : ''}`}>
+               {/* MCQ Top Bar — Lucent style */}
+               <div className={`px-3 py-2 flex items-center gap-2 sticky top-0 z-10 shadow-md${isImmersive ? ' hidden' : ''}`} style={{ background: appTheme.topBarGrad }}>
                    {/* Back */}
-                   <button onClick={onBack} className="shrink-0 p-2 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-500 transition-colors">
+                   <button onClick={handleBack} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors">
                        <ArrowLeft size={18} />
                    </button>
                    {/* Title block — flex-1, center */}
                    <div className="min-w-0 flex-1">
-                       <h2 className="text-[13px] font-black text-slate-800 truncate leading-tight">{chapter.title}</h2>
-                       <p className="text-[10px] font-bold text-violet-500 truncate leading-tight uppercase tracking-wide">
+                       <h2 className="text-[13px] font-black text-white truncate leading-tight">{chapter.title}</h2>
+                       <p className="text-[10px] font-bold text-amber-300 truncate leading-tight uppercase tracking-wide">
                            📝 MCQ {subject?.name ? `· ${subject.name}` : ''}
                        </p>
                    </div>
+                   {/* Live MCQ session score chip */}
+                   {!showResults && (
+                       <div className="relative shrink-0" style={{ zIndex: 50 }}>
+                           <span
+                               onClick={() => { setMcqScoreTooltip(true); setTimeout(() => setMcqScoreTooltip(false), 2500); }}
+                               style={{ fontSize: '10px', fontWeight: 900, color: '#818cf8', background: 'rgba(129,140,248,0.12)', border: '1px solid rgba(129,140,248,0.3)', borderRadius: 99, padding: '2px 8px', letterSpacing: '0.02em', cursor: 'pointer', display: 'block' }}>
+                               📖 {mcqLivePts}
+                           </span>
+                           {mcqScoreTooltip && (
+                               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)', border: '1.5px solid rgba(99,102,241,0.2)', borderTop: '2px solid #8b5cf6', borderRadius: 12, padding: '7px 12px', whiteSpace: 'nowrap', zIndex: 100, boxShadow: '0 4px 20px rgba(139,92,246,0.15), inset 0 -1px 0 #c7d2fe', animation: 'rshud-slide 0.18s ease', display: 'flex', alignItems: 'center', gap: 8, minWidth: 260 }}>
+                                   <span style={{ fontSize: 14, flexShrink: 0 }}>📝</span>
+                                   <span style={{ fontSize: 10, fontWeight: 900, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.06em', flexShrink: 0 }}>MCQ Score</span>
+                                   <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                       <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Score</span>
+                                       <span style={{ fontSize: 13, fontWeight: 900, color: '#8b5cf6', lineHeight: 1.2 }}>+{mcqLivePts}</span>
+                                   </div>
+                                   <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                       <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Progress</span>
+                                       <span style={{ fontSize: 13, fontWeight: 900, color: '#16a34a', lineHeight: 1.2 }}>--</span>
+                                   </div>
+                                   <div style={{ width: 1, height: 14, background: '#e2e8f0', flexShrink: 0 }} />
+                                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                       <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Next</span>
+                                       <span style={{ fontSize: 11, fontWeight: 900, color: '#f59e0b', lineHeight: 1.2 }}>Sahi jawab pe!</span>
+                                   </div>
+                                   <div style={{ flex: 1 }} />
+                                   <button onClick={() => setMcqScoreTooltip(false)} style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '50%', width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: 11, fontWeight: 900, cursor: 'pointer', flexShrink: 0, padding: 0 }}>✕</button>
+                               </div>
+                           )}
+                       </div>
+                   )}
                    {/* Compact timer pill */}
-                   <div className="shrink-0 flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
+                   <div className="shrink-0 flex items-center gap-1.5 bg-white/10 border border-white/20 rounded-xl px-2.5 py-1.5">
                        <div className="flex flex-col items-center">
-                           <span className="text-[8px] font-bold text-slate-400 uppercase leading-none">Total</span>
-                           <span className="text-[11px] font-mono font-black text-slate-700 leading-none">
+                           <span className="text-[8px] font-bold text-white/50 uppercase leading-none">Total</span>
+                           <span className="text-[11px] font-mono font-black text-white leading-none">
                                {Math.floor(sessionTime / 60)}:{String(sessionTime % 60).padStart(2, '0')}
                            </span>
                        </div>
-                       <div className="w-px h-5 bg-slate-200" />
+                       <div className="w-px h-5 bg-white/20" />
                        <div className="flex flex-col items-center">
-                           <span className="text-[8px] font-bold text-slate-400 uppercase leading-none">Q</span>
-                           <span className={`text-[11px] font-mono font-black leading-none ${(timeSpentPerQuestion[batchIndex] || 0) > 60 ? 'text-red-500' : 'text-slate-700'}`}>
+                           <span className="text-[8px] font-bold text-white/50 uppercase leading-none">Q</span>
+                           <span className={`text-[11px] font-mono font-black leading-none ${(timeSpentPerQuestion[batchIndex] || 0) > 60 ? 'text-red-400' : 'text-white'}`}>
                                {Math.floor((timeSpentPerQuestion[batchIndex] || 0) / 60)}:{String((timeSpentPerQuestion[batchIndex] || 0) % 60).padStart(2, '0')}
                            </span>
                        </div>
                    </div>
                    {/* All Questions button */}
                    <button onClick={() => setShowQuestionDrawer(true)}
-                       className="shrink-0 flex items-center gap-1.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 font-black text-[11px] px-2.5 py-1.5 rounded-xl transition-colors">
+                       className="shrink-0 flex items-center gap-1.5 bg-white/10 border border-white/20 hover:bg-white/20 text-white font-black text-[11px] px-2.5 py-1.5 rounded-xl transition-colors">
                        <Grip size={14} />
-                       <span className="text-[10px] font-black text-slate-500">{attemptedCount}/{displayData.length}</span>
+                       <span className="text-[10px] font-black text-white/70">{attemptedCount}/{displayData.length}</span>
                    </button>
-                   {/* Projector Mode button */}
+                   {/* Projector Mode button — admin/subadmin only */}
+                   {isAdmin && (
                    <button onClick={() => { setProjectorQIndex(0); setProjectorReveal(false); setProjectorSelected(null); setIsProjectorMode(true); }}
-                       className="shrink-0 p-2 bg-amber-50 hover:bg-amber-100 rounded-xl text-amber-500 border border-amber-200 transition-colors" title="Projector Mode">
+                       className="shrink-0 p-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-xl text-amber-300 border border-amber-400/30 transition-colors" title="Projector Mode">
                        <Tv size={17} />
                    </button>
+                   )}
                    {/* Rotate button — real screen rotation */}
                    <button onClick={handleRotate}
-                       className="shrink-0 p-2 bg-slate-50 hover:bg-slate-100 rounded-xl text-slate-500 border border-slate-200 transition-colors active:scale-90" title="Screen Rotate">
+                       className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white border border-white/20 transition-colors active:scale-90" title="Screen Rotate">
                        <RotateCcw size={17} />
                    </button>
                    {/* Admin Edit button — only for admin/subadmin */}
                    {isAdmin && onAdminEdit && (
-                       <button onClick={onAdminEdit} className="shrink-0 p-2 bg-orange-50 hover:bg-orange-100 rounded-xl text-orange-600 border border-orange-200 transition-colors" title="Edit / Delete MCQ (Admin)">
+                       <button onClick={onAdminEdit} className="shrink-0 p-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-xl text-amber-300 border border-amber-400/30 transition-colors" title="Edit / Delete MCQ (Admin)">
                            <Pencil size={17} />
                        </button>
                    )}
@@ -2269,7 +2664,7 @@ export const LessonView: React.FC<Props> = ({
                    <div className="relative shrink-0">
                        {showMoreMenu && <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />}
                        <button onClick={() => setShowMoreMenu(s => !s)}
-                           className={`p-2 rounded-xl transition-colors ${showMoreMenu ? 'bg-violet-100 text-violet-600' : 'bg-slate-50 text-slate-500 hover:bg-slate-100'}`}>
+                           className={`p-2 rounded-xl transition-colors ${showMoreMenu ? 'bg-white/25 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}>
                            <MoreVertical size={17} />
                        </button>
                        {showMoreMenu && (
@@ -2306,10 +2701,12 @@ export const LessonView: React.FC<Props> = ({
                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50 font-semibold transition-colors">
                                    <Maximize size={15} className="text-slate-400 shrink-0" /> Fullscreen
                                </button>
+                               {isAdmin && (
                                <button onClick={() => { setProjectorQIndex(0); setProjectorReveal(false); setIsProjectorMode(true); setShowMoreMenu(false); }}
                                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-amber-700 hover:bg-amber-50 font-semibold transition-colors">
                                    <Tv size={15} className="text-amber-500 shrink-0" /> 📽️ Projector Mode
                                </button>
+                               )}
                                {schoolMode && onSchoolModeSwitch && (
                                    <button onClick={() => { onSchoolModeSwitch(); setShowMoreMenu(false); }}
                                        className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-indigo-600 hover:bg-indigo-50 font-semibold transition-colors">
@@ -2694,14 +3091,7 @@ export const LessonView: React.FC<Props> = ({
                                                                            Skip
                                                                        </span>
                                                                    )}
-                                                                   <div dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.question) }} className="prose prose-sm max-w-none" />
-                                                                   {q.statements && q.statements.length > 0 && (
-                                                                       <div className="mt-3 mb-2 flex flex-col space-y-2">
-                                                                           {q.statements.map((stmt, sIdx) => (
-                                                                               <div key={sIdx} className="bg-slate-50/80 p-3 rounded-lg border-l-4 border-indigo-200 text-slate-700 text-sm font-medium" dangerouslySetInnerHTML={{ __html: renderMathInHtml(stmt) }} />
-                                                                           ))}
-                                                                       </div>
-                                                                   )}
+                                                                   <McqQuestionDisplay q={q} questionClassName="prose prose-sm max-w-none" />
                                                                </div>
                                                            </div>
                                                            <div className="flex items-center gap-1.5 shrink-0">
@@ -2769,7 +3159,7 @@ export const LessonView: React.FC<Props> = ({
                                                                    </div>
                                                                    <SpeakButton text={q.explanation} className="p-1 text-blue-400 hover:bg-blue-100" iconSize={14} />
                                                                </div>
-                                                               <div className="text-slate-600 text-sm leading-relaxed prose prose-sm max-w-none w-full" dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.explanation) }} />
+                                                               <div className="text-slate-600 text-sm leading-relaxed prose prose-sm max-w-none w-full" dangerouslySetInnerHTML={{ __html: formatExplanationHtml(q.explanation) }} />
                                                            </div>
                                                        )}
                                                    </div>
@@ -2783,7 +3173,7 @@ export const LessonView: React.FC<Props> = ({
                                                <h4 className="font-bold text-amber-900 flex items-center gap-2 mb-2">
                                                    <Lightbulb size={18} /> {topic} Revision Note
                                                </h4>
-                                               <div className="prose prose-sm max-w-none w-full text-amber-800" dangerouslySetInnerHTML={{ __html: decodeHtml(topicNote.content || topicNote.html || '') }} />
+                                               <div className="prose prose-sm max-w-none w-full text-amber-800" dangerouslySetInnerHTML={{ __html: renderMathInHtml(decodeHtml(topicNote.content || topicNote.html || '')) }} />
                                            </div>
                                        )}
                                    </div>
@@ -2808,14 +3198,7 @@ export const LessonView: React.FC<Props> = ({
                                            <div className="font-bold text-slate-800 flex gap-3 leading-relaxed flex-1">
                                                <span className="bg-blue-100 text-blue-700 w-6 h-6 rounded-full flex items-center justify-center text-xs shrink-0 font-bold mt-0.5">{idx + 1}</span>
                                                <div className="w-full">
-                                                   <div dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.question) }} className="prose prose-sm max-w-none" />
-                                                   {q.statements && q.statements.length > 0 && (
-                                                       <div className="mt-3 mb-2 flex flex-col space-y-2">
-                                                           {q.statements.map((stmt, sIdx) => (
-                                                               <div key={sIdx} className="bg-slate-50/80 p-3 rounded-lg border-l-4 border-indigo-200 text-slate-700 text-sm font-medium" dangerouslySetInnerHTML={{ __html: renderMathInHtml(stmt) }} />
-                                                           ))}
-                                                       </div>
-                                                   )}
+                                                   <McqQuestionDisplay q={q} questionClassName="prose prose-sm max-w-none" />
                                                </div>
                                            </div>
                                            <div className="flex flex-col items-end gap-1.5 shrink-0">
@@ -2989,7 +3372,7 @@ export const LessonView: React.FC<Props> = ({
                                                            </div>
                                                            <SpeakButton text={q.explanation} className="p-1 text-blue-400 hover:bg-blue-100" iconSize={14} />
                                                        </div>
-                                                       <div className="text-slate-600 text-sm leading-relaxed prose prose-sm max-w-none w-full" dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.explanation) }} />
+                                                       <div className="text-slate-600 text-sm leading-relaxed prose prose-sm max-w-none w-full" dangerouslySetInnerHTML={{ __html: formatExplanationHtml(q.explanation) }} />
                                                    </div>
                                                )}
                                                {q.commonMistake && (
@@ -3061,14 +3444,7 @@ export const LessonView: React.FC<Props> = ({
                                             {idx + 1}
                                         </span>
                                         <div className="font-bold text-slate-800 text-sm w-full">
-                                            <div dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.question) }}></div>
-                                            {q.statements && q.statements.length > 0 && (
-                                                <div className="mt-2 flex flex-col space-y-2">
-                                                    {q.statements.map((stmt, sIdx) => (
-                                                        <div key={sIdx} className="bg-slate-50/80 p-2 rounded-lg border-l-4 border-indigo-200 text-slate-700 text-xs font-medium" dangerouslySetInnerHTML={{ __html: renderMathInHtml(stmt) }} />
-                                                    ))}
-                                                </div>
-                                            )}
+                                            <McqQuestionDisplay q={q} questionClassName="text-sm" stmtClassName="bg-slate-50/80 p-2 rounded-lg border-l-4 border-indigo-200 text-slate-700 text-xs font-medium leading-snug" />
                                         </div>
                                     </div>
                                     <div className="ml-9 space-y-1 mb-2">
@@ -3086,7 +3462,7 @@ export const LessonView: React.FC<Props> = ({
                                         })}
                                     </div>
                                     <div className="ml-9 p-2 bg-slate-50 text-[10px] text-slate-600 italic rounded">
-                                        <span className="font-bold">Explanation:</span> <span dangerouslySetInnerHTML={{ __html: renderMathInHtml(q.explanation || 'N/A') }}></span>
+                                        <span className="font-bold">Explanation:</span> <span dangerouslySetInnerHTML={{ __html: formatExplanationHtml(q.explanation || "N/A") }}></span>
                                     </div>
                                 </div>
                             );
@@ -3125,22 +3501,25 @@ export const LessonView: React.FC<Props> = ({
                                <div className="flex-[2]"></div> // Spacer if no next button on last page
                            )}
 
-                           {/* Submit Button - Always visible if condition met, or on last page */}
-                           {(canSubmit || !hasMore) && (
-                               <button
-                                   onClick={handleSubmitRequest}
-                                   disabled={!canSubmit}
-                                   className={`flex-[2] py-3 font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg ${canSubmit ? 'bg-green-600 text-white shadow-green-100' : 'bg-slate-200 text-slate-500'}`}
-                               >
-                                   Submit <Trophy size={20} />
-                               </button>
-                           )}
+                           {/* Submit Button - Always visible; disabled with hint until threshold met */}
+                           <button
+                               onClick={handleSubmitRequest}
+                               disabled={!canSubmit}
+                               className={`flex-[2] py-3 font-bold rounded-xl flex flex-col items-center justify-center gap-0.5 shadow-lg transition-all ${canSubmit ? 'bg-green-600 text-white shadow-green-100' : 'bg-slate-100 text-slate-400 border border-slate-200'}`}
+                           >
+                               <span className="flex items-center gap-1.5">Submit <Trophy size={18} /></span>
+                               {!canSubmit && (
+                                   <span className="text-[9px] font-black leading-none opacity-70">
+                                       {minRequired - attemptedCount} more to go
+                                   </span>
+                               )}
+                           </button>
                        </>
                    )}
 
                    {showResults && !hasMore && (
                        <button 
-                           onClick={onBack}
+                           onClick={handleBack}
                            className="flex-[2] py-3 bg-slate-800 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg"
                        >
                            Finish Review <ArrowLeft size={20} />
@@ -3158,7 +3537,7 @@ export const LessonView: React.FC<Props> = ({
           <p className="text-slate-600 max-w-xs mx-auto mb-6">
               There is no content available for this lesson.
           </p>
-          <button onClick={onBack} className="mt-8 text-slate-500 font-bold hover:text-slate-600">
+          <button onClick={handleBack} className="mt-8 text-slate-500 font-bold hover:text-slate-600">
               Go Back
           </button>
       </div>

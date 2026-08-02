@@ -48,8 +48,8 @@ export default defineConfig({
         // These are what website-to-APK / TWA wrapper tools read to theme the
         // native status bar, splash screen, and system navigation bar. Keep
         // them in sync with the app's actual header/nav colors below.
-        theme_color: '#0f172a',
-        background_color: '#0f172a',
+        theme_color: '#000000',
+        background_color: '#000000',
         display: 'standalone',
         display_override: ['standalone', 'fullscreen'],
         orientation: 'portrait',
@@ -98,6 +98,13 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Prevent Rollup from reordering module declarations in a way that
+        // can cause TDZ (Temporal Dead Zone) errors in production bundles.
+        hoistTransitiveImports: false,
+      },
+    },
   },
   server: {
     port,
