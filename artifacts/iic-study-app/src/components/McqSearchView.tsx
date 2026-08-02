@@ -13,7 +13,6 @@ import {
   FileQuestion, Lock, Trophy, BookOpen, Loader2, ChevronRight,
 } from 'lucide-react';
 import type { McqSearchHit } from '../utils/mcqSearcher';
-import { renderMathInHtml } from '../utils/mathUtils';
 
 interface Props {
   initialQuery?: string;
@@ -73,7 +72,7 @@ const McqCard: React.FC<{ hit: McqSearchHit; idx: number }> = ({ hit, idx }) => 
               <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 ${revealed && isCorrect ? 'bg-emerald-500 text-white' : 'bg-slate-200 text-slate-600'}`}>
                 {OPTION_LETTERS[oi]}
               </span>
-              <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} />
+              <span className="flex-1">{opt}</span>
               {revealed && isCorrect && <CheckCircle size={13} className="text-emerald-600 shrink-0" />}
             </div>
           );

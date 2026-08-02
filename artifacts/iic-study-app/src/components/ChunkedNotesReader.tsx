@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Volume2, Square, BookOpen, Star, Palette, Check, Type, RotateCcw, Search, Monitor, X, LayoutGrid, MoreVertical, ChevronRight, WifiOff, Flame, Lightbulb, Pencil, Presentation, Copy } from 'lucide-react';
+import { Volume2, Square, BookOpen, Star, Palette, Check, Type, RotateCcw, Search, Monitor, X, LayoutGrid, MoreVertical, ChevronRight, WifiOff, Flame, Lightbulb, Pencil, Presentation } from 'lucide-react';
 import { AdminWhiteBoard } from './AdminWhiteBoard';
 import { rotateScreen, isDesktopModeOn, setDesktopMode } from '../utils/displayPrefs';
 import { saveSuggestion, auth, findDuplicateSuggestionByPoint, incrementSuggestionReportCount, updateSuggestionLeaderboard } from '../firebase';
@@ -106,9 +106,6 @@ interface Props {
   /** Fires the moment "Read All" / tap-to-read TTS begins (start of any read session).
    *  Used to immediately mark a note as "in progress" in Continue Reading. */
   onReadingStart?: () => void;
-  /** Called whenever TTS reading state changes — true = reading, false = stopped.
-   *  Lets parent slim bar show/hide the READING ACTIVE indicator. */
-  onReadingActive?: (isReading: boolean) => void;
   /** When true, hides the sticky "Read All" top bar (use when parent renders controls externally). */
   hideTopBar?: boolean;
   /** Topic index to scroll to / highlight on mount (used to restore reading position
@@ -212,7 +209,7 @@ interface Props {
 }
 
 
-export const ChunkedNotesReader: React.FC<Props> = ({ content, className, language = 'hi-IN', topBarLabel, autoStart, onComplete, onReadingStart, onReadingActive, hideTopBar, initialIndex, onPositionChange, noteKey, isStarred, onStarToggle, searchQuery, getStarCount, textColorOverride, preferChunkMode, onDesktopModeChange, hideDesktopToggle, suppressStickyControls, htmlContent, isUltraUser, ultraHtmlRemaining, userCredits = 0, htmlUnlockCost = 5, onSpendCredits, onHtmlOpen, onUpgradeClick, isBasicUser = false, basicHtmlRemaining = 0, onHtmlViewChange, onMoreOptions, triggerControlsRef, hideInline3dot, hideFix, onBack, onSaveOffline, isSavedOffline, readingScoreConfig, isAdmin, useImportantMark2, isMarked2, onMark2Toggle, isAdminImportant, sourceMeta, onAdminEdit, userLevel }) => {
+export const ChunkedNotesReader: React.FC<Props> = ({ content, className, language = 'hi-IN', topBarLabel, autoStart, onComplete, onReadingStart, hideTopBar, initialIndex, onPositionChange, noteKey, isStarred, onStarToggle, searchQuery, getStarCount, textColorOverride, preferChunkMode, onDesktopModeChange, hideDesktopToggle, suppressStickyControls, htmlContent, isUltraUser, ultraHtmlRemaining, userCredits = 0, htmlUnlockCost = 5, onSpendCredits, onHtmlOpen, onUpgradeClick, isBasicUser = false, basicHtmlRemaining = 0, onHtmlViewChange, onMoreOptions, triggerControlsRef, hideInline3dot, hideFix, onBack, onSaveOffline, isSavedOffline, readingScoreConfig, isAdmin, useImportantMark2, isMarked2, onMark2Toggle, isAdminImportant, sourceMeta, onAdminEdit, userLevel }) => {
   // ── "Suno" 3-section chunk notes (📖 Book Text / 📝 Smart Notes / 💡 आसान समझ) ──
   // When the pasted content repeats these three labelled sections per topic,
   // split them out so the reader can show three separate pages (Book Text,
@@ -580,11 +577,9 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
     if (!isHtmlContent || !htmlPlainText) return [];
     return splitIntoTopics(htmlPlainText);
   }, [isHtmlContent, htmlPlainText]);
-  // The active topic list:
-  // - In 3-tab mode (NOTE_PAGES), ALWAYS use `topics` (from activeNoteContent = current tab's text).
-  //   htmlChunkTopics comes from the full unsplit content and would show everything mixed.
-  // - In normal HTML chunk mode (no 3-tab split), use htmlChunkTopics for plain-text chunking.
-  const activeTopicList = (NOTE_PAGES.length === 0 && isHtmlContent && htmlViewMode === 'chunk' && htmlChunkTopics.length > 0)
+  // The active topic list: use stripped-text topics when showing HTML in chunk mode,
+  // otherwise use the normal topics (from raw content).
+  const activeTopicList = (isHtmlContent && htmlViewMode === 'chunk' && htmlChunkTopics.length > 0)
     ? htmlChunkTopics
     : topics;
 
@@ -592,7 +587,6 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   const [isReading, setIsReading] = useState(false);
   const isReadingRef = useRef(false);
   useEffect(() => { isReadingRef.current = isReading; }, [isReading]);
-  useEffect(() => { onReadingActive?.(isReading); }, [isReading]);
 
   // ── Reading Score Session ───────────────────────────────────────────────────
   const scoreSessionRef = useRef<ReadingScoreSession | null>(null);
@@ -748,8 +742,6 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
     && isFreeStarLocked(_effectiveUserLevel);
   const lastScrollY = useRef(0);
   const [toolbarHidden, setToolbarHidden] = useState(false);
-  const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
-  const [copiedAll, setCopiedAll] = useState(false);
   const toolbarRef = useRef<HTMLDivElement>(null);
 
   // Expose setShowControls to parent via ref so top-bar 3-dot can trigger the sheet
@@ -1380,30 +1372,6 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <Pencil size={13} />
               </button>
             )}
-            {/* 📋 Copy All Notes — Admin only */}
-            {isAdmin && activeTopicList.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  const allText = activeTopicList
-                    .filter(t => !t.isHeading)
-                    .map(t => t.text)
-                    .join('\n');
-                  navigator.clipboard.writeText(allText).then(() => {
-                    setCopiedAll(true);
-                    setTimeout(() => setCopiedAll(false), 2000);
-                  }).catch(() => {});
-                }}
-                className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${
-                  copiedAll
-                    ? 'bg-green-100 border-green-400 text-green-600'
-                    : 'bg-slate-100 border-slate-200 text-slate-500 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600'
-                }`}
-                title={copiedAll ? 'Sare notes copy ho gaye ✅' : 'Sare notes copy karo (Admin)'}
-              >
-                {copiedAll ? <Check size={13} /> : <Copy size={13} />}
-              </button>
-            )}
             {/* Grid icon — parent more options */}
             {onMoreOptions && !hideInline3dot && (
               <button
@@ -1415,13 +1383,13 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <LayoutGrid size={14} />
               </button>
             )}
-            {/* 🖥️ Board — Admin only */}
+            {/* Admin board button — only for admins */}
             {isAdmin && (
               <button
                 type="button"
                 onClick={() => setShowAdminBoard(v => !v)}
-                className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${showAdminBoard ? 'bg-orange-100 border-orange-300 text-orange-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`}
-                title="WhiteBoard (Admin)"
+                className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 border border-slate-200 active:scale-90 transition shrink-0"
+                title="Admin WhiteBoard"
               >
                 <Presentation size={14} />
               </button>
@@ -1484,14 +1452,13 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 const _subMul = readingScoreConfig?.subscriptionLevel === 'ULTRA' ? 1.5
                   : readingScoreConfig?.subscriptionLevel === 'BASIC' ? 1.2 : 1;
                 const _boostMul = 1 + (readingScoreConfig?.boostPercent || 0) / 100;
-                const _base = scoreState.mode === 'writing' ? 10 : 5;
+                const _base = scoreState.mode === 'reading' ? 5 : scoreState.mode === 'writing' ? 10 : 25;
                 const _pts = Math.max(1, Math.round(_base * _subMul * _boostMul));
-                const _interval = scoreState.mode === 'writing' ? 60 : 30;
                 return (
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
                     <span style={{ fontSize: 7, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', lineHeight: 1 }}>Next</span>
-                    <span style={{ fontSize: 11, fontWeight: 900, color: scoreState.isPermanentlyStopped ? '#ef4444' : '#f59e0b', lineHeight: 1.2 }}>
-                      {scoreState.isPermanentlyStopped ? 'Scroll karo' : scoreState.isPaused ? 'Paused' : `+${_pts} in ${scoreState.nextRewardInSec ?? _interval}s`}
+                    <span style={{ fontSize: 11, fontWeight: 900, color: '#f59e0b', lineHeight: 1.2 }}>
+                      {!scoreState.isPaused ? `+${_pts} in ${scoreState.nextRewardInSec}s` : 'Paused'}
                     </span>
                   </div>
                 );
@@ -1792,25 +1759,11 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <span style={{ fontSize: 14, fontWeight: 900, color: '#334155', lineHeight: 1 }}>A+</span>
                 <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Size</span>
               </button>
-              {/* Reset */}
-              <button type="button" onClick={handleRotate}
-                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
-                <RotateCcw size={14} style={{ color: '#64748b' }} />
-                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Reset</span>
-              </button>
               {onSaveOffline && (
                 <button type="button" onClick={() => { onSaveOffline(); setShowControls(false); }}
-                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: isSavedOffline ? '#f0fdf4' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
+                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: isSavedOffline ? '#f0fdf4' : 'transparent', cursor: 'pointer', border: 'none' }}>
                   <WifiOff size={14} style={{ color: isSavedOffline ? '#16a34a' : '#64748b' }} />
                   <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: isSavedOffline ? '#16a34a' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>{isSavedOffline ? 'Saved' : 'Save'}</span>
-                </button>
-              )}
-              {/* Fix — school mode mein chhupa */}
-              {!hideFix && (
-                <button type="button" onClick={() => { setShowSuggestionPanel(s => !s); setShowControls(false); }}
-                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: showSuggestionPanel ? '#fef3c7' : 'transparent', cursor: 'pointer', border: 'none', borderLeft: onSaveOffline ? '1px solid #e2e8f0' : 'none' }}>
-                  <Lightbulb size={14} style={{ color: showSuggestionPanel ? '#d97706' : '#64748b' }} />
-                  <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: showSuggestionPanel ? '#d97706' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Fix</span>
                 </button>
               )}
             </div>
@@ -1822,81 +1775,31 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <Type size={14} style={{ color: activeFont ? '#6366f1' : '#64748b' }} />
                 <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: activeFont ? '#6366f1' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Style</span>
               </button>
-              {/* Color */}
-              {!textColorOverride ? (
-                <div style={{ flex: 1, position: 'relative', borderRight: '1px solid #e2e8f0' }}>
-                  <button type="button" onClick={() => setShowColorMenu(s => !s)}
-                    style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                      <Palette size={12} style={{ color: '#64748b' }} />
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', border: '2px solid #cbd5e1', backgroundColor: textColor, display: 'inline-block' }} />
-                    </div>
-                    <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Color</span>
-                  </button>
-                  {showColorMenu && (
-                    <>
-                      <div className="fixed inset-0 z-[310]" onClick={() => setShowColorMenu(false)} />
-                      <div className="absolute left-0 bottom-full mb-1 z-[320] bg-white border border-slate-200 rounded-xl shadow-lg p-3 w-52 animate-in fade-in slide-in-from-bottom-2 duration-150">
-                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-500 mb-2">Text Color</p>
-                        <div className="grid grid-cols-6 gap-2">
-                          {READING_PALETTE['light'].map((sw, i) => {
-                            const isSelected = sw.hex.toLowerCase() === textColor.toLowerCase();
-                            const isRecommended = i === 0;
-                            return (
-                              <button key={sw.hex} type="button"
-                                onClick={() => { pickColor(sw.hex); setShowColorMenu(false); }}
-                                title={`${sw.name}${isRecommended ? ' · Recommended' : ''}`}
-                                className={`relative aspect-square rounded-lg border-2 transition-all active:scale-90 ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-slate-200 hover:border-slate-400'}`}
-                                style={{ backgroundColor: sw.hex }}>
-                                {isSelected && <span className="absolute inset-0 flex items-center justify-center"><Check size={10} className="text-white drop-shadow" strokeWidth={4} /></span>}
-                                {isRecommended && !isSelected && <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-amber-400 text-[7px] font-black text-white flex items-center justify-center shadow">★</span>}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ) : <div style={{ flex: 1, borderRight: '1px solid #e2e8f0' }} />}
+              <button type="button" onClick={cycleSpeed}
+                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
+                <span style={{ fontSize: 12, fontWeight: 900, color: '#334155', lineHeight: 1 }}>{SPEED_LABELS[speedIdx]}</span>
+                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Speed</span>
+              </button>
               <button type="button"
                 onClick={() => { setInlineSearch(s => !s); setInlineQuery(''); setShowControls(false); }}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: inlineSearch ? '#eff6ff' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
                 <Search size={14} style={{ color: inlineSearch ? '#3b82f6' : '#64748b' }} />
                 <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: inlineSearch ? '#3b82f6' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Search</span>
               </button>
-              <button type="button" onClick={cycleSpeed}
-                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
-                <span style={{ fontSize: 12, fontWeight: 900, color: '#334155', lineHeight: 1 }}>{SPEED_LABELS[speedIdx]}</span>
-                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Speed</span>
-              </button>
               {/* Important Filter — school mode */}
-              {(isStarred || isAdminImportant || isMarked2) ? (
+              {(isStarred || isAdminImportant || isMarked2) && (
                 <button type="button"
                   onClick={() => { setShowOnlyImportant(s => !s); setShowControls(false); }}
                   style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: showOnlyImportant ? '#fef3c7' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
                   <Star size={14} style={{ color: showOnlyImportant ? '#d97706' : '#64748b', fill: showOnlyImportant ? '#d97706' : 'none' }} />
                   <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: showOnlyImportant ? '#d97706' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Imp</span>
                 </button>
-              ) : <div style={{ flex: 1, borderRight: '1px solid #e2e8f0' }} />}
-              {/* Ultra View */}
-              {hasHtmlToShow ? (
-                isUltraUser ? (
-                  <button type="button"
-                    onClick={() => { stopAll(); setHtmlViewMode('html'); onHtmlOpen?.(); setShowControls(false); }}
-                    style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: '#f5f3ff', cursor: 'pointer', border: 'none' }}>
-                    <span style={{ fontSize: 14, lineHeight: 1 }}>⚡</span>
-                    <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#7c3aed', letterSpacing: '0.05em', lineHeight: 1 }}>Ultra</span>
-                  </button>
-                ) : (
-                  <button type="button"
-                    onClick={() => { setShowHtmlUnlockPrompt(true); setShowControls(false); }}
-                    style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none' }}>
-                    <span style={{ fontSize: 14, lineHeight: 1 }}>🔒</span>
-                    <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Ultra</span>
-                  </button>
-                )
-              ) : <div style={{ flex: 1 }} />}
+              )}
+              <button type="button" onClick={() => setShowControls(false)}
+                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none' }}>
+                <X size={14} style={{ color: '#64748b' }} />
+                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Close</span>
+              </button>
             </div>
           </div>
         </>
@@ -2336,29 +2239,6 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   title={marked2 ? 'Tap to remove Important Mark 2' : 'Tap to mark as Important 2 (changes background)'}
                 >
                   <Flame size={13} className={marked2 ? 'fill-orange-500' : ''} />
-                </button>
-              )}
-              {/* 📋 Copy button — Admin only — copies this topic's plain text */}
-              {isAdmin && !isActive && !showSuggestionPanel && !(isAdmin && useImportantMark2) && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigator.clipboard.writeText(topic.text).then(() => {
-                      setCopiedIdx(idx);
-                      setTimeout(() => setCopiedIdx((ci) => ci === idx ? null : ci), 1500);
-                    }).catch(() => {});
-                  }}
-                  onPointerDown={(e) => { e.stopPropagation(); }}
-                  style={{ width: '24px', height: '24px', padding: 0 }}
-                  className={`absolute right-9 top-1/2 -translate-y-1/2 rounded-full inline-flex items-center justify-center transition-all z-10 opacity-0 group-hover:opacity-100 ${
-                    copiedIdx === idx
-                      ? 'bg-green-100 border border-green-400 text-green-600 opacity-100'
-                      : 'bg-slate-100 border border-slate-300 text-slate-500 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600'
-                  }`}
-                  title="Is point ko copy karo"
-                >
-                  {copiedIdx === idx ? <Check size={11} /> : <Copy size={11} />}
                 </button>
               )}
               {/* ✏️ Inline correction button — visible next to each point in correction mode */}

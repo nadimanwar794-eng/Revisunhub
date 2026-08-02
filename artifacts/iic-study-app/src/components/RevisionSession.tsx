@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, SystemSettings, MCQItem } from '../types';
 import { X, BookOpen, Zap, CheckCircle, AlertCircle, ChevronRight, Check, RotateCcw, Loader2, Volume2, FileText } from 'lucide-react';
 import { getChapterData, saveUserToLive } from '../firebase';
@@ -7,11 +7,7 @@ import { storage } from '../utils/storage';
 import { DEFAULT_SUBJECTS } from '../constants';
 import { addMistakes, removeMistakeByQuestion } from '../utils/mistakeBank';
 import { ChunkedNotesReader } from './ChunkedNotesReader';
-import { useAppTheme } from '../utils/themeContext';
 import { renderMathInHtml } from '../utils/mathUtils';
-import { ReadingScoreSession } from '../utils/readingScoreEngine';
-import { getLevelFromScore } from '../utils/levelSystem';
-import { fireSessionComplete } from '../utils/sessionNotify';
 
 interface Props {
     user: User;
@@ -26,63 +22,18 @@ interface Props {
 }
 
 export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, subTopic, chapterTitle, subjectName, onClose, onUpdateUser, onSessionComplete }) => {
-    const appTheme = useAppTheme();
     const [activeTab, setActiveTab] = useState<'NOTES' | 'MCQ'>('NOTES');
     const [notesViewMode, setNotesViewMode] = useState<'html' | 'chunk'>('html');
     const [loading, setLoading] = useState(true);
     const [notesContent, setNotesContent] = useState<string | null>(null);
     const [mcqData, setMcqData] = useState<MCQItem[]>([]);
 
-    // ── Q&A Review scroll-based credit session ───────────────────────────────
-    const qaScoreSessionRef = useRef(null);
-    const qaScrollContainerRef = useRef(null);
-
-    // Accumulate Q&A credits for session-complete event on exit
-    const qaSessionCreditsRef = useRef(0);
-    const qaSessionStartMsRef = useRef(Date.now());
-
-    // Called when the Q&A pts engine awards pts (5% scroll/30s required)
-    const handleQaScoreEarned = useCallback((pts: number) => {
-        if (!user?.id || pts <= 0) return;
-        qaSessionCreditsRef.current += pts; // tracks session pts total
-        const updated = { ...user, totalScore: (user.totalScore || 0) + pts };
-        onUpdateUser(updated);
-        saveUserToLive(updated);
-    }, [user, onUpdateUser]);
-
-    /** Fires Q&A session-complete event if any credits were earned this review. */
-    const flushQaSession = useCallback(() => {
-        if (qaSessionCreditsRef.current <= 0) return;
-        const secs = Math.round((Date.now() - qaSessionStartMsRef.current) / 1000);
-        fireSessionComplete({
-            type: 'LESSON',
-            subject: subjectName || '',
-            chapter: chapterTitle || subTopic || '',
-            timeSecs: secs,
-            activityType: 'QA',
-            sessionScore: qaSessionCreditsRef.current,
-        });
-        qaSessionCreditsRef.current = 0;
-    }, [subjectName, chapterTitle, subTopic]);
-
-    // Review screen state — declared here so the useEffect below can reference showReview in its dep array
-    const [showReview, setShowReview] = useState(false);
-    const [sessionResult, setSessionResult] = useState<any>(null);
-
-    // Reset Q&A session start time when review opens
-    useEffect(() => {
-        if (showReview) {
-            qaSessionStartMsRef.current = Date.now();
-            qaSessionCreditsRef.current = 0;
-        }
-    }, [showReview]);
-
     // Determine if MCQ is available based on status and time
     // Logic: Week (WEAK) -> 2 days after revision
     // Average (AVERAGE) -> 5 days after revision
     // Strong (STRONG) -> 10 days after revision
     const [isMcqAvailable, setIsMcqAvailable] = useState(false);
-    const [readingTimer, setReadingTimer] = useState(60); // 60s Mandatory Reading
+    const [readingTimer, setReadingTimer] = useState(10); // 10s Mandatory Reading
 
     // Timer Logic
     useEffect(() => {
@@ -140,47 +91,9 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
     const [userAnswers, setUserAnswers] = useState<Record<number, number>>({}); // All selected answers
     const [notesRead, setNotesRead] = useState(false); // Track if user read notes
 
-    // Start Q&A credit session when review screen opens, stop when it closes
-    useEffect(() => {
-        if (!showReview || !user?.id) {
-            qaScoreSessionRef.current?.stop();
-            qaScoreSessionRef.current = null;
-            return;
-        }
-        const session = new ReadingScoreSession(
-            {
-                userId: user.id,
-                userLevel: getLevelFromScore(user.totalScore || 0),
-                subscriptionLevel: user.subscriptionTier || 'FREE',
-                isPremium: !!(user.isPremium || (user.subscriptionTier && user.subscriptionTier !== 'FREE')),
-                mode: 'qa',
-                // Q&A: pts via onScoreEarned, 5% scroll/30s required
-                onScoreEarned: handleQaScoreEarned,
-            },
-            () => {}, // HUD not shown for Q&A review
-        );
-        qaScoreSessionRef.current = session;
-        session.start();
-        return () => {
-            session.stop();
-            qaScoreSessionRef.current = null;
-        };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [showReview, user?.id]);
-
-    // Scroll listener: feed scroll % to Q&A session
-    useEffect(() => {
-        const el = qaScrollContainerRef.current;
-        if (!el) return;
-        const onScroll = () => {
-            const scrollable = el.scrollHeight - el.clientHeight;
-            if (scrollable <= 0) return;
-            const pct = Math.round((el.scrollTop / scrollable) * 100);
-            qaScoreSessionRef.current?.updateProgress(pct);
-        };
-        el.addEventListener('scroll', onScroll, { passive: true });
-        return () => el.removeEventListener('scroll', onScroll);
-    }, [showReview]); // re-bind when review opens
+    // Review screen state
+    const [showReview, setShowReview] = useState(false);
+    const [sessionResult, setSessionResult] = useState<any>(null);
 
     // Extract stable user properties
     const userBoard = user.board || 'CBSE';
@@ -365,14 +278,14 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
     return (
         <div className="fixed inset-0 z-[100] bg-white flex flex-col animate-in slide-in-from-bottom-10">
             {/* HEADER */}
-            <div className="px-4 py-3 flex items-center gap-3 shadow-md sticky top-0 z-10" style={{ background: appTheme.topBarGrad }}>
-                <button onClick={() => { flushQaSession(); onClose(); }} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors">
+            <div className="bg-white border-b border-slate-100 p-4 flex items-center justify-between shadow-sm sticky top-0 z-10">
+                <div>
+                    <h2 className="text-lg font-black text-slate-800 leading-tight">{subTopic}</h2>
+                    <p className="text-xs text-slate-600 font-bold">{chapterTitle} • Revision Mode</p>
+                </div>
+                <button onClick={onClose} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 text-slate-600 transition-colors">
                     <X size={20} />
                 </button>
-                <div className="min-w-0 flex-1">
-                    <h2 className="text-[13px] font-black text-white truncate leading-tight">{subTopic}</h2>
-                    <p className="text-[10px] font-bold text-amber-300 uppercase tracking-wide">{chapterTitle} · 📖 Revision Mode</p>
-                </div>
             </div>
 
             {/* TABS */}
@@ -516,9 +429,9 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
 
                                         {/* QUESTION CARD */}
                                         <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-100 flex-1 flex flex-col">
-                                            <h3 className="text-lg font-bold text-slate-800 mb-6 leading-relaxed"
-                                                dangerouslySetInnerHTML={{ __html: renderMathInHtml(mcqData[currentQIndex].question) }}
-                                            />
+                                            <h3 className="text-lg font-bold text-slate-800 mb-6 leading-relaxed">
+                                                {mcqData[currentQIndex].question}
+                                            </h3>
 
                                             <div className="space-y-3 flex-1">
                                                 {mcqData[currentQIndex].options.map((opt, idx) => {
@@ -543,7 +456,7 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                                                             }`}>
                                                                 {['A','B','C','D'][idx]}
                                                             </div>
-                                                            <span className="flex-1 text-sm" dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} />
+                                                            <span className="flex-1 text-sm">{opt}</span>
                                                         </button>
                                                     );
                                                 })}
@@ -603,13 +516,10 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
             {showReview && sessionResult && (
                 <div className="fixed inset-0 z-[200] bg-white flex flex-col animate-in slide-in-from-bottom-6">
                     {/* Review Header */}
-                    <div className="sticky top-0 px-4 py-3 flex items-center gap-3 shadow-md z-10" style={{ background: appTheme.topBarGrad }}>
-                        <button onClick={() => setShowReview(false)} className="shrink-0 p-2 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors">
-                            <X size={18} />
-                        </button>
-                        <div className="min-w-0 flex-1">
-                            <h2 className="text-[13px] font-black text-white truncate leading-tight">Session Review</h2>
-                            <p className="text-[10px] font-bold text-amber-300 uppercase tracking-wide truncate">{subTopic} · {chapterTitle}</p>
+                    <div className="sticky top-0 bg-white border-b border-slate-100 p-4 flex items-center justify-between z-10">
+                        <div>
+                            <h2 className="text-lg font-black text-slate-800">Session Review</h2>
+                            <p className="text-xs text-slate-500 font-bold">{subTopic} · {chapterTitle}</p>
                         </div>
                     </div>
 
@@ -638,8 +548,8 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                         </div>
                     </div>
 
-                    {/* Q&A Review list — scroll tracked for credit session */}
-                    <div ref={qaScrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
+                    {/* Q&A Review list */}
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-28">
                         {sessionResult.items.map((item: any, idx: number) => (
                             <div key={idx} className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${item.isCorrect ? 'border-emerald-200' : 'border-rose-200'}`}>
                                 <div className={`px-4 py-2 flex items-center gap-2 ${item.isCorrect ? 'bg-emerald-50' : 'bg-rose-50'}`}>
@@ -651,7 +561,7 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                                     </span>
                                 </div>
                                 <div className="p-4">
-                                    <p className="text-sm font-bold text-slate-800 mb-3 leading-relaxed" dangerouslySetInnerHTML={{ __html: renderMathInHtml(item.question) }} />
+                                    <p className="text-sm font-bold text-slate-800 mb-3 leading-relaxed">{item.question}</p>
                                     <div className="space-y-1.5">
                                         {item.options.map((opt: string, oi: number) => {
                                             const isUserAns = item.userAnswerIdx === oi;
@@ -663,7 +573,7 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                                                     'bg-slate-50 text-slate-500'
                                                 }`}>
                                                     <span className="font-black text-[11px] shrink-0">{['A','B','C','D'][oi]}</span>
-                                                    <span className="flex-1" dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} />
+                                                    <span className="flex-1">{opt}</span>
                                                     {isCorrectAns && <Check size={13} className="text-emerald-600 shrink-0" />}
                                                     {isUserAns && !item.isCorrect && <X size={13} className="text-rose-600 shrink-0" />}
                                                 </div>
@@ -684,7 +594,7 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                     {/* Footer — Close */}
                     <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-slate-200 z-10">
                         <button
-                            onClick={() => { flushQaSession(); onClose(); }}
+                            onClick={onClose}
                             className="w-full py-4 bg-slate-100 text-slate-700 font-black rounded-2xl active:scale-95 transition-all flex items-center justify-center gap-2"
                         >
                             ✅ Saved — Close
