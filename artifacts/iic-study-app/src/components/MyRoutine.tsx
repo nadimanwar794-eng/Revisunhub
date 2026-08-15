@@ -443,9 +443,9 @@ function SubjectCard({
   coins: number; onToggleApply: () => void; onChangeStart: (idx: number) => void;
   onCoinFlash: (msg: string) => void;
 }) {
-  const [targetStart, setTargetStart] = useState(sub.startLessonIndex);
+  const [targetStart, setTargetStart] = useState(sub.currentLessonIndex);
   const meta     = SUBJECT_META[sub.id] || DEFAULT_META;
-  const skipCost = getSkipCost(sub.startLessonIndex, targetStart);
+  const skipCost = getSkipCost(sub.currentLessonIndex, targetStart);
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -519,7 +519,7 @@ function SubjectCard({
           </button>
         </div>
 
-        {targetStart !== sub.startLessonIndex && (
+        {targetStart !== sub.currentLessonIndex && (
           <button
             onClick={() => {
               if (skipCost > coins) { onCoinFlash(`Coins kam hain! Chahiye: ${skipCost}🪙`); return; }
@@ -1831,6 +1831,17 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
         cat.subjects = subjects;
         cat.currentSubjectIndex = (si + 1) % subjects.length;
         cats[ci] = cat;
+
+        // Also update the global subject if it exists so settings stay in sync
+        const globalSubIdx = prev.subjects.findIndex(s => s.id === sub.id);
+        if (globalSubIdx >= 0) {
+            const nextGlobalSubjects = [...prev.subjects];
+            nextGlobalSubjects[globalSubIdx] = {
+                ...nextGlobalSubjects[globalSubIdx],
+                currentLessonIndex: subjects[si].currentLessonIndex
+            };
+            return { ...prev, coins: prev.coins + LESSON_COMPLETE_REWARD, routineCategories: cats, subjects: nextGlobalSubjects };
+        }
       }
       let next = { ...prev, coins: prev.coins + LESSON_COMPLETE_REWARD, routineCategories: cats };
       return next;
@@ -1871,12 +1882,22 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
   };
   const handleChangeStart = (subId: string, newIdx: number) => {
     const sub = data.subjects.find(s => s.id === subId);
-    if (!sub) return;
-    const cost = getSkipCost(sub.startLessonIndex, newIdx);
+    // Use the current category subject's state if available, else fallback
+    const catSub = data.routineCategories?.flatMap(c => c.subjects).find(s => s.id === subId) || sub;
+    if (!catSub) return;
+    const cost = getSkipCost(catSub.currentLessonIndex, newIdx);
     const userCredits = (user.credits || 0) + (user.bonusCredits || 0);
     if (cost > userCredits) { showToast(`Coins kam hain! Chahiye: ${cost}🪙`, 'error'); return; }
     if (cost > 0 && onUserUpdate) { const u = { ...user, credits: Math.max(0, (user.credits || 0) - cost) }; onUserUpdate(u); try { saveUserToLive(u); } catch (_) {} }
-    setData(prev => ({ ...prev, subjects: prev.subjects.map(s => s.id === subId ? { ...s, startLessonIndex: newIdx, currentLessonIndex: newIdx } : s) }));
+
+    setData(prev => {
+      const nextSubjects = prev.subjects.map(s => s.id === subId ? { ...s, startLessonIndex: newIdx, currentLessonIndex: newIdx } : s);
+      const nextCats = (prev.routineCategories || []).map(cat => ({
+        ...cat,
+        subjects: cat.subjects.map(s => s.id === subId ? { ...s, startLessonIndex: newIdx, currentLessonIndex: newIdx } : s)
+      }));
+      return { ...prev, subjects: nextSubjects, routineCategories: nextCats };
+    });
   };
 
   const toggleRoutine = () => {
