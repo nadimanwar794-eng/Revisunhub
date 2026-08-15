@@ -28,6 +28,7 @@ interface Props {
   onPracticeMistakes: (mistakes: MistakeEntry[]) => void;
   onOpenSubjects?: () => void;
   onOpenTracking?: () => void;
+  onOpenLesson?: (lessonId: string) => void;
 }
 
 // ── Small reusable pieces ─────────────────────────────────────────────────────
@@ -41,8 +42,8 @@ const SectionCard: React.FC<{
   actionLabel?: string;
   onAction?: () => void;
 }> = ({ emoji, title, subtitle, accent, children, actionLabel, onAction }) => (
-  <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-    <div className="px-4 pt-4 pb-3 border-b border-slate-100 flex items-center justify-between">
+  <div className="bg-[#f5f2eb] rounded-3xl border border-[#e8e4db] shadow-sm overflow-hidden">
+    <div className="px-4 pt-4 pb-3 flex items-center justify-between">
       <div className="flex items-center gap-2.5">
         <div
           className="w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0"
@@ -51,8 +52,8 @@ const SectionCard: React.FC<{
           {emoji}
         </div>
         <div>
-          <p className="font-black text-slate-900 text-sm leading-tight">{title}</p>
-          <p className="text-[10px] text-slate-400 font-medium leading-snug">{subtitle}</p>
+          <p className="font-black text-[#20313f] text-sm leading-tight">{title}</p>
+          <p className="text-[10px] text-slate-500 font-medium leading-snug">{subtitle}</p>
         </div>
       </div>
       {actionLabel && onAction && (
@@ -89,7 +90,7 @@ const TaskRow: React.FC<{ emoji: string; title: string; sub: string; done: boole
 // ── Main component ────────────────────────────────────────────────────────────
 
 export const DailyEventPage: React.FC<Props> = ({
-  user, settings, onBack, onOpenRoutine, onOpenRevisionHub, onPracticeMistakes, onOpenSubjects, onOpenTracking,
+  user, settings, onBack, onOpenRoutine, onOpenRevisionHub, onPracticeMistakes, onOpenSubjects, onOpenTracking, onOpenLesson,
 }) => {
   const todayStr = new Date().toISOString().split('T')[0];
   const yesterdayStr = useMemo(() => {
@@ -188,6 +189,21 @@ export const DailyEventPage: React.FC<Props> = ({
         : 0;
       const mcqDone = pageCount > 0 && mcqDoneCount >= pageCount;
       const done = readingDone && mcqDone;
+
+      // Extract required reading time for the active/next page
+      const nextPageIdx = Math.min(stats.pagesRead, pageCount - 1);
+      const activePageContent = lesson?.pages?.[nextPageIdx]?.text || '';
+
+      const tmp = document.createElement('div');
+      tmp.innerHTML = activePageContent;
+      const wordCount = (tmp.textContent || tmp.innerText || '').trim().split(/\s+/).filter(Boolean).length;
+      let reqSec = Math.round(wordCount / 2.5);
+      if (reqSec < 10) reqSec = 10;
+      if (reqSec > 300) reqSec = 300;
+
+      // Get elapsed reading time (if any)
+      const storedTime = Math.round(Number(localStorage.getItem(`iic_routine_page_time_${lesson.id}_${nextPageIdx}`)) || 0);
+
       return {
         catName: cat.categoryName || cat.emoji || 'Slot',
         emoji: cat.emoji || '📚',
@@ -201,6 +217,8 @@ export const DailyEventPage: React.FC<Props> = ({
         pct: stats.pct,
         pagesRead: stats.pagesRead,
         totalPages: pageCount,
+        reqSec,
+        storedTime,
       };
     }).filter(Boolean);
   }, [routineData, lucentNotes]);
@@ -553,6 +571,20 @@ export const DailyEventPage: React.FC<Props> = ({
                     </div>
                   </div>
 
+                  {/* Start Studying Button */}
+                  {!slot.done && (
+                    <button
+                      onClick={() => onOpenLesson?.(slot.lessonId)}
+                      className="w-full mb-3 py-2 rounded-xl bg-[#20313f] text-white flex items-center justify-between px-4 transition-all active:scale-95"
+                    >
+                      <div className="flex items-center gap-2">
+                        <BookOpen size={14} className="text-white" />
+                        <span className="text-[12px] font-black tracking-wide">पढ़ना शुरू करें</span>
+                      </div>
+                      <ChevronRight size={14} className="text-white" />
+                    </button>
+                  )}
+
                   {/* Reading progress */}
                   <div className="mb-1.5">
                     <div className="flex items-center justify-between mb-0.5">
@@ -560,16 +592,27 @@ export const DailyEventPage: React.FC<Props> = ({
                         📖 Reading
                         {slot.totalPages > 0 && ` ${slot.pagesRead}/${slot.totalPages} pages`}
                       </p>
-                      <p className={`text-[9px] font-black ${slot.readingDone ? 'text-emerald-600' : 'text-indigo-600'}`}>
+                      {!slot.readingDone && slot.reqSec > 0 && (
+                         <p className="text-[9px] text-slate-400 font-medium ml-1">
+                           (~{Math.ceil(slot.reqSec / 60)} min per page)
+                         </p>
+                      )}
+                      <p className={`text-[9px] font-black ${slot.readingDone ? 'text-emerald-600' : 'text-indigo-600'} ml-auto`}>
                         {slot.readingDone ? 'Done ✓' : `${slot.pct}%`}
                       </p>
                     </div>
-                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden mb-1">
                       <div
                         className={`h-full rounded-full transition-all ${slot.readingDone ? 'bg-emerald-500' : 'bg-indigo-500'}`}
                         style={{ width: `${slot.pct}%` }}
                       />
                     </div>
+                    {!slot.readingDone && slot.reqSec > 0 && (
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="text-[9px] font-medium text-slate-400">Current page progress</span>
+                        <span className="text-[9px] font-bold text-slate-600">{Math.min(100, Math.round((slot.storedTime / slot.reqSec) * 100))}% ({Math.max(0, slot.reqSec - slot.storedTime)}s left)</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* MCQ progress bar */}
@@ -592,55 +635,57 @@ export const DailyEventPage: React.FC<Props> = ({
                   </div>
 
                   {/* ── 100 pts + coin Claim button ── */}
-                  <div className="mt-2">
-                    {claimedTasks.has(slot.lessonId) ? (
-                      <div className="flex items-center justify-center gap-1.5 py-1.5 rounded-xl bg-emerald-100 border border-emerald-300">
-                        <span className="text-[11px] font-black text-emerald-700">✅ +{TASK_PTS} pts{coinPerTask > 0 ? ` + ${coinPerTask} 🪙` : ''} Claim Ho Gaye!</span>
-                      </div>
-                    ) : lastClaimedTask === slot.lessonId ? (
-                      <div className="flex items-center justify-center gap-1.5 py-1.5 rounded-xl bg-emerald-100 border border-emerald-300">
-                        <span className="text-[11px] font-black text-emerald-700">✅ +{TASK_PTS} pts{coinPerTask > 0 ? ` + ${coinPerTask} 🪙` : ''} Mil Gaye!</span>
-                      </div>
-                    ) : slot.done ? (
-                      <button
-                        onClick={() => handleClaimTaskPts(slot.lessonId)}
-                        className="w-full py-2 rounded-xl font-black text-[12px] flex items-center justify-center gap-2 transition-all active:scale-95 bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-sm shadow-orange-200"
-                      >
-                        🎁 Claim +{TASK_PTS} ⭐pts
-                        {coinPerTask > 0 && (
-                          <span className="text-[10px] bg-white/30 px-2 py-0.5 rounded-full font-black">
-                            +{coinPerTask} 🪙
-                          </span>
-                        )}
-                      </button>
-                    ) : (
-                      <div className="w-full py-2 rounded-xl font-black text-[12px] flex items-center justify-center gap-2 bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed">
-                        🔒 +{TASK_PTS} pts{coinPerTask > 0 ? ` + ${coinPerTask} 🪙` : ''} — Task Complete Karo
-                      </div>
-                    )}
-                  </div>
+                  {slot.done && (
+                    <div className="mt-2">
+                      {claimedTasks.has(slot.lessonId) ? (
+                        <div className="flex items-center justify-center gap-1.5 py-1.5 rounded-xl bg-emerald-100 border border-emerald-300">
+                          <span className="text-[11px] font-black text-emerald-700">✅ +{TASK_PTS} pts{coinPerTask > 0 ? ` + ${coinPerTask} 🪙` : ''} Claim Ho Gaye!</span>
+                        </div>
+                      ) : lastClaimedTask === slot.lessonId ? (
+                        <div className="flex items-center justify-center gap-1.5 py-1.5 rounded-xl bg-emerald-100 border border-emerald-300">
+                          <span className="text-[11px] font-black text-emerald-700">✅ +{TASK_PTS} pts{coinPerTask > 0 ? ` + ${coinPerTask} 🪙` : ''} Mil Gaye!</span>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => handleClaimTaskPts(slot.lessonId)}
+                          className="w-full py-2 rounded-xl font-black text-[12px] flex items-center justify-center gap-2 transition-all active:scale-95 bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-sm shadow-orange-200"
+                        >
+                          🎁 Claim +{TASK_PTS} ⭐pts
+                          {coinPerTask > 0 && (
+                            <span className="text-[10px] bg-white/30 px-2 py-0.5 rounded-full font-black">
+                              +{coinPerTask} 🪙
+                            </span>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {/* ── Revision Hub button — locked until lesson is complete ── */}
-                  {isLessonRewarded(slot.lessonId) ? (
+                  {slot.done || isLessonRewarded(slot.lessonId) ? (
                     <RoutineRevisionBadge
                       lessonId={slot.lessonId}
                       lessonTitle={slot.lessonTitle}
                       onGoToRevision={(lessonId, lessonTitle) => onOpenRevisionHub(lessonId, lessonTitle)}
                     />
                   ) : (
-                    <div className="mt-2 rounded-xl bg-slate-100 border border-slate-200 p-3 flex items-start gap-2.5">
+                    <div className="mt-2 rounded-xl bg-slate-50 border border-slate-200 p-3 flex items-start gap-2.5">
                       <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center shrink-0 mt-0.5">
                         <Lock size={15} className="text-slate-400" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-[11px] font-black text-slate-500">🔒 Revision Hub</p>
-                        <p className="text-[10px] font-black text-rose-500 mt-0.5">
-                          Unlock: 100 🪙 coin · Task complete pe 50% OFF → 50 🪙/session
+                        <div className="flex items-center justify-between">
+                          <p className="text-[11px] font-black text-slate-700">Revision Hub</p>
+                          <Lock size={12} className="text-slate-400" />
+                        </div>
+                        <p className="text-[10px] font-black text-emerald-600 mt-0.5">
+                          Unlock: 100 🪙 coins · Task complete pe 50% OFF → 50 🪙/session
                         </p>
-                        <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-                          Lesson complete karo → <span className="font-bold">"{slot.lessonTitle}"</span> unlock hoga
+                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">
+                          Lesson complete karo → revision unlock hoga
                         </p>
                       </div>
+                      <ChevronRight size={14} className="text-slate-400 self-center" />
                     </div>
                   )}
                 </div>
