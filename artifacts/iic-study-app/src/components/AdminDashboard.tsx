@@ -871,6 +871,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   // --- separators, and parenthetical "(नोट: ...)" notes after the answer line.
   const normalizeMcqPaste = (raw: string): string => {
     let txt = raw;
+    txt = txt.replace(/^(\d+)[:.]\s/gm, 'Q$1. ');
     txt = txt.replace(/\r\n/g, '\n');
     txt = txt.replace(/^---+\s*$/gm, '');
     // Drop ### topic headers entirely (they are noise for the parser; topic is auto-derived).
@@ -890,7 +891,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
     // ── Step 3: **Q 1: ...** → standard Question marker ──────────────────────
     txt = txt.replace(/\*\*Q\s*(\d+)\s*[:.]\s*([\s\S]*?)\*\*/gi, (_m, n, q) => `**Question ${n}**\n❓ Question: ${q.trim()}`);
 
-    // ── Step 4: **प्रश्न N:** / **प्रश्न N. ...** ─────────────────────────────
+        // ── Step 4: **प्रश्न N:** / **प्रश्न N. ...** ─────────────────────────────
     // Key fix: capture text AFTER the closing ** on the same line (rest of line)
     // because question text is usually: **प्रश्न 1:** question text here
     txt = txt.replace(/\*\*\s*(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*([\s\S]*?)\*\*([^\n]*)/gi, (_m, n, q, rest) => {

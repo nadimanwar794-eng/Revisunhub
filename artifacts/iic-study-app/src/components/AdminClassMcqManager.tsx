@@ -21,6 +21,7 @@ function subjectsForClass(classLevel: string, settings: any): string[] {
 
 function normalizeMcqPaste(raw: string): string {
   let txt = raw;
+  txt = txt.replace(/^(\d+)[:.]\s/gm, 'Q$1. ');
   txt = txt.replace(/\r\n/g, '\n');
   txt = txt.replace(/^---+\s*$/gm, '');
   txt = txt.replace(/^###\s+.+$/gm, '');
@@ -64,7 +65,7 @@ function normalizeMcqPaste(raw: string): string {
     }
     txt = out.join('\n');
   }
-  return txt;
+      return txt;
 }
 
 interface Props {
