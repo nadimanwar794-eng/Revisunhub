@@ -10972,6 +10972,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
       {activeTab === 'CHALLENGE_CREATOR_20' && (
           <ChallengeCreator20
+              settings={localSettings}
+              onSaveSettings={handleSaveSettings}
               onBack={() => setActiveTab('DASHBOARD')}
               language={localSettings.aiModel?.includes('Hindi') ? 'Hindi' : 'English'}
               autoChallengeEnabled={localSettings.dailyChallengeConfig?.autoChallengeEnabled !== false}
@@ -14413,7 +14415,10 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       ══════════════════════════════════════════════ */}
       {activeTab === 'COMPETITION_MCQ_MANAGER' && (
           <ErrorBoundary fallbackLabel="Competition MCQ Practice Manager" compact>
-            <AdminCompetitionMcqManager onBack={() => setActiveTab('DASHBOARD')} />
+            <AdminCompetitionMcqManager
+              settings={localSettings}
+              onBack={() => setActiveTab('DASHBOARD')}
+            />
           </ErrorBoundary>
       )}
 

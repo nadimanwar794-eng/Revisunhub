@@ -34,7 +34,9 @@ const McqPracticeCard: React.FC<Props> = ({
   fontSize,
 }) => {
   const number = questionNumber ?? q.questionNumber;
-  const canSelect = Boolean(onSelect) && !disabled && !answered;
+  // A selected answer is still editable while the quiz is in progress.
+  // Results lock the options only when showResult is enabled.
+  const canSelect = Boolean(onSelect) && !disabled && (!answered || !showResult);
   const isProjector = variant === 'projector';
 
   return (

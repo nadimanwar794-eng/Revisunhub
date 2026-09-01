@@ -294,6 +294,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
       next[sessionQIndex] = optIdx;
       return next;
     });
+
   }
 
   function handlePrev() {
@@ -306,6 +307,9 @@ export const RevisionHubScreen: React.FC<Props> = ({
   }
 
   function finishSession() {
+    const answeredCount = sessionAnswers.filter(a => a !== null && a !== undefined).length;
+    if (sessionMcqs.length === 0 || answeredCount < sessionMcqs.length) return;
+
     setSessionActive(false);
     setSessionDone(true);
     // ── Session tracking: App.tsx ko batao session khatam hua ────────────
@@ -512,10 +516,12 @@ export const RevisionHubScreen: React.FC<Props> = ({
           const correct    = sessionAnswers.filter((a, i) => a !== null && a !== undefined && a === sessionMcqs[i]?.correctAnswer).length;
           const wrong      = answered - correct;
           const isAnswered = sessionAnswers[sessionQIndex] !== null && sessionAnswers[sessionQIndex] !== undefined;
-           // Submit is available after the first answered question; there is
-           // no fixed 20/30/100-question gate in Revision Hub.
-           const minRequired = 1;
-          const ready      = answered >= minRequired;
+           const totalQuestions = sessionMcqs.length;
+           const ready      = totalQuestions > 0 && answered >= totalQuestions;
+           // After moving back, keep a forward-navigation path even if the
+           // current question has not been answered yet. The first question
+           // still requires an answer before moving forward.
+           const canGoForward = isAnswered || (sessionQIndex > 0 && sessionQIndex < totalQuestions - 1);
 
           return (
           <div className="p-4 max-w-xl mx-auto space-y-4">
@@ -560,7 +566,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
                ) : undefined}
              />
 
-            {/* Bottom navigation row */}
+             {/* Bottom navigation row */}
             <div className="space-y-2 pt-1">
               <div className="flex gap-2">
                 {/* Prev button */}
@@ -572,22 +578,24 @@ export const RevisionHubScreen: React.FC<Props> = ({
                   <ArrowLeft size={15} /> Pichla
                 </button>
 
-                {/* Next button — shows as soon as option selected */}
-                {isAnswered && sessionQIndex < sessionMcqs.length - 1 ? (
-                  <button
-                    onClick={handleNext}
-                    className="flex-1 flex items-center justify-center gap-2 active:scale-[0.99] text-white font-bold py-3.5 rounded-2xl transition-all"
-                    style={{ background: primary }}
-                  >
-                    Agla Sawaal <ChevronRight size={16} />
-                  </button>
-                ) : (
-                  <div className="flex-1 flex items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 py-3.5">
-                    <p className="text-[11px] text-slate-400 font-bold">
-                      {isAnswered ? '✓ Last question' : '⬆ Ek option chunein'}
-                    </p>
-                  </div>
-                )}
+                 {/* Manual next button — keep the selected answer visible until
+                     the student is ready to move on. */}
+                 <button
+                   type="button"
+                   onClick={handleNext}
+                   disabled={!canGoForward}
+                   className={`flex-1 flex items-center justify-center gap-1.5 rounded-2xl border-2 py-3.5 font-black text-sm active:scale-[0.97] transition-all ${
+                     canGoForward
+                       ? 'border-indigo-500 bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                       : 'border-dashed border-slate-200 bg-white text-slate-400 cursor-not-allowed'
+                   }`}
+                 >
+                   {canGoForward
+                     ? (sessionQIndex < sessionMcqs.length - 1
+                       ? <>Agla <ChevronRight size={16} /></>
+                       : <>✅ Finish</>)
+                     : '⬆ Ek option chunein'}
+                 </button>
               </div>
 
               {/* Submit button */}
@@ -598,8 +606,8 @@ export const RevisionHubScreen: React.FC<Props> = ({
                 style={ready ? { background: '#16a34a' } : {}}
               >
                 {ready
-                  ? <><Trophy size={16} /> Submit karein ({answered} answered)</>
-                  : `${answered}/${minRequired} — ${minRequired - answered} aur sawaal do`}
+                   ? <><Trophy size={16} /> Submit karein ({answered}/{totalQuestions})</>
+                   : `${answered}/${totalQuestions} — ${totalQuestions - answered} sawaal baaki`}
               </button>
             </div>
           </div>

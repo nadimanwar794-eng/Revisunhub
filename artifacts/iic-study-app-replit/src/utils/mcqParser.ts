@@ -7,10 +7,11 @@ import { MCQItem } from '../types';
  */
 export function normalizeMcqPaste(raw: string): string {
     let text = raw.replace(/\r\n/g, '\n');
+    text = text.replace(/^---+\s*$/gm, '');
+    text = text.replace(/^###\s+.+$/gm, '');
 
-    // Remove empty duplicate answer labels such as:
-    // **सही उत्तर:
-    // **सही उत्तर:** B) ...
+    // Remove duplicate/orphan answer labels before parsing. Lucent copies
+    // sometimes put the answer label on one line and the answer on the next.
     text = text.replace(
         /^[ \t]*(?:\*{1,2})?\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]\s*(?:\*{1,2})?\s*$/gim,
         '',
@@ -25,10 +26,87 @@ export function normalizeMcqPaste(raw: string): string {
         /^\s*\[(?:[⚡🔥💡🎯⭐✨🏆⚠️🌟][^\]]*?|[^\]]{1,10})\]\s*/gm,
         '',
     );
+    text = text.replace(/^\*\*\s*कूट\s*:?\s*\*?\*?\s*$/gm, '');
 
-    // Markdown bold is presentation-only here. Removing it also turns
-    // **सही उत्तर:** B) ... into the parser-friendly सही उत्तर: B) ...
+    // Convert the common bold question variants to the canonical simple
+    // format. Using one boundary format is important when a paste mixes
+    // ordinary Q1. blocks with bold Question 2: blocks.
+    text = text.replace(/\*\*Q\s*(\d+)\s*[:.]\s*([\s\S]*?)\*\*/gi, (_m, n, q) =>
+        `\nQ${n}. ${q.trim()}`,
+    );
+    text = text.replace(
+        /\*\*\s*(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*([\s\S]*?)\*\*([^\n]*)/gi,
+        (_m, n, q, rest) => {
+            const combined = (String(q).trim() + ' ' + String(rest).trim())
+                .trim()
+                .replace(/\*\*$/, '')
+                .replace(/\s*\((?:Easy|Medium|Hard|आसान|मध्यम|कठिन)[^)]*\)\s*$/i, '')
+                .replace(/^\[.*?\]\s*/g, '')
+                .trim();
+            return `\nQ${n}. ${combined}`;
+        },
+    );
+    text = text.replace(
+        /(?:^|\n)[ \t]*(?:\*\*\s*)?(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*/gi,
+        (_m, n) => `\nQ${n}. `,
+    );
+    text = text.replace(/\*\*प्रश्न\s*[:：]?\*\*/gi, '__PRASHNA__');
+    text = text.replace(/\*\*Question\s*[:：]?\*\*/gi, '__PRASHNA__');
+
+    // Normalize bold answer labels before stripping presentation markdown.
+    text = text.replace(
+        /\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]\s*([^*]+?)\s*\*\*/gi,
+        (_m, value) => `\n✅ Correct Answer: ${String(value).trim()}`,
+    );
+    text = text.replace(
+        /\*\*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]?\*\*\s*/gi,
+        '✅ Correct Answer: ',
+    );
+    text = text.replace(
+        /(?:^|\n)\s*(?:Ans(?:wer)?|सही\s*उत्तर|उत्तर)\s*[:：=\-]\s*/gi,
+        '\n✅ Correct Answer: ',
+    );
     text = text.replace(/\*\*/g, '');
+
+    // For unnumbered Lucent blocks, turn a line followed by A/B/C/D into a
+    // canonical question marker. Do not run this over an already-simple paste.
+    let questionNumber = 0;
+    text = text.replace(/__PRASHNA__\s*/g, () => {
+        questionNumber += 1;
+        return `\nQ${questionNumber}. `;
+    });
+    const alreadySimpleFormat =
+        /<TOPIC:/i.test(text) || /^\s*Q\s*\d+[\.\)]/im.test(text);
+    if (
+        questionNumber === 0 &&
+        !text.includes('**Question') &&
+        !text.includes('❓') &&
+        !alreadySimpleFormat
+    ) {
+        const lines = text.split('\n');
+        const output: string[] = [];
+        let counter = 0;
+        for (let i = 0; i < lines.length; i += 1) {
+            const line = lines[i];
+            const next = (lines[i + 1] || '').trim();
+            const looksLikeOptionStart =
+                /^\s*\*?\s*(?:\([A-Da-d]\)|[A-Da-d])\s*(?:[\).:\-])?\s+\S/i.test(next);
+            const isQuestionLine =
+                looksLikeOptionStart &&
+                line.trim().length > 0 &&
+                !/✅|Correct Answer/i.test(line) &&
+                !/^\s*\*?\s*(?:\([A-D]\)|[A-D])\s*(?:[\).:\-])?\s+\S/i.test(line);
+            if (isQuestionLine) {
+                counter += 1;
+                output.push(
+                    `Q${counter}. ${line.trim().replace(/^Q?\d+[.)]\s*/i, '')}`,
+                );
+            } else {
+                output.push(line);
+            }
+        }
+        text = output.join('\n');
+    }
 
     return text;
 }
@@ -155,12 +233,13 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
     // A line is treated as an MCQ option only when its content is ≤100 chars.
     // Statement labels (A. Statement one full sentence…) are longer and must NOT
     // stop the question-body collection early.
-    const isOptionLine = (l: string) => /^(\*?)\s*([A-D])[:.)\s]\s*(.+)/i.test(l);
+    const isOptionLine = (l: string) =>
+        /^\s*\*?\s*(?:\([A-D]\)|[A-D])\s*(?:[\).:\-])?\s*(.+)/i.test(l);
     // Also handles **सही उत्तर: (bold markdown prefix used in some paste formats)
     const isAnswerLine = (l: string) =>
-      /^(?:\*{1,2}\s*)?(?:(?:Correct\s+)?Answer|Ans|सही\s*उत्तर|उत्तर)\s*:/i.test(l)
-      || /^✅\s*Correct\s+Answer\s*:/i.test(l);
-    const isExplainLine  = (l: string) => /^(?:Explanation|Exp|व्याख्या)\s*:/i.test(l);
+      /^(?:\*{1,2}\s*)?(?:(?:Correct\s+)?Answer|Ans|सही\s*उत्तर|उत्तर)\s*[:：=\-]/i.test(l)
+      || /^✅\s*Correct\s+Answer\s*[:：=\-]/i.test(l);
+    const isExplainLine  = (l: string) => /^(?:Explanation|Exp|व्याख्या)\s*[:：=\-]/i.test(l);
 
     let bodyStart = 1; // index of first option/answer/explanation line
     const extraBodyLines: string[] = [];
@@ -187,27 +266,30 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
         const line = lines[i];
 
         // Option lines: *A) / *A: / A) / A. / A:
-        const optionMatch = line.match(/^(\*?)\s*([A-D])[:.)\s]\s*(.+)/i);
+        const optionMatch = line.match(
+          /^\s*(\*?)\s*(?:\(([A-D])\)|([A-D]))\s*(?:[\).:\-])?\s*(.+)/i,
+        );
         if (optionMatch && !collectingExplanation) {
             const isCorrect = optionMatch[1] === '*';
-            const idx = optionMatch[2].toUpperCase().charCodeAt(0) - 65;
+            const optionLetter = (optionMatch[2] || optionMatch[3]).toUpperCase();
+            const idx = optionLetter.charCodeAt(0) - 65;
             if (idx >= 0 && idx < 4) {
-                optionMap[idx] = optionMatch[3].trim();
+                optionMap[idx] = optionMatch[4].trim();
                 if (isCorrect) starCorrects.push(idx);
             }
             continue;
         }
 
         // Answer line: Ans: / Answer: / ✅ Correct Answer: / सही उत्तर: / उत्तर: / **सही उत्तर:
-        if (/^(?:\*{1,2}\s*)?(?:(?:Correct\s+)?Answer|Ans|सही\s*उत्तर|उत्तर)\s*:/i.test(line) || /^✅\s*Correct\s+Answer\s*:/i.test(line)) {
-            answerLine = line.replace(/^(?:\*{1,2}\s*)?(?:✅\s*)?(?:Correct\s+)?(?:Answer|Ans|सही\s*उत्तर|उत्तर)\s*:\s*/i, '').trim();
+        if (/^(?:\*{1,2}\s*)?(?:(?:Correct\s+)?Answer|Ans|सही\s*उत्तर|उत्तर)\s*[:：=\-]/i.test(line) || /^✅\s*Correct\s+Answer\s*[:：=\-]/i.test(line)) {
+            answerLine = line.replace(/^(?:\*{1,2}\s*)?(?:✅\s*)?(?:Correct\s+)?(?:Answer|Ans|सही\s*उत्तर|उत्तर)\s*[:：=\-]\s*/i, '').trim();
             continue;
         }
 
         // Explanation line: Explanation: / Exp: / व्याख्या:
-        if (/^(?:Explanation|Exp|व्याख्या)\s*:/i.test(line)) {
+        if (/^(?:Explanation|Exp|व्याख्या)\s*[:：=\-]/i.test(line)) {
             collectingExplanation = true;
-            const expText = line.replace(/^(?:Explanation|Exp|व्याख्या)\s*:\s*/i, '').trim();
+            const expText = line.replace(/^(?:Explanation|Exp|व्याख्या)\s*[:：=\-]\s*/i, '').trim();
             if (expText) explanationLines.push(expText);
             continue;
         }

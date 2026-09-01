@@ -795,8 +795,10 @@ export const RevisionHubV2: React.FC<Props> = (props) => {
                               key={oi}
                               disabled={showResult}
                               onClick={() => {
-                                setPracticeSelected(oi);
-                                setPracticeRevealed(true);
+                                // Move forward immediately after the option is
+                                // chosen; the answer is passed directly so the
+                                // score does not depend on async state updates.
+                                handlePracticeRate(oi === correctIdx);
                               }}
                               className={`w-full flex items-start gap-3 border-2 rounded-2xl px-4 py-3.5 text-left transition-all active:scale-[0.99] ${optClass} ${showResult ? 'cursor-default' : 'hover:border-indigo-300 hover:bg-indigo-50/60'}`}
                             >

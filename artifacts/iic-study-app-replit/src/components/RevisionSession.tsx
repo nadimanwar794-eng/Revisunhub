@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import McqPracticeCard from './McqPracticeCard';
 import { User, SystemSettings, MCQItem } from '../types';
-import { X, BookOpen, Zap, CheckCircle, AlertCircle, ChevronRight, Check, RotateCcw, Loader2, Volume2, FileText } from 'lucide-react';
+import { X, BookOpen, Zap, CheckCircle, AlertCircle, ChevronRight, ChevronLeft, SkipForward, Check, RotateCcw, Loader2, Volume2, FileText } from 'lucide-react';
 import { getChapterData, saveUserToLive } from '../firebase';
 import { storage } from '../utils/storage';
 import { DEFAULT_SUBJECTS } from '../constants';
@@ -14,6 +14,7 @@ import { renderMathInHtml } from '../utils/mathUtils';
 import { ReadingScoreSession } from '../utils/readingScoreEngine';
 import { getLevelFromScore } from '../utils/levelSystem';
 import { fireSessionComplete } from '../utils/sessionNotify';
+import McqQuestionNavigator from './McqQuestionNavigator';
 
 interface Props {
     user: User;
@@ -140,6 +141,7 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
     const [currentQIndex, setCurrentQIndex] = useState(0);
     const [selectedOption, setSelectedOption] = useState<number | null>(null);
     const [userAnswers, setUserAnswers] = useState<Record<number, number>>({}); // All selected answers
+    const [skipped, setSkipped] = useState<Set<number>>(new Set());
     const [notesRead, setNotesRead] = useState(false); // Track if user read notes
 
     // Start Q&A credit session when review screen opens, stop when it closes
@@ -315,15 +317,22 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
     }, [chapterId, subTopic, subjectName, userBoard, userClass, userStream]);
 
     const handleOptionSelect = (idx: number) => {
-        if (selectedOption !== null) return; // Prevent change
         setSelectedOption(idx);
         setUserAnswers(prev => ({ ...prev, [currentQIndex]: idx }));
+        setSkipped(prev => { const next = new Set(prev); next.delete(currentQIndex); return next; });
+        // Revision practice is sequential: selecting an option opens the next
+        // question immediately. The last question keeps the Submit button.
+        if (currentQIndex < mcqData.length - 1) {
+            const nextIndex = currentQIndex + 1;
+            setCurrentQIndex(nextIndex);
+            setSelectedOption(userAnswers[nextIndex] ?? null);
+        }
     };
 
     const nextQuestion = () => {
         if (currentQIndex < mcqData.length - 1) {
             setCurrentQIndex(prev => prev + 1);
-            setSelectedOption(null);
+            setSelectedOption(userAnswers[currentQIndex + 1] ?? null);
         }
     };
 
@@ -516,6 +525,18 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                                             <span>Topic: {subTopic}</span>
                                         </div>
 
+                                        <McqQuestionNavigator
+                                            total={mcqData.length}
+                                            currentIndex={currentQIndex}
+                                            answers={userAnswers}
+                                            skipped={skipped}
+                                            onJump={(index) => {
+                                                setCurrentQIndex(index);
+                                                setSelectedOption(userAnswers[index] ?? null);
+                                            }}
+                                            className="mb-2"
+                                        />
+
                                          <McqPracticeCard
                                              q={mcqData[currentQIndex]}
                                              questionNumber={mcqData[currentQIndex].questionNumber ?? currentQIndex + 1}
@@ -524,16 +545,36 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                                              onSelect={handleOptionSelect}
                                          />
 
-                                        {/* NEXT & SUBMIT BUTTONS */}
+                                        {/* NEXT / SKIP / SUBMIT BUTTONS */}
                                         <div className="space-y-3 pb-8 animate-in slide-in-from-bottom-4">
-                                            {selectedOption !== null && currentQIndex < mcqData.length - 1 && (
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <button
+                                                    onClick={() => {
+                                                        if (currentQIndex === 0) return;
+                                                        const index = currentQIndex - 1;
+                                                        setCurrentQIndex(index);
+                                                        setSelectedOption(userAnswers[index] ?? null);
+                                                    }}
+                                                    disabled={currentQIndex === 0}
+                                                    className="flex items-center justify-center gap-1 rounded-xl border border-slate-200 py-3 text-xs font-black text-slate-600 disabled:opacity-30"
+                                                ><ChevronLeft size={15} /> Pichla</button>
+                                                <button
+                                                    onClick={() => {
+                                                        if (currentQIndex >= mcqData.length - 1) return;
+                                                        setSkipped(prev => selectedOption === null ? new Set(prev).add(currentQIndex) : prev);
+                                                        const index = currentQIndex + 1;
+                                                        setCurrentQIndex(index);
+                                                        setSelectedOption(userAnswers[index] ?? null);
+                                                    }}
+                                                    disabled={currentQIndex >= mcqData.length - 1}
+                                                    className="flex items-center justify-center gap-1 rounded-xl border border-amber-200 bg-amber-50 py-3 text-xs font-black text-amber-700 disabled:opacity-30"
+                                                >Skip <SkipForward size={14} /></button>
                                                 <button
                                                     onClick={nextQuestion}
-                                                    className="w-full py-4 bg-slate-900 text-white font-bold rounded-xl shadow-lg hover:bg-slate-800 active:scale-95 transition-all flex items-center justify-center gap-2"
-                                                >
-                                                    Next Question <ChevronRight size={18} />
-                                                </button>
-                                            )}
+                                                    disabled={currentQIndex >= mcqData.length - 1}
+                                                    className="flex items-center justify-center gap-1 rounded-xl bg-slate-900 py-3 text-xs font-black text-white disabled:opacity-30"
+                                                >Agla <ChevronRight size={15} /></button>
+                                            </div>
                                             {(() => {
                                                 const answered = Object.keys(userAnswers).length;
                                                  // Submit is available after any one answered question.
