@@ -5,7 +5,9 @@ import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 import { mockupPreviewPlugin } from "./mockupPreviewPlugin";
 
-const rawPort = process.env.PORT ?? "5173";
+// Artifact workflows provide PORT/BASE_PATH. Production builds run without
+// those workflow-only variables, so use the registered preview defaults there.
+const rawPort = process.env.PORT ?? "3001";
 
 const port = Number(rawPort);
 
@@ -13,7 +15,7 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-const basePath = process.env.BASE_PATH ?? "/";
+const basePath = process.env.BASE_PATH ?? "/__mockup/";
 
 export default defineConfig({
   base: basePath,

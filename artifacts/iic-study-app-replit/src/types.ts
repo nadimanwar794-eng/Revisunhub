@@ -129,6 +129,8 @@ export interface User {
   personalThemeColor?: string; // User's own permanently chosen theme color (from ThemeCustomizer)
   personalTheme?: UserCustomTheme; // Full granular permanent theme
   activeAppliedThemeId?: string; // 'default' | ThemeHistoryEntry.id — user's chosen theme from admin history
+  activeOwnedThemeId?: string; // Owned theme record currently selected in Theme Studio
+  ownedThemes?: OwnedTheme[]; // Purchased/free themes saved for this user
   useDefaultTheme?: boolean; // User explicitly chose default tier theme — skip all admin overrides
   themeBadgeColor?: string;
   themeAnimationId?: string;
@@ -229,6 +231,7 @@ export interface User {
   subscriptionLevel?: 'BASIC' | 'ULTRA'; // NEW: Granular level for Real subscribers
   subscriptionEndDate?: string; // ISO Date when subscription expires
   subscriptionPrice?: number; // Price admin set for this user's subscription
+  subscriptionSource?: 'PURCHASE' | 'CREDITS' | 'ADMIN' | 'REWARD'; // Method of acquisition
   grantedByAdmin?: boolean; // True if subscription was granted free by admin
   customSubscriptionName?: string; // For CUSTOM tier
   customSubscriptionDuration?: {
@@ -263,7 +266,17 @@ export interface ActiveSubscription {
   level: 'BASIC' | 'ULTRA'; // 'BASIC' or 'ULTRA'
   startDate: string;
   endDate: string;
-  source: 'PURCHASE' | 'REWARD' | 'ADMIN' | 'BONUS';
+  source: 'PURCHASE' | 'REWARD' | 'ADMIN' | 'BONUS' | 'CREDITS';
+}
+
+export interface CreditSubDiscountEvent {
+  enabled: boolean;
+  eventName: string; // e.g., "Credits Mega Dhamaka", "Coin Store Flash Sale"
+  discountPercent: number; // e.g. 20, 30, 50%
+  startsAt?: string; // ISO Date for countdown / auto-start
+  endsAt?: string; // ISO Date for sale duration
+  showToFreeUsers?: boolean;
+  showToPremiumUsers?: boolean;
 }
 
 export interface MarksheetSettings {
@@ -282,7 +295,7 @@ export interface SubscriptionHistoryEntry {
   price: number; // Amount paid (or 0)
   originalPrice: number; // Value of the plan
   isFree: boolean; // True if reward/admin grant
-  grantSource: 'PURCHASE' | 'REWARD' | 'ADMIN' | 'BONUS';
+  grantSource: 'PURCHASE' | 'REWARD' | 'ADMIN' | 'BONUS' | 'CREDITS';
   grantedBy?: string; // ID of the Admin/Sub-Admin who granted this
   grantedByName?: string; // Name of the Admin/Sub-Admin
 }
@@ -315,10 +328,12 @@ export interface SubscriptionPlan {
   // Basic Tier (MCQ + Notes)
   basicPrice: number;
   basicOriginalPrice: number;
+  creditPriceBasic?: number; // Custom credits needed for Basic
   
   // Advance/Ultra Tier (PDF + Video)
   ultraPrice: number;
   ultraOriginalPrice: number;
+  creditPriceUltra?: number; // Custom credits needed for Ultra
   
   features: string[]; // Generic features list or split logic
   popular?: boolean;
@@ -603,6 +618,7 @@ export interface AppNotification {
 }
 
 export interface SystemSettings {
+  cardBorderAnimation?: boolean; // When true or undefined, rotating border animation on cards is active
   notifications?: AppNotification[];
   broadcastRedeemCodes?: BroadcastRedeemCode[];
   loadingScreenVideoUrl?: string; // NEW: Video to show before loading screen
@@ -758,7 +774,17 @@ export interface SystemSettings {
   contentListCardBorder?: string;
   statusBarColor?: string;
   darkThemeColor?: string;
+  darkThemeBackground?: string;
+  darkThemeTopBarStart?: string;
+  darkThemeTopBarEnd?: string;
+  blueThemeColor?: string;
+  blueThemeBackground?: string;
+  blueThemeTopBarStart?: string;
+  blueThemeTopBarEnd?: string;
   lightThemeColor?: string;
+  lightThemeBackground?: string;
+  lightThemeTopBarStart?: string;
+  lightThemeTopBarEnd?: string;
   ultraThemeColor?: string;
   basicThemeColor?: string;
   freeThemeColor?: string;
@@ -776,6 +802,7 @@ export interface SystemSettings {
   officialBasicTheme?: UserCustomTheme;
   officialFreeTheme?: UserCustomTheme;
   adminThemeLibrary?: AdminSavedTheme[];
+  adminLoadingScreenLibrary?: AdminLoadingScreen[];
   themeHistory?: ThemeHistoryEntry[];
   scheduledThemes?: ScheduledTheme[];
   levelScoreOverride?: Record<string, number>;
@@ -846,6 +873,21 @@ export interface SystemSettings {
   htmlUnlockCost?: number; // Credits required for free/basic users to unlock HTML write view per session (default 5)
   basicHtmlDailyLimit?: number; // Free HTML view sessions per day for Basic subscribers (default 3)
   mcqRewardRules?: MCQRewardRule[];
+
+  // SUBSCRIPTION BY CREDITS & DAILY COIN REWARDS
+  allowCreditSubscription?: boolean; // When false, buying subscription via credits is disabled by admin
+  subscriptionCreditPrices?: {
+    weeklyBasic?: number;
+    weeklyUltra?: number;
+    monthlyBasic?: number;
+    monthlyUltra?: number;
+    threeMonthBasic?: number;
+    threeMonthUltra?: number;
+    yearlyBasic?: number;
+    yearlyUltra?: number;
+  };
+  dailyClaimPro?: number; // Daily coins for BASIC / Pro subscribers (default 150)
+  dailyClaimMaxPro?: number; // Daily coins for ULTRA / Max Pro subscribers (default 250)
 
   // LEVEL SYSTEM (Admin Config)
   isLevelSystemEnabled?: boolean;
@@ -1065,6 +1107,7 @@ export interface SystemSettings {
       seconds: number;
     };
   };
+  creditSubDiscountEvent?: CreditSubDiscountEvent; // Discount event for credit store subscriptions
   
   // NEW: App Modes (Global Control)
   appMode?: {
@@ -1667,12 +1710,48 @@ export interface UserCustomTheme {
   likes?: number;
 }
 
+export interface OwnedTheme {
+  id: string;
+  sourceThemeId: string;
+  name: string;
+  emoji?: string;
+  themeData: UserCustomTheme;
+  purchasedAt: string;
+  expiresAt?: string;
+  accessMode: 'FREE' | 'CREDITS';
+  accessDurationDays?: 1 | 7 | 30;
+  creditCost?: number;
+}
+
 export interface AdminSavedTheme {
   id: string;
   name: string;
   themeData: UserCustomTheme;
   createdAt: string;
   createdBy?: string;
+  targetTier?: 'all' | 'ultra' | 'basic' | 'free';
+  accessMode?: 'FREE' | 'CREDITS';
+  creditCost?: number;
+  accessDurationDays?: 1 | 7 | 30;
+  published?: boolean;
+  publishedAt?: string;
+}
+
+/** Safe, data-driven loading screen published by an admin. `code` is JSON
+ * configuration, never executable JavaScript. */
+export interface AdminLoadingScreen {
+  id: string;
+  slotId: number;
+  name: string;
+  emoji?: string;
+  code: string;
+  targetTier?: 'all' | 'ultra' | 'basic' | 'free';
+  accessMode?: 'FREE' | 'CREDITS';
+  creditCost?: number;
+  accessDurationDays?: 1 | 7 | 30;
+  published?: boolean;
+  publishedAt?: string;
+  createdAt?: string;
 }
 
 export interface ThemeHistoryEntry {
@@ -1682,6 +1761,11 @@ export interface ThemeHistoryEntry {
   targetTier: 'all' | 'ultra' | 'basic' | 'free';
   appliedAt: string;
   expiresAt: string | null;
+  accessMode?: 'FREE' | 'CREDITS';
+  creditCost?: number;
+  accessDurationDays?: 1 | 7 | 30;
+  source?: 'ADMIN_PUBLISHED' | 'ADMIN_APPLIED';
+  published?: boolean;
 }
 
 export interface ScheduledTheme {
@@ -1761,6 +1845,7 @@ export type TopicStatus = 'WEAK' | 'AVERAGE' | 'STRONG' | 'EXCELLENT';
 export interface TopicItem {
     id: string; // Unique ID for list rendering (e.g. chapterId_subTopic)
     chapterId: string;
+    pageKey?: string; // Revision tracker page key; falls back to chapterId
     chapterName: string; // Name of the parent chapter
     name: string; // Sub-topic name (or Chapter name if no sub-topics)
     score: number; // Inherited or Specific Score

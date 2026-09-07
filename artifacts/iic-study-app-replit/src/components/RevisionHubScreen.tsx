@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   ArrowLeft, BookOpen, RotateCcw, Clock, BarChart2, ChevronRight,
-  CheckCircle, XCircle, Zap, Calendar, BrainCircuit, Trophy, Plus,
+  CheckCircle, XCircle, Zap, Calendar, BrainCircuit, Trophy, Plus, List,
 } from 'lucide-react';
 import type { User, StudentTab, SystemSettings } from '../types';
 import { RevisionHubV2 } from './RevisionHubV2';
@@ -21,6 +21,7 @@ import { CreditConfirmationModal } from './CreditConfirmationModal';
 import { renderMathInHtml } from '../utils/mathUtils';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import McqPracticeCard from './McqPracticeCard';
+import McqQuestionNavigator from './McqQuestionNavigator';
 
 type HubTab = 'MCQ' | 'REVISION' | 'PERFORMANCE';
 
@@ -103,6 +104,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [showFeedback, setShowFeedback]     = useState(false);
   const [sessionMcqs, setSessionMcqs]       = useState<any[]>([]);
+  const [showSessionNavigator, setShowSessionNavigator] = useState(false);
   const [coinModal, setCoinModal] = useState<{ title: string; cost: number; onConfirm: () => void } | null>(null);
   const [pendingLesson, setPendingLesson] = useState<any | null>(null);
 
@@ -240,6 +242,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
     setSelectedOption(null);
     setShowFeedback(false);
     setSessionDone(false);
+    setShowSessionNavigator(false);
     setSessionActive(true);
   }
 
@@ -417,6 +420,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
     setSessionMcqs([]);
     setSelectedOption(null);
     setShowFeedback(false);
+    setShowSessionNavigator(false);
   }
 
   const handleTabChange = (tab: HubTab) => {
@@ -470,6 +474,21 @@ export const RevisionHubScreen: React.FC<Props> = ({
                 : 'MCQ · Revision · History · Performance'}
           </p>
         </div>
+         {sessionActive && (
+           <button
+             type="button"
+             onClick={() => setShowSessionNavigator(prev => !prev)}
+             aria-label={showSessionNavigator ? 'Hide question switcher' : 'Show question switcher'}
+             aria-expanded={showSessionNavigator}
+             className={`shrink-0 p-2 rounded-xl border transition-all ${
+               showSessionNavigator
+                 ? 'bg-indigo-100 border-indigo-300 text-indigo-700'
+                 : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+             }`}
+           >
+             <List size={18} />
+           </button>
+         )}
       </div>
 
       {/* Progress bar (session only) */}
@@ -509,6 +528,25 @@ export const RevisionHubScreen: React.FC<Props> = ({
 
       {/* ── Content ── */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pb-20">
+
+        {sessionActive && showSessionNavigator && (
+          <div className="px-4 pt-3 max-w-xl mx-auto w-full">
+            <McqQuestionNavigator
+              total={sessionMcqs.length}
+              currentIndex={sessionQIndex}
+              answers={Object.fromEntries(
+                sessionAnswers
+                  .map((answer, index) => [index, answer])
+                  .filter(([, answer]) => answer !== null && answer !== undefined),
+              )}
+              onJump={(index) => {
+                setSessionQIndex(index);
+                setSelectedOption(sessionAnswers[index] ?? null);
+                setShowFeedback(false);
+              }}
+            />
+          </div>
+        )}
 
         {/* ══ SESSION MODE ══ */}
         {sessionActive && currentQ && (() => {

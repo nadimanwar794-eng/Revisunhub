@@ -11,6 +11,7 @@ import { saveUserToLive } from '../firebase';
 import { getLevelInfo, getScoreDiscountFromScore, getNextLevelInfo, getLevelProgress, getLevelDailyLimitsWithOverride, UNLIMITED } from '../utils/levelSystem';
 import { SCORE_MULTIPLIERS, getDailyScoreLimit } from '../utils/scoreSystem';
 import { addSubscription } from '../utils/subscriptionUtils';
+import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
 import { recordCreditTx } from '../utils/creditHistory';
 import {
   loadRoutineData, saveRoutineData, checkAndResetDaily,
@@ -163,29 +164,72 @@ const SubHistory: React.FC<{ user: User; onBack: () => void }> = ({ user, onBack
 };
 
 /* ─── Credit price helper ─── */
-function getCreditPrice(planDuration: string, isUltra: boolean): number {
+function getCreditPrice(planDuration: string, isUltra: boolean, plan?: any, settings?: SystemSettings): number {
+  // Check if this specific plan has an explicit credit price set by admin
+  if (plan) {
+    if (isUltra && typeof plan.creditPriceUltra === 'number' && plan.creditPriceUltra > 0) {
+      return plan.creditPriceUltra;
+    }
+    if (!isUltra && typeof plan.creditPriceBasic === 'number' && plan.creditPriceBasic > 0) {
+      return plan.creditPriceBasic;
+    }
+  }
+
   const d = (planDuration || '').toLowerCase();
-  let base = 3500;
-  if (d.includes('year') || d.includes('365') || d.includes('annual') || d.includes('1 yr')) base = 100000;
-  else if (d.includes('3 month') || d.includes('90') || d.includes('quarter') || d.includes('tri')) base = 30000;
-  else if (d.includes('month') || d.includes('30')) base = 12000;
-  else if (d.includes('week') || d.includes('7')) base = 4000;
-  return isUltra ? base : Math.round(base * 0.75);
+  const sp = settings?.subscriptionCreditPrices;
+
+  if (d.includes('year') || d.includes('365') || d.includes('annual') || d.includes('1 yr')) {
+    if (isUltra && typeof sp?.yearlyUltra === 'number' && sp.yearlyUltra > 0) return sp.yearlyUltra;
+    if (!isUltra && typeof sp?.yearlyBasic === 'number' && sp.yearlyBasic > 0) return sp.yearlyBasic;
+    return isUltra ? 100000 : 75000;
+  } else if (d.includes('3 month') || d.includes('90') || d.includes('quarter') || d.includes('tri')) {
+    if (isUltra && typeof sp?.threeMonthUltra === 'number' && sp.threeMonthUltra > 0) return sp.threeMonthUltra;
+    if (!isUltra && typeof sp?.threeMonthBasic === 'number' && sp.threeMonthBasic > 0) return sp.threeMonthBasic;
+    return isUltra ? 30000 : 22500;
+  } else if (d.includes('month') || d.includes('30')) {
+    if (isUltra && typeof sp?.monthlyUltra === 'number' && sp.monthlyUltra > 0) return sp.monthlyUltra;
+    if (!isUltra && typeof sp?.monthlyBasic === 'number' && sp.monthlyBasic > 0) return sp.monthlyBasic;
+    return isUltra ? 12000 : 9000;
+  } else if (d.includes('week') || d.includes('7')) {
+    if (isUltra && typeof sp?.weeklyUltra === 'number' && sp.weeklyUltra > 0) return sp.weeklyUltra;
+    if (!isUltra && typeof sp?.weeklyBasic === 'number' && sp.weeklyBasic > 0) return sp.weeklyBasic;
+    return isUltra ? 4000 : 3000;
+  }
+
+  const base = isUltra ? 3500 : 2625;
+  return base;
+}
+
+function isDiscountEventLive(discountEvent?: any): boolean {
+  if (!discountEvent?.enabled) return false;
+  const now = Date.now();
+  const startsAt = discountEvent.startsAt ? new Date(discountEvent.startsAt).getTime() : 0;
+  const endsAt = discountEvent.endsAt ? new Date(discountEvent.endsAt).getTime() : Infinity;
+  if (Number.isNaN(startsAt) || Number.isNaN(endsAt)) return false;
+  return now >= startsAt && now < endsAt;
+}
+
+function isDiscountAudienceAllowed(discountEvent: any, isSubscribed: boolean): boolean {
+  return isSubscribed
+    ? discountEvent?.showToPremiumUsers !== false
+    : discountEvent?.showToFreeUsers !== false;
 }
 
 /* ─── Main Store ─── */
 /* ─── Daily Subscription Coin Claim Card ─── */
-function DailyClaimCard({ userId, user: u, onUpdateUser }: { userId: string; user: any; onUpdateUser?: (u: any) => void }) {
+function DailyClaimCard({ userId, user: u, settings, onUpdateUser }: { userId: string; user: any; settings?: SystemSettings; onUpdateUser?: (u: any) => void }) {
   function getToday() { return new Date().toISOString().split('T')[0]; }
   const subTier: UserSubTier = getUserSubTier(u ?? {});
   const [routineData, setRoutineDataRaw] = useState(() => {
     const d = loadRoutineData(userId);
     const reset = checkAndResetDaily(d);
-    return ensureTodayClaimEntry(reset, getUserSubTier(u ?? {}));
+    return ensureTodayClaimEntry(reset, getUserSubTier(u ?? {}), settings);
   });
   const unclaimed = getUnclaimedCoins(routineData, subTier);
   const todayClaimed = routineData.dailyClaims?.[getToday()]?.claimed ?? false;
-  const dailyAmt = getDailyClaimAmount(subTier);
+  const dailyAmt = getDailyClaimAmount(subTier, settings);
+  const dailyPro = settings?.dailyClaimPro ?? DAILY_CLAIM_PRO;
+  const dailyMaxPro = settings?.dailyClaimMaxPro ?? DAILY_CLAIM_MAX_PRO;
 
   const handleClaim = async () => {
     const { data: updated, earned } = claimAllPendingCoins(routineData, subTier);
@@ -209,7 +253,7 @@ function DailyClaimCard({ userId, user: u, onUpdateUser }: { userId: string; use
         <p className="text-sm font-black" style={{ color: C.textMuted }}>Daily Coin Reward</p>
       </div>
       <p className="text-xs font-medium" style={{ color: C.textDim }}>
-        Pro ya Max Pro lo → roz {DAILY_CLAIM_PRO}–{DAILY_CLAIM_MAX_PRO} 🪙 pao!
+        Pro ya Max Pro lo → roz {dailyPro}–{dailyMaxPro} 🪙 pao!
       </p>
     </div>
   );
@@ -263,12 +307,13 @@ function DailyClaimCard({ userId, user: u, onUpdateUser }: { userId: string; use
   );
 }
 
-export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEarnContent, onBack }) => {
-  const [tierType, setTierType] = useState<'BASIC' | 'ULTRA' | 'EARN' | 'CREDITS' | 'HISTORY'>('BASIC');
+export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack }) => {
+  const [tierType, setTierType] = useState<'BASIC' | 'ULTRA' | 'CREDITS' | 'HISTORY'>('BASIC');
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
   const packages = settings?.packages || [];
   const subscriptionPlans = settings?.subscriptionPlans || [];
+  const isCreditSubAllowed = settings?.allowCreditSubscription !== false;
 
   const totalScore = user.totalScore || 0;
   const scoreDiscount = getScoreDiscountFromScore(totalScore);
@@ -314,13 +359,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
   const isSubscribed = user.isPremium && user.subscriptionEndDate && new Date(user.subscriptionEndDate) > new Date();
 
   const isEventActive = () => {
-    if (!event?.enabled) return false;
-    const now = Date.now();
-    if (!event.startsAt && !event.endsAt) return true;
-    const startsAt = event.startsAt ? new Date(event.startsAt).getTime() : 0;
-    const endsAt = event.endsAt ? new Date(event.endsAt).getTime() : Infinity;
-    if (startsAt === endsAt) return now >= startsAt;
-    return now >= startsAt && now < endsAt;
+    return isDiscountEventLive(event);
   };
   const isCooldownPhase = () => {
     if (!event?.enabled || !event.startsAt) return false;
@@ -355,6 +394,11 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
   const [creditConfirmLoading, setCreditConfirmLoading] = useState(false);
 
   const handleCreditPurchase = async (plan: any) => {
+    if (!isCreditSubAllowed) {
+      setCreditPurchaseMsg('❌ Admin ne credits se subscription khareedna band kiya hua hai.');
+      setTimeout(() => setCreditPurchaseMsg(null), 4000);
+      return;
+    }
     const isUltra = tierType === 'ULTRA';
     const dur = (plan.duration || '').toLowerCase();
     const pName = (plan.name || '').toLowerCase();
@@ -363,8 +407,8 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
       setTimeout(() => setCreditPurchaseMsg(null), 4000);
       return;
     }
-    const creditCost = getCreditPrice(plan.duration || plan.name || '', isUltra);
-    const userCredits = (user.credits || 0) + (user.bonusCredits || 0);
+    const creditCost = getPlanCreditCost(plan, isUltra);
+    const userCredits = getTotalCredits(user);
     if (userCredits < creditCost) {
       setCreditPurchaseMsg(`Credits kam hain! Chahiye: ${creditCost.toLocaleString('en-IN')} CR`);
       setTimeout(() => setCreditPurchaseMsg(null), 4000);
@@ -387,10 +431,22 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
       startDate: now.toISOString(), endDate: endDate.toISOString(),
       durationHours: days * 24, price: 0, originalPrice: creditCost, isFree: false, grantSource: 'CREDITS'
     };
+    // Deduct from the same credit pools used everywhere else (permanent,
+    // legacy bonus, and active gifted credits). The old path only subtracted
+    // from `credits`, so users could pass the balance check with bonus/gifted
+    // credits but receive an inconsistent account state.
+    const deductedUser = applyDeduction(user, creditCost);
+    if (!deductedUser) {
+      setCreditPurchaseMsg(`Credits kam hain! Chahiye: ${creditCost.toLocaleString('en-IN')} CR`);
+      setTimeout(() => setCreditPurchaseMsg(null), 4000);
+      return;
+    }
+
     const baseUser = {
-      ...user,
-      credits: Math.max(0, (user.credits || 0) - creditCost),
-      isPremium: true, grantedByAdmin: false,
+      ...deductedUser,
+      isPremium: true,
+      subscriptionSource: 'CREDITS',
+      grantedByAdmin: false,
       subscriptionHistory: [histEntry, ...(user.subscriptionHistory || [])],
     };
     const updatedUser = addSubscription(baseUser, newSub as any);
@@ -439,7 +495,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
 
 
   const isPro = tierType === 'BASIC';
-  const isGameEnabled = settings?.isGameEnabled !== false;
 
   const ac = isPro
     ? { color: C.pro, bg: C.proBg, border: C.proBorder, glow: C.proGlow, grad: C.proGrad, pill: 'rgba(34,211,238,0.14)', label: 'PRO', emoji: '⭐' }
@@ -449,7 +504,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
     { id: 'BASIC'   as const, label: 'Pro',     emoji: '⭐', color: C.pro,  bg: C.proBg,  border: C.proBorder,  glow: C.proGlow  },
     { id: 'ULTRA'   as const, label: 'Max',     emoji: '⚡', color: C.max,  bg: C.maxBg,  border: C.maxBorder,  glow: C.maxGlow  },
     ...(packages.length > 0 ? [{ id: 'CREDITS' as const, label: 'Credits', emoji: '🪙', color: C.gold, bg: C.goldBg, border: C.goldBorder, glow: 'rgba(251,191,36,0.18)' }] : []),
-    ...(isGameEnabled ? [{ id: 'EARN' as const, label: 'Earn', emoji: '🎁', color: C.earn, bg: C.earnBg, border: C.earnBorder, glow: 'rgba(52,211,153,0.18)' }] : []),
   ];
 
   const totalDiscount = (() => {
@@ -462,6 +516,23 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
     return Math.min(d, 100);
   })();
 
+  // Cash subscriptions and credit subscriptions are separate payment paths.
+  // The dedicated credit event takes priority when configured; otherwise the
+  // normal discount event also applies to the credit cost of a subscription.
+  const creditDiscountPercent = (() => {
+    const creditEvent = settings?.creditSubDiscountEvent;
+    const discountEvent = creditEvent || event;
+    if (!isDiscountEventLive(discountEvent) || !isDiscountAudienceAllowed(discountEvent, !!isSubscribed)) return 0;
+    return Math.min(100, Math.max(0, Number(discountEvent?.discountPercent) || 0));
+  })();
+
+  const getPlanCreditCost = (plan: any, ultra: boolean) => {
+    const baseCost = getCreditPrice(plan.duration || plan.name || '', ultra, plan, settings);
+    return creditDiscountPercent > 0
+      ? Math.max(0, Math.round(baseCost * (1 - creditDiscountPercent / 100)))
+      : baseCost;
+  };
+
   const defaultBasicFeatures = ['Full MCQs Unlocked', 'Premium Notes', 'Audio Library', 'AI Videos (2D Basic)', 'Team Support'];
   const defaultUltraFeatures = ['Everything in Pro', 'Deep Dive Notes', 'Studio HD Podcast', 'AI Videos (2D + 3D)', 'Competitive Mode 🏆'];
   const featuresList = isPro
@@ -473,7 +544,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
     return null;
   };
 
-  const userCredits = (user.credits || 0) + (user.bonusCredits || 0);
+  const userCredits = getTotalCredits(user);
 
   /* ── Store locked ── */
   if (settings?.isPaymentEnabled === false) {
@@ -564,7 +635,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
           (selectedPlan as any).tier === 'LIFETIME';
         const basePrice = isPro ? selectedPlan.basicPrice : selectedPlan.ultraPrice;
         const finalPrice = totalDiscount > 0 ? Math.round(basePrice * (1 - totalDiscount / 100)) : basePrice;
-        const creditCost = getCreditPrice(selectedPlan.duration || selectedPlan.name || '', !isPro);
+      const creditCost = getPlanCreditCost(selectedPlan, !isPro);
         const hasEnoughCredits = userCredits >= creditCost;
         return (
           <>
@@ -608,28 +679,37 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
                     <ChevronRight size={16} color={C.textDim} />
                   </button>
                   {!isLifetimePlan && (
-                    <button
-                      onClick={() => { setShowPaymentChooser(false); setShowCreditConfirm(true); }}
-                      disabled={!hasEnoughCredits}
-                      className="w-full p-4 rounded-2xl text-left transition-all active:scale-[0.98] disabled:opacity-40 flex items-center gap-3"
-                      style={{
-                        background: hasEnoughCredits ? C.goldBg : C.surfaceHigh,
-                        border: `1.5px solid ${hasEnoughCredits ? C.goldBorder : C.border}`,
-                      }}>
-                      <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 text-xl"
-                        style={{ background: hasEnoughCredits ? 'rgba(251,191,36,0.2)' : C.surfaceHigh }}>🪙</div>
-                      <div className="flex-1">
-                        <p className="font-black text-sm" style={{ color: hasEnoughCredits ? C.gold : C.textMuted }}>
-                          {creditCost.toLocaleString('en-IN')} Credits se Kharido
-                        </p>
-                        <p className="text-[11px] mt-0.5" style={{ color: C.textMuted }}>
-                          {hasEnoughCredits
-                            ? `Balance: ${userCredits.toLocaleString('en-IN')} CR → ${(userCredits - creditCost).toLocaleString('en-IN')} CR`
-                            : `Kum hai — Chahiye: ${creditCost.toLocaleString('en-IN')} CR, Hai: ${userCredits.toLocaleString('en-IN')} CR`}
+                    isCreditSubAllowed ? (
+                      <button
+                        onClick={() => { setShowPaymentChooser(false); setShowCreditConfirm(true); }}
+                        disabled={!hasEnoughCredits}
+                        className="w-full p-4 rounded-2xl text-left transition-all active:scale-[0.98] disabled:opacity-40 flex items-center gap-3"
+                        style={{
+                          background: hasEnoughCredits ? C.goldBg : C.surfaceHigh,
+                          border: `1.5px solid ${hasEnoughCredits ? C.goldBorder : C.border}`,
+                        }}>
+                        <div className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 text-xl"
+                          style={{ background: hasEnoughCredits ? 'rgba(251,191,36,0.2)' : C.surfaceHigh }}>🪙</div>
+                        <div className="flex-1">
+                          <p className="font-black text-sm" style={{ color: hasEnoughCredits ? C.gold : C.textMuted }}>
+                            {creditCost.toLocaleString('en-IN')} Credits se Kharido
+                          </p>
+                          <p className="text-[11px] mt-0.5" style={{ color: C.textMuted }}>
+                            {hasEnoughCredits
+                              ? `Balance: ${userCredits.toLocaleString('en-IN')} CR → ${(userCredits - creditCost).toLocaleString('en-IN')} CR`
+                              : `Kum hai — Chahiye: ${creditCost.toLocaleString('en-IN')} CR, Hai: ${userCredits.toLocaleString('en-IN')} CR`}
+                          </p>
+                        </div>
+                        {hasEnoughCredits && <ChevronRight size={16} color={C.gold} />}
+                      </button>
+                    ) : (
+                      <div className="w-full p-3 rounded-2xl flex items-center gap-2.5 opacity-75 border border-slate-700 bg-slate-900/50">
+                        <span className="text-base">🔒</span>
+                        <p className="text-[11px] text-slate-400 font-medium">
+                          Admin ne credits dwara subscription purchase off kar rakha hai.
                         </p>
                       </div>
-                      {hasEnoughCredits && <ChevronRight size={16} color={C.gold} />}
-                    </button>
+                    )
                   )}
                 </div>
               </div>
@@ -640,7 +720,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
 
       {/* ── CREDIT CONFIRM POPUP ── */}
       {showCreditConfirm && selectedPlan && (() => {
-        const creditCost = getCreditPrice(selectedPlan.duration || selectedPlan.name || '', !isPro);
+        const creditCost = getPlanCreditCost(selectedPlan, !isPro);
         const afterBalance = userCredits - creditCost;
         return (
           <>
@@ -769,7 +849,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
       {/* ══════════ BODY ══════════ */}
       <div className="px-4 pt-5">
         {/* Daily coin claim — always visible */}
-        <DailyClaimCard userId={user.id} user={user} onUpdateUser={onUserUpdate} />
+        <DailyClaimCard userId={user.id} user={user} settings={settings} onUpdateUser={onUserUpdate} />
 
 
         {/* ── HISTORY TAB ── */}
@@ -847,18 +927,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
           );
         })()}
 
-        {/* ── EARN TAB ── */}
-        {tierType === 'EARN' && isGameEnabled && (
-          <div className="animate-in fade-in duration-200">
-            {renderEarnContent ?? (
-              <div className="text-center py-16" style={{ color: C.textMuted }}>
-                <p className="text-4xl mb-3">🎁</p>
-                <p className="font-bold text-sm">Earn content loading...</p>
-              </div>
-            )}
-          </div>
-        )}
-
         {/* ── CREDITS TAB ── */}
         {tierType === 'CREDITS' && packages.length > 0 && (
           <div className="animate-in fade-in duration-200 space-y-3">
@@ -910,7 +978,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
         )}
 
         {/* ── PRO / MAX PLANS ── */}
-        {tierType !== 'EARN' && tierType !== 'CREDITS' && tierType !== 'HISTORY' && (
+        {tierType !== 'CREDITS' && tierType !== 'HISTORY' && (
           <>
             {subscriptionPlans.length === 0 ? (
               <div className="rounded-2xl p-12 text-center" style={{ border: `1.5px dashed ${C.border}` }}>
@@ -1254,6 +1322,18 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, renderEar
                                   </div>
                                   {perMonth && (
                                     <p className="text-[10px] mt-0.5 font-medium" style={{ color: 'rgba(255,255,255,0.35)' }}>≈ ₹{perMonth}/month</p>
+                                  )}
+                                  {isCreditSubAllowed && !isLifetimePlan && (
+                                    <div className="mt-1.5 flex items-center gap-1.5">
+                                      <span className="text-[10px] font-bold text-amber-300 bg-amber-400/10 border border-amber-400/25 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                                         <span>🪙</span> {getPlanCreditCost(plan, !isPro).toLocaleString('en-IN')} CR
+                                         {creditDiscountPercent > 0 && (
+                                           <span className="ml-1 text-[9px] font-black text-emerald-300">
+                                             ({creditDiscountPercent}% OFF)
+                                           </span>
+                                         )}
+                                      </span>
+                                    </div>
                                   )}
                                 </div>
                                 <div className="flex flex-col items-end gap-2 shrink-0">

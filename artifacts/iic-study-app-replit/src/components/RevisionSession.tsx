@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import McqPracticeCard from './McqPracticeCard';
 import { User, SystemSettings, MCQItem } from '../types';
-import { X, BookOpen, Zap, CheckCircle, AlertCircle, ChevronRight, ChevronLeft, SkipForward, Check, RotateCcw, Loader2, Volume2, FileText } from 'lucide-react';
+import { X, BookOpen, Zap, CheckCircle, AlertCircle, ChevronRight, ChevronLeft, SkipForward, Check, RotateCcw, Loader2, Volume2, FileText, List } from 'lucide-react';
 import { getChapterData, saveUserToLive } from '../firebase';
 import { storage } from '../utils/storage';
 import { DEFAULT_SUBJECTS } from '../constants';
@@ -142,6 +142,7 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
     const [selectedOption, setSelectedOption] = useState<number | null>(null);
     const [userAnswers, setUserAnswers] = useState<Record<number, number>>({}); // All selected answers
     const [skipped, setSkipped] = useState<Set<number>>(new Set());
+    const [showQuestionNavigator, setShowQuestionNavigator] = useState(false);
     const [notesRead, setNotesRead] = useState(false); // Track if user read notes
 
     // Start Q&A credit session when review screen opens, stop when it closes
@@ -384,6 +385,21 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                     <h2 className="text-[13px] font-black text-white truncate leading-tight">{subTopic}</h2>
                     <p className="text-[10px] font-bold text-amber-300 uppercase tracking-wide">{chapterTitle} · 📖 Revision Mode</p>
                 </div>
+                {activeTab === 'MCQ' && mcqData.length > 0 && (
+                    <button
+                        type="button"
+                        onClick={() => setShowQuestionNavigator(prev => !prev)}
+                        aria-label={showQuestionNavigator ? 'Hide question switcher' : 'Show question switcher'}
+                        aria-expanded={showQuestionNavigator}
+                        className={`shrink-0 p-2 rounded-xl border transition-all ${
+                            showQuestionNavigator
+                                ? 'bg-white text-indigo-700 border-white'
+                                : 'bg-white/10 text-white border-white/30 hover:bg-white/20'
+                        }`}
+                    >
+                        <List size={18} />
+                    </button>
+                )}
             </div>
 
             {/* TABS */}
@@ -410,6 +426,24 @@ export const RevisionSession: React.FC<Props> = ({ user, settings, chapterId, su
                     {isMcqAvailable ? (readingTimer > 0 ? `Wait (${readingTimer}s)` : 'Quick Practice') : 'Locked'}
                 </button>
             </div>
+
+            {activeTab === 'MCQ' && showQuestionNavigator && mcqData.length > 0 && (
+                <div className="px-4 pt-3 bg-slate-50 border-b border-slate-100">
+                    <div className="max-w-3xl mx-auto">
+                        <McqQuestionNavigator
+                            total={mcqData.length}
+                            currentIndex={currentQIndex}
+                            answers={userAnswers}
+                            skipped={skipped}
+                            onJump={(index) => {
+                                setCurrentQIndex(index);
+                                setSelectedOption(userAnswers[index] ?? null);
+                            }}
+                            className="mb-1"
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* CONTENT AREA */}
             <div className="flex-1 overflow-y-auto bg-slate-50 p-4">

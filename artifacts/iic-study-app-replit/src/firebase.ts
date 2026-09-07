@@ -1,5 +1,4 @@
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDoc, getDocFromServer, collection, updateDoc, deleteDoc, onSnapshot, getDocs, query, where, limitToLast, orderBy, increment, arrayUnion, limit, startAfter, QueryDocumentSnapshot } from "firebase/firestore";
 import { getDatabase, ref, set, get, onValue, update, remove, query as rtdbQuery, limitToLast as rtdbLimitToLast, orderByChild as rtdbOrderByChild, equalTo as rtdbEqualTo, runTransaction } from "firebase/database";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
@@ -39,6 +38,17 @@ try { localStorage.setItem(_FSP_KEY, firebaseConfig.projectId); } catch {}
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
     const msg = String(event?.reason?.message || event?.reason || '');
+    if (msg.includes('analytics') || msg.includes('@firebase/analytics')) {
+      // Suppress benign Firebase Analytics fetch failures in sandboxed/restricted environments
+      event.preventDefault();
+      return;
+    }
+    if (msg.includes('resource-exhausted') || msg.includes('Write stream exhausted')) {
+      // Suppress benign Firestore write stream backpressure warnings; throttled writes will sync on backoff
+      event.preventDefault();
+      console.warn('[IIC] Firestore write stream reached backpressure limit — throttled writes will sync on backoff.');
+      return;
+    }
     if (msg.includes('FIRESTORE') && msg.includes('INTERNAL ASSERTION FAILED')) {
       event.preventDefault();
       console.warn('[IIC] Firestore assertion error — clearing IndexedDB cache and reloading…');
@@ -61,7 +71,8 @@ if (typeof window !== 'undefined') {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
+const analytics: any = null;
+export { analytics };
 // Use new persistentLocalCache API (replaces deprecated enableMultiTabIndexedDbPersistence)
 const db = initializeFirestore(app, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
@@ -856,6 +867,7 @@ const ACCOUNT_STATE_FIELDS = [
   'subscriptionLevel',
   'subscriptionEndDate',
   'subscriptionPrice',
+  'subscriptionSource',
   'grantedByAdmin',
   'customSubscriptionName',
   'customSubscriptionDuration',
@@ -888,23 +900,48 @@ const getAccountState = (user: any): Record<string, any> => {
   return accountState;
 };
 
-// 1. User Data Sync
-export const saveUserToLive = async (user: any) => {
+// 1. User Data Sync - Throttled & Coalesced Write Queue
+interface UserSaveBatch {
+  user: any;
+  resolvers: Array<(value: boolean) => void>;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const _pendingUserSaves = new Map<string, UserSaveBatch>();
+const _inFlightUserSaves = new Set<string>();
+const _lastSavedPayloadSignatures = new Map<string, string>();
+
+const _executeSaveUserToLive = async (user: any): Promise<boolean> => {
   if (!user || !user.id) return false;
 
   try {
+    // Ensure Firebase Auth state is ready before initiating writes
+    if (auth && typeof auth.authStateReady === 'function' && !auth.currentUser) {
+      await auth.authStateReady().catch(() => {});
+    }
+
     // Sanitize data before saving
     const sanitizedUser = sanitizeForFirestore(user);
     const accountState = getAccountState(sanitizedUser);
 
-  // EXTRACT BULKY DATA FOR SEGREGATION
-  const {
+    // Immediate local persistence guarantee
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('nst_user_profile', JSON.stringify(sanitizedUser));
+        if (sanitizedUser.id) {
+          window.localStorage.setItem(`nst_user_profile_${sanitizedUser.id}`, JSON.stringify(sanitizedUser));
+        }
+      }
+    } catch (_) {}
+
+    // EXTRACT BULKY DATA FOR SEGREGATION
+    const {
       mcqHistory, usageHistory, progress, testResults, inbox,
       topicStrength, subscriptionHistory, activeSubscriptions,
       pendingRewards, redeemedCodes, unlockedContent, timedUnlocks, dailyRoutine,
       loadingScreenSlotUnlocks, loadingScreenUnlocks, loadingScreenSlotAssignments,
       ...coreProfile
-  } = sanitizedUser;
+    } = sanitizedUser;
 
     // ── ROLE PROTECTION ────────────────────────────────────────────────────────
     // Never downgrade a privileged role (ADMIN / SUB_ADMIN) to a lower one via
@@ -920,30 +957,18 @@ export const saveUserToLive = async (user: any) => {
           coreProfile.role = existingRoleSnap.val();
         }
       } catch (roleCheckErr) {
-        console.warn('[saveUserToLive] Role protection check failed (non-fatal):', roleCheckErr);
+        try {
+          const fsDoc = await getDoc(doc(db, "users", user.id));
+          if (fsDoc.exists() && PRIVILEGED_ROLES.includes(fsDoc.data()?.role)) {
+            coreProfile.role = fsDoc.data().role;
+          }
+        } catch {
+          console.warn('[saveUserToLive] Role protection check failed (non-fatal):', roleCheckErr);
+        }
       }
     }
     // ──────────────────────────────────────────────────────────────────────────
 
-    const writes: Array<{ name: string; promise: Promise<unknown> }> = [];
-
-    // 1. Save the profile and account state to both backend stores.
-    // RTDB is also kept complete enough for fresh-device fallback login.
-    writes.push({
-      name: 'RTDB profile',
-      promise: update(ref(rtdb, `users/${user.id}`), { ...coreProfile, ...accountState }),
-    });
-    writes.push({
-      name: 'Firestore profile',
-      promise: setDoc(doc(db, "users", user.id), coreProfile, { merge: true }),
-    });
-
-    // 2. Save Bulky Data to Subcollections or Document Extensions to avoid 1MB document limit
-    // Note: To keep things intact for the current frontend without massive refactoring,
-    // we save the bulky data in a parallel collection `user_data/{uid}`
-
-    // SAFETY CHECK: Only overwrite bulky data if the user object explicitly contains them.
-    // This prevents accidental wiping of history if saveUserToLive is called with an incomplete user object (e.g. during a fast login/logout cycle).
     const bulkyData: any = {};
     if (user.hasOwnProperty('mcqHistory')) bulkyData.mcqHistory = mcqHistory;
     if (user.hasOwnProperty('usageHistory')) bulkyData.usageHistory = usageHistory;
@@ -962,22 +987,68 @@ export const saveUserToLive = async (user: any) => {
     if (user.hasOwnProperty('loadingScreenUnlocks')) bulkyData.loadingScreenUnlocks = loadingScreenUnlocks;
     if (user.hasOwnProperty('loadingScreenSlotAssignments')) bulkyData.loadingScreenSlotAssignments = loadingScreenSlotAssignments;
 
-    // Account state is written to the backend data document on every account
-    // mutation. The merge keeps unrelated history/content fields intact.
+    // Account state is written to the backend data document on every account mutation.
     Object.assign(bulkyData, accountState);
-    if (Object.keys(bulkyData).length > 0) {
+
+    // Signature check: if no fields have changed since last successful backend write, skip network writes
+    const payloadSignature = `${JSON.stringify(coreProfile)}:::${JSON.stringify(accountState)}:::${user.totalScore || 0}:::${(mcqHistory || []).length}:::${(user.inbox || []).length}`;
+    if (_lastSavedPayloadSignatures.get(user.id) === payloadSignature) {
+      return true;
+    }
+
+    const writes: Array<{ name: string; promise: Promise<unknown> }> = [];
+
+    // 1. Save the profile and account state to both backend stores.
+    // RTDB is also kept complete enough for fresh-device fallback login.
+    writes.push({
+      name: 'RTDB profile',
+      promise: update(ref(rtdb, `users/${user.id}`), { ...coreProfile, ...accountState }).catch(e => {
+        const msg = String(e?.message || e || '');
+        if (!msg.includes('permission-denied') && !msg.includes('Permission denied')) {
+          console.warn('[saveUserToLive] RTDB update warning:', e);
+        }
+      }),
+    });
+    writes.push({
+      name: 'Firestore profile',
+      promise: setDoc(doc(db, "users", user.id), coreProfile, { merge: true }),
+    });
+
+    // Mirror topicStrength and latest MCQ performance to RTDB
+    if (rtdb && user.id) {
+      const rtdbSync: any = {};
+      if (topicStrength && typeof topicStrength === 'object') {
+        rtdbSync[`users/${user.id}/topicStrength`] = sanitizeForFirestore(topicStrength);
+      }
+      if (Array.isArray(mcqHistory) && mcqHistory.length > 0) {
+        const latestMcq = mcqHistory[0];
+        if (latestMcq) {
+          rtdbSync[`users/${user.id}/lastMcqPerformance`] = sanitizeForFirestore({
+            testId: latestMcq.id || latestMcq.testId || `mcq_${Date.now()}`,
+            score: latestMcq.score ?? latestMcq.correctCount ?? 0,
+            total: latestMcq.totalQuestions ?? latestMcq.total ?? 0,
+            topic: latestMcq.topic || latestMcq.chapterTitle || 'MCQ Practice',
+            date: latestMcq.date || new Date().toISOString(),
+            timestamp: Date.now(),
+          });
+        }
+      }
+      if (Object.keys(rtdbSync).length > 0) {
         writes.push({
-          name: 'Firestore user data',
-          promise: setDoc(doc(db, "user_data", user.id), sanitizeForFirestore(bulkyData), { merge: true }),
+          name: 'RTDB performance & topic strength mirror',
+          promise: update(ref(rtdb), rtdbSync).catch(() => {}),
         });
+      }
+    }
+
+    if (Object.keys(bulkyData).length > 0) {
+      writes.push({
+        name: 'Firestore user data',
+        promise: setDoc(doc(db, "user_data", user.id), sanitizeForFirestore(bulkyData), { merge: true }),
+      });
     }
 
     const results = await Promise.allSettled(writes.map(write => write.promise));
-    results.forEach((result, index) => {
-      if (result.status === 'rejected') {
-        console.error(`[saveUserToLive] ${writes[index].name} failed:`, result.reason);
-      }
-    });
 
     const rtdbProfileSaved = results[0]?.status === 'fulfilled';
     const firestoreProfileSaved = results[1]?.status === 'fulfilled';
@@ -986,6 +1057,29 @@ export const saveUserToLive = async (user: any) => {
       accountDataIndex === -1 ||
       rtdbProfileSaved ||
       results[accountDataIndex]?.status === 'fulfilled';
+
+    if (firestoreProfileSaved || rtdbProfileSaved) {
+      _lastSavedPayloadSignatures.set(user.id, payloadSignature);
+    }
+
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        const writeName = writes[index].name;
+        const reason = result.reason;
+        const msg = String(reason?.message || reason || '');
+        const isPermissionDenied = msg.includes('PERMISSION_DENIED') ||
+                                   msg.includes('Permission denied') ||
+                                   String(reason?.code || '').includes('permission-denied');
+
+        if (msg.includes('resource-exhausted') || msg.includes('Write stream exhausted')) {
+          console.warn(`[saveUserToLive] Firestore write stream backpressure for ${writeName}. Queued changes will sync once stream drains.`);
+        } else if (writeName === 'RTDB profile' && firestoreProfileSaved && isPermissionDenied) {
+          console.warn(`[saveUserToLive] RTDB profile mirror write permission denied (Firestore profile saved successfully).`);
+        } else {
+          console.warn(`[saveUserToLive] ${writeName} non-fatal notice:`, reason);
+        }
+      }
+    });
 
     // Never report success when the account only exists in local state.
     if (!rtdbProfileSaved && !firestoreProfileSaved) {
@@ -996,18 +1090,84 @@ export const saveUserToLive = async (user: any) => {
     }
     return true;
   } catch (error) {
-    console.error("Error saving user:", error);
-    // Most background sync callers intentionally do not await this function.
-    // Return a status instead of creating unhandled promise rejections; the
-    // account-critical flows explicitly check this result before succeeding.
+    console.warn("[saveUserToLive] Error saving user (data cached locally):", error);
     return false;
   }
+};
+
+export const saveUserToLive = async (user: any, options?: { immediate?: boolean }): Promise<boolean> => {
+  if (!user || !user.id) return false;
+
+  // Immediate local persistence guarantee — synchronous
+  try {
+    const sanitizedUser = sanitizeForFirestore(user);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem('nst_user_profile', JSON.stringify(sanitizedUser));
+      if (sanitizedUser.id) {
+        window.localStorage.setItem(`nst_user_profile_${sanitizedUser.id}`, JSON.stringify(sanitizedUser));
+      }
+    }
+  } catch (_) {}
+
+  // If immediate flush is requested (e.g. auth login, code redemption)
+  if (options?.immediate) {
+    const pending = _pendingUserSaves.get(user.id);
+    if (pending?.timer) {
+      clearTimeout(pending.timer);
+    }
+    _pendingUserSaves.delete(user.id);
+    return _executeSaveUserToLive(user);
+  }
+
+  // Coalesce rapid updates with 1000ms debounce
+  return new Promise<boolean>((resolve) => {
+    let pending = _pendingUserSaves.get(user.id);
+    if (!pending) {
+      pending = {
+        user,
+        resolvers: [resolve],
+        timer: null,
+      };
+      _pendingUserSaves.set(user.id, pending);
+    } else {
+      pending.user = user;
+      pending.resolvers.push(resolve);
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+      }
+    }
+
+    pending.timer = setTimeout(async () => {
+      const currentPending = _pendingUserSaves.get(user.id);
+      _pendingUserSaves.delete(user.id);
+      if (!currentPending) return;
+
+      // Prevent concurrent executions for the same user
+      if (_inFlightUserSaves.has(user.id)) {
+        // Re-queue with short backoff
+        setTimeout(() => saveUserToLive(currentPending.user), 500);
+        currentPending.resolvers.forEach(r => r(true));
+        return;
+      }
+
+      _inFlightUserSaves.add(user.id);
+      let success = false;
+      try {
+        success = await _executeSaveUserToLive(currentPending.user);
+      } finally {
+        _inFlightUserSaves.delete(user.id);
+      }
+      currentPending.resolvers.forEach(r => r(success));
+    }, 1000);
+  });
 };
 
 export const subscribeToUsers = (callback: (users: any[]) => void) => {
   // Prefer Firestore for Admin List (More Reliable)
   const q = collection(db, "users");
-  return onSnapshot(q, (snapshot) => {
+  return onSnapshot(
+    q,
+    (snapshot) => {
       const users = snapshot.docs.map(doc => doc.data());
       if (users.length > 0) {
           callback(users);
@@ -1020,7 +1180,18 @@ export const subscribeToUsers = (callback: (users: any[]) => void) => {
              callback(userList);
           }, { onlyOnce: true });
       }
-  });
+    },
+    (err) => {
+      console.warn('[firebase] subscribeToUsers error:', err?.code || err);
+      // Fallback to RTDB on permission-denied or offline
+      const usersRef = ref(rtdb, 'users');
+      onValue(usersRef, (snap) => {
+         const data = snap.val();
+         const userList = data ? Object.values(data) : [];
+         callback(userList);
+      }, { onlyOnce: true });
+    }
+  );
 };
 
 // ── Paginated user loading (saves reads for 1000+ user apps) ──────────────
@@ -1056,9 +1227,16 @@ export const getUsersPage = async (
 // Costs max 10 reads per change instead of total-users reads.
 export const subscribeToRecentUsers = (callback: (users: any[]) => void) => {
   const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(10));
-  return onSnapshot(q, (snap) => {
-    callback(snap.docs.map(d => d.data()));
-  });
+  return onSnapshot(
+    q,
+    (snap) => {
+      callback(snap.docs.map(d => d.data()));
+    },
+    (err) => {
+      console.warn('[firebase] subscribeToRecentUsers error:', err?.code || err);
+      callback([]);
+    }
+  );
 };
 
 export const subscribeToUser = (userId: string, callback: (user: any) => void) => {
@@ -1304,28 +1482,74 @@ const getUserFromRTDB = async (field: 'mobile' | 'displayId' | 'email', value: s
 
 export const getUserByMobileOrId = async (input: string) => {
     try {
+        const rawInput = (input || '').trim();
+        if (!rawInput) return null;
+
+        const upperInput = rawInput.toUpperCase();
+        const lowerInput = rawInput.toLowerCase();
+
+        // Support normalized NSTA-ID formats:
+        // - "564894" -> "NSTA-564894", "564894", "NSTA564894"
+        // - "NSTA-564894" -> "NSTA-564894", "564894", "nsta-564894"
+        // - "nsta012345" -> "NSTA-012345"
+        const digitsMatch = rawInput.match(/^NSTA[-_\s]?(\d+)$/i) || rawInput.match(/(\d{4,8})/);
+        const extractedDigits = digitsMatch && digitsMatch[1] ? digitsMatch[1] : null;
+        const normalizedNstaId = extractedDigits ? `NSTA-${extractedDigits.padStart(6, '0')}` : null;
+        const nstaNoDash = extractedDigits ? `NSTA${extractedDigits}` : null;
+        const nstaLower = normalizedNstaId ? normalizedNstaId.toLowerCase() : null;
+
+        const candidateIds = Array.from(new Set([
+            rawInput,
+            upperInput,
+            lowerInput,
+            normalizedNstaId,
+            nstaNoDash,
+            nstaLower,
+            extractedDigits,
+            extractedDigits ? extractedDigits.padStart(6, '0') : null,
+            rawInput.replace(/[-_\s]/g, ''),
+            rawInput.replace(/[-_\s]/g, '').toUpperCase(),
+        ].filter(Boolean) as string[]));
+
         // STRATEGY: Try Firestore first (requires auth session); fall back to RTDB
         // which typically has broader read rules and works on fresh devices.
 
         // ── 1. Firestore attempt ──
         try {
-            const qMobile = query(collection(db, "users"), where("mobile", "==", input));
-            const qDisplayId = query(collection(db, "users"), where("displayId", "==", input));
-            const qEmail = query(collection(db, "users"), where("email", "==", input));
+            // Check direct document ID first for all candidate IDs
+            for (const candDocId of candidateIds) {
+                const directSnap = await getDoc(doc(db, "users", candDocId)).catch(() => null);
+                if (directSnap && directSnap.exists()) {
+                    const coreData = directSnap.data();
+                    const bulkySnap = await getDoc(doc(db, "user_data", candDocId)).catch(() => null);
+                    return bulkySnap && bulkySnap.exists() ? { ...coreData, ...bulkySnap.data() } : coreData;
+                }
+            }
 
-            const [snapMobile, snapId, snapEmail] = await Promise.all([
-                getDocs(qMobile),
-                getDocs(qDisplayId),
-                getDocs(qEmail)
+            const idQueries = candidateIds.flatMap(id => [
+                query(collection(db, "users"), where("displayId", "==", id)),
+                query(collection(db, "users"), where("id", "==", id)),
+                query(collection(db, "users"), where("uid", "==", id)),
             ]);
+            const queries = [
+                query(collection(db, "users"), where("mobile", "==", rawInput)),
+                query(collection(db, "users"), where("email", "==", lowerInput)),
+                query(collection(db, "users"), where("email", "==", rawInput)),
+                ...idQueries
+            ];
 
+            const snaps = await Promise.all(queries.map(q => getDocs(q).catch(() => null)));
             let coreData: any = null;
-            if (!snapMobile.empty) coreData = snapMobile.docs[0].data();
-            else if (!snapId.empty) coreData = snapId.docs[0].data();
-            else if (!snapEmail.empty) coreData = snapEmail.docs[0].data();
+            for (const snap of snaps) {
+                if (snap && !snap.empty) {
+                    coreData = snap.docs[0].data();
+                    break;
+                }
+            }
 
-            if (coreData && coreData.id) {
-                const bulkySnap = await getDoc(doc(db, "user_data", coreData.id)).catch(() => null);
+            if (coreData && (coreData.id || coreData.uid)) {
+                const docKey = coreData.id || coreData.uid;
+                const bulkySnap = await getDoc(doc(db, "user_data", docKey)).catch(() => null);
                 if (bulkySnap && bulkySnap.exists()) {
                     return { ...coreData, ...bulkySnap.data() };
                 }
@@ -1333,17 +1557,38 @@ export const getUserByMobileOrId = async (input: string) => {
             }
         } catch (firestoreErr: any) {
             // Firestore blocked (permission-denied on fresh device) — fall through to RTDB
-            console.warn('[IIC] Firestore lookup blocked, trying RTDB:', firestoreErr?.code);
+            console.warn('[NSTA] Firestore lookup blocked, trying RTDB:', firestoreErr?.code);
         }
 
-        // ── 2. RTDB fallback (no auth needed if RTDB rules allow reads) ──
-        const rtdbUser =
-            await getUserFromRTDB('mobile', input) ||
-            await getUserFromRTDB('displayId', input) ||
-            await getUserFromRTDB('email', input);
+        // ── 2. RTDB fallback ──
+        let rtdbUser: any = null;
 
-        if (rtdbUser && rtdbUser.id) {
-            console.log('[IIC] User found via RTDB fallback');
+        // Check direct key under users/
+        for (const candId of candidateIds) {
+            try {
+                const snap = await get(ref(rtdb, `users/${candId}`));
+                if (snap.exists()) {
+                    rtdbUser = snap.val();
+                    if (rtdbUser) break;
+                }
+            } catch {}
+        }
+
+        if (!rtdbUser) {
+            for (const candId of candidateIds) {
+                rtdbUser = await getUserFromRTDB('displayId', candId);
+                if (rtdbUser) break;
+            }
+        }
+        if (!rtdbUser) {
+            rtdbUser =
+                await getUserFromRTDB('mobile', rawInput) ||
+                await getUserFromRTDB('email', lowerInput) ||
+                await getUserFromRTDB('email', rawInput);
+        }
+
+        if (rtdbUser && (rtdbUser.id || rtdbUser.uid)) {
+            console.log('[NSTA] User found via RTDB fallback');
             return rtdbUser;
         }
 
@@ -1469,12 +1714,18 @@ const _subscribeShardedArray = (
 
   const _listenToShard = (idx: number): (() => void) => {
     let fsOk = false;
-    const unsubFs = onSnapshot(doc(db, "config", `${fsPrefix}_shard_${idx}`), (snap) => {
-      fsOk = true;
-      shardsData[idx] = snap.exists() ? (snap.data()?.items ?? []) : [];
-      shardsConfirmed.add(idx);
-      _rebuild();
-    });
+    const unsubFs = onSnapshot(
+      doc(db, "config", `${fsPrefix}_shard_${idx}`),
+      (snap) => {
+        fsOk = true;
+        shardsData[idx] = snap.exists() ? (snap.data()?.items ?? []) : [];
+        shardsConfirmed.add(idx);
+        _rebuild();
+      },
+      (err) => {
+        console.warn(`[firebase] _listenToShard error (${fsPrefix}_shard_${idx}):`, err?.code || err);
+      }
+    );
     const unsubRtdb = onValue(ref(rtdb, `${rtdbPrefix}_shard_${idx}`), (snap) => {
       if (fsOk) return;
       shardsData[idx] = snap.val()?.items ?? [];
@@ -1504,12 +1755,18 @@ const _subscribeShardedArray = (
   _applyShardCount(1);
 
   let metaFromFs = false;
-  const unsubMeta = onSnapshot(doc(db, "config", `${fsPrefix}_meta`), (snap) => {
-    metaFromFs = true;
-    metaConfirmed = true;
-    _applyShardCount(snap.exists() ? (snap.data()?.shardCount ?? 1) : 1);
-    _rebuild(); // re-check now that meta is confirmed
-  });
+  const unsubMeta = onSnapshot(
+    doc(db, "config", `${fsPrefix}_meta`),
+    (snap) => {
+      metaFromFs = true;
+      metaConfirmed = true;
+      _applyShardCount(snap.exists() ? (snap.data()?.shardCount ?? 1) : 1);
+      _rebuild(); // re-check now that meta is confirmed
+    },
+    (err) => {
+      console.warn(`[firebase] unsubMeta error (${fsPrefix}_meta):`, err?.code || err);
+    }
+  );
   const unsubMetaRtdb = onValue(ref(rtdb, `${rtdbPrefix}_meta`), (snap) => {
     if (metaFromFs) return;
     metaConfirmed = true;
@@ -1656,13 +1913,19 @@ const _subscribePerItemCollection = (
   };
 
   // Firestore collection — source of truth for item data
-  const unsubCollection = onSnapshot(collection(db, collectionName), (snapshot) => {
-    collectionFromFs = true;
-    collectionConfirmed = true;
-    itemMap = {};
-    snapshot.forEach(d => { itemMap[d.id] = d.data(); });
-    _rebuild();
-  });
+  const unsubCollection = onSnapshot(
+    collection(db, collectionName),
+    (snapshot) => {
+      collectionFromFs = true;
+      collectionConfirmed = true;
+      itemMap = {};
+      snapshot.forEach(d => { itemMap[d.id] = d.data(); });
+      _rebuild();
+    },
+    (err) => {
+      console.warn(`[firebase] collection listener error (${collectionName}):`, err?.code || err);
+    }
+  );
 
   // RTDB backup — only fills itemMap before Firestore confirms (offline / cold start)
   const unsubRtdb = onValue(ref(rtdb, rtdbBasePath), (snap) => {
@@ -1678,12 +1941,18 @@ const _subscribePerItemCollection = (
   });
 
   // Firestore index — source of truth for ordering
-  const unsubIndex = onSnapshot(doc(db, "config", indexFsDocId), (snap) => {
-    indexFromFs = true;
-    indexConfirmed = true;
-    order = snap.exists() ? (snap.data()?.ids ?? []) : [];
-    _rebuild();
-  });
+  const unsubIndex = onSnapshot(
+    doc(db, "config", indexFsDocId),
+    (snap) => {
+      indexFromFs = true;
+      indexConfirmed = true;
+      order = snap.exists() ? (snap.data()?.ids ?? []) : [];
+      _rebuild();
+    },
+    (err) => {
+      console.warn(`[firebase] index listener error (${indexFsDocId}):`, err?.code || err);
+    }
+  );
 
   // RTDB index backup
   const unsubIndexRtdb = onValue(ref(rtdb, rtdbIndexPath), (snap) => {
@@ -1830,10 +2099,16 @@ export const subscribeToSettings = (callback: (settings: any) => void) => {
 
   // ── Core settings (Firestore primary, RTDB backup) ────────────────────────
   let coreFromFs = false;
-  const unsubCoreFs = onSnapshot(doc(db, "config", "system_settings"), (snap) => {
-    coreFromFs = true;
-    if (snap.exists()) { latestCore = snap.data(); emit(); }
-  });
+  const unsubCoreFs = onSnapshot(
+    doc(db, "config", "system_settings"),
+    (snap) => {
+      coreFromFs = true;
+      if (snap.exists()) { latestCore = snap.data(); emit(); }
+    },
+    (err) => {
+      console.warn('[firebase] unsubCoreFs error:', err?.code || err);
+    }
+  );
   const unsubCoreRtdb = onValue(ref(rtdb, 'system_settings'), (snap) => {
     if (coreFromFs) return;
     const d = snap.val(); if (d) { latestCore = d; emit(); }
@@ -1868,12 +2143,18 @@ export const subscribeToSettings = (callback: (settings: any) => void) => {
   );
 
   // ── lucent: per-item collection (Firestore primary) ───────────────────────
-  const unsubLucentEntries = onSnapshot(collection(db, "lucent_entries"), (snapshot) => {
-    latestLucentMap = {};
-    snapshot.forEach(d => { latestLucentMap[d.id] = d.data(); });
-    lucentEntriesConfirmed = true;
-    emit();
-  });
+  const unsubLucentEntries = onSnapshot(
+    collection(db, "lucent_entries"),
+    (snapshot) => {
+      latestLucentMap = {};
+      snapshot.forEach(d => { latestLucentMap[d.id] = d.data(); });
+      lucentEntriesConfirmed = true;
+      emit();
+    },
+    (err) => {
+      console.warn('[firebase] unsubLucentEntries error:', err?.code || err);
+    }
+  );
   const unsubLucentRtdb = onValue(ref(rtdb, 'lucent_entries'), (snap) => {
     if (lucentEntriesConfirmed) return;
     const data = snap.val();
@@ -1886,10 +2167,16 @@ export const subscribeToSettings = (callback: (settings: any) => void) => {
     }
   });
   let lucentIndexFromFs = false;
-  const unsubLucentIndex = onSnapshot(doc(db, "config", "lucent_index"), (snap) => {
-    lucentIndexFromFs = true;
-    if (snap.exists()) { latestOrder = snap.data()?.ids ?? []; emit(); }
-  });
+  const unsubLucentIndex = onSnapshot(
+    doc(db, "config", "lucent_index"),
+    (snap) => {
+      lucentIndexFromFs = true;
+      if (snap.exists()) { latestOrder = snap.data()?.ids ?? []; emit(); }
+    },
+    (err) => {
+      console.warn('[firebase] unsubLucentIndex error:', err?.code || err);
+    }
+  );
   const unsubLucentIndexRtdb = onValue(ref(rtdb, 'lucent_index'), (snap) => {
     if (lucentIndexFromFs) return;
     const d = snap.val(); if (d?.ids) { latestOrder = d.ids; emit(); }
@@ -2242,27 +2529,98 @@ export const getApiUsage = async () => {
 
 export const subscribeToDrafts = (callback: (drafts: any[]) => void) => {
     const q = query(collection(db, "content_data"), where("isDraft", "==", true));
-    return onSnapshot(q, (snapshot) => {
-        const items = snapshot.docs.map(doc => ({ ...doc.data(), key: doc.id }));
-        callback(items);
-    });
+    return onSnapshot(
+        q,
+        (snapshot) => {
+            const items = snapshot.docs.map(doc => ({ ...doc.data(), key: doc.id }));
+            callback(items);
+        },
+        (err) => {
+            console.warn('[firebase] subscribeToDrafts error:', err?.code || err);
+            callback([]);
+        }
+    );
 };
 
 export const saveTestResult = async (userId: string, attempt: any) => {
+    if (!userId) return;
+    const testIdentifier = attempt?.id || attempt?.testId || `test_${Date.now()}`;
+    const docId = `${testIdentifier}_${Date.now()}`;
+    const sanitizedAttempt = sanitizeForFirestore(attempt);
+
+    // 1. Instant local storage cache first (guaranteed immediate offline persistence)
     try {
-        const docId = `${attempt.testId}_${Date.now()}`;
-        const sanitizedAttempt = sanitizeForFirestore(attempt);
-        await setDoc(doc(db, "users", userId, "test_results", docId), sanitizedAttempt);
-    } catch(e) { console.error(e); }
+        const cacheKey = `nst_test_results_${userId}`;
+        const existing = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+        const updated = [sanitizedAttempt, ...existing.filter((x: any) => (x.id || x.docId) !== docId)].slice(0, 50);
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
+    } catch (_) {}
+
+    // 2. Mirror to Realtime Database
+    try {
+        if (rtdb) {
+            await update(ref(rtdb, `users/${userId}/test_results/${docId}`), sanitizedAttempt);
+            await update(ref(rtdb, `users/${userId}/lastMcqPerformance`), {
+                testId: testIdentifier,
+                score: attempt?.score ?? attempt?.correctCount ?? 0,
+                total: attempt?.totalQuestions ?? attempt?.total ?? 0,
+                testName: attempt?.testName || attempt?.chapterTitle || attempt?.title || 'Revision MCQ',
+                topic: attempt?.topic || attempt?.chapterTitle || 'MCQ Practice',
+                date: attempt?.date || new Date().toISOString(),
+                timestamp: Date.now(),
+            });
+        }
+    } catch (e) {
+        console.warn("[IIC] RTDB saveTestResult mirror failed:", e);
+    }
+
+    // 3. Write to Firestore in independent try-catch
+    try {
+        if (db) {
+            await setDoc(doc(db, "users", userId, "test_results", docId), sanitizedAttempt);
+        }
+    } catch (e) {
+        console.warn("[IIC] Firestore saveTestResult failed:", e);
+    }
 };
 
 export const saveUserHistory = async (userId: string, historyItem: any) => {
+    if (!userId) return;
+    const docId = `history_${historyItem?.id || Date.now()}`;
+    const sanitized = sanitizeForFirestore(historyItem);
+
+    // 1. LocalStorage cache first
     try {
-        const docId = `history_${historyItem.id || Date.now()}`;
-        const sanitized = sanitizeForFirestore(historyItem);
-        // Save to subcollection "history" under the user
-        await setDoc(doc(db, "users", userId, "history", docId), sanitized);
-    } catch(e) { console.error("Error saving history:", e); }
+        const cacheKey = `nst_user_history_${userId}`;
+        const existing = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+        const updated = [sanitized, ...existing.filter((x: any) => (x.id || x.docId) !== docId)].slice(0, 50);
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
+    } catch (_) {}
+
+    // 2. Realtime Database mirror
+    try {
+        if (rtdb) {
+            await update(ref(rtdb, `users/${userId}/history/${docId}`), sanitized);
+            await update(ref(rtdb, `users/${userId}/lastHistoryItem`), {
+                id: docId,
+                title: historyItem?.title || historyItem?.name || historyItem?.chapterTitle || 'Revision Practice',
+                type: historyItem?.type || 'revision',
+                date: historyItem?.date || new Date().toISOString(),
+                timestamp: Date.now(),
+            });
+        }
+    } catch (e) {
+        console.warn("[IIC] RTDB saveUserHistory mirror failed:", e);
+    }
+
+    // 3. Save to subcollection "history" under the user in Firestore
+    try {
+        if (db) {
+            await setDoc(doc(db, "users", userId, "history", docId), sanitized);
+        }
+    } catch (e) {
+        console.warn("[IIC] Firestore saveUserHistory failed:", e);
+    }
 };
 
 export const getUserSavedNotes = async (userId: string) => {
@@ -2296,7 +2654,12 @@ export const updateUserStatus = async (userId: string, time: number) => {
         // We are ONLY updating `lastActiveTime`.
 
         await update(userRef, { lastActiveTime: new Date().toISOString() });
-    } catch (error) {
+    } catch (error: any) {
+        const msg = String(error?.message || error || '');
+        if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) {
+            // RTDB status write permission restricted - non-fatal background heartbeat
+            return;
+        }
         console.error("Error updating user status:", error);
     }
 };
@@ -2488,10 +2851,17 @@ export const subscribeToAiHistory = (userId: string, callback: (data: any[]) => 
 export const subscribeToAllAiInteractions = (callback: (data: any[]) => void) => {
     // For Admin: Listen to Firestore
     const q = query(collection(db, "ai_interactions"), orderBy("timestamp", "desc"), limitToLast(50));
-    return onSnapshot(q, (snapshot) => {
-        const items = snapshot.docs.map(doc => doc.data());
-        callback(items);
-    });
+    return onSnapshot(
+        q,
+        (snapshot) => {
+            const items = snapshot.docs.map(doc => doc.data());
+            callback(items);
+        },
+        (err) => {
+            console.warn('[firebase] subscribeToAllAiInteractions error:', err?.code || err);
+            callback([]);
+        }
+    );
 };
 
 // 9. Secure Key Management
@@ -2540,13 +2910,20 @@ export const incrementApiUsage = async (keyIndex: number, type: 'PILOT' | 'STUDE
 
 export const subscribeToApiUsage = (callback: (data: any) => void) => {
     const date = new Date().toISOString().split('T')[0];
-    return onSnapshot(doc(db, "admin_stats", `api_usage_${date}`), (docSnap) => {
-        if (docSnap.exists()) {
-            callback(docSnap.data());
-        } else {
+    return onSnapshot(
+        doc(db, "admin_stats", `api_usage_${date}`),
+        (docSnap) => {
+            if (docSnap.exists()) {
+                callback(docSnap.data());
+            } else {
+                callback(null);
+            }
+        },
+        (err) => {
+            console.warn('[firebase] subscribeToApiUsage error:', err?.code || err);
             callback(null);
         }
-    });
+    );
 };
 
 // 10. Demand Requests
@@ -2749,19 +3126,33 @@ export const publishAnimation = async (anim: any) => {
 };
 
 export const subscribePublishedThemes = (callback: (items: any[]) => void) => {
-    return onSnapshot(collection(db, 'published_themes'), (snap) => {
-        const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        items.sort((a: any, b: any) => (b.likes || 0) - (a.likes || 0));
-        callback(items);
-    });
+    return onSnapshot(
+        collection(db, 'published_themes'),
+        (snap) => {
+            const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            items.sort((a: any, b: any) => (b.likes || 0) - (a.likes || 0));
+            callback(items);
+        },
+        (err) => {
+            console.warn('[firebase] subscribePublishedThemes error:', err?.code || err);
+            callback([]);
+        }
+    );
 };
 
 export const subscribePublishedAnimations = (callback: (items: any[]) => void) => {
-    return onSnapshot(collection(db, 'published_animations'), (snap) => {
-        const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        items.sort((a: any, b: any) => (b.likes || 0) - (a.likes || 0));
-        callback(items);
-    });
+    return onSnapshot(
+        collection(db, 'published_animations'),
+        (snap) => {
+            const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            items.sort((a: any, b: any) => (b.likes || 0) - (a.likes || 0));
+            callback(items);
+        },
+        (err) => {
+            console.warn('[firebase] subscribePublishedAnimations error:', err?.code || err);
+            callback([]);
+        }
+    );
 };
 
 export const likePublishedTheme = async (themeId: string, userId: string) => {

@@ -21,7 +21,7 @@ import { inlineMd, parseMcqQuestion } from '../utils/mcqRender';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import McqPracticeCard from './McqPracticeCard';
 import McqQuestionNavigator from './McqQuestionNavigator';
-import { deferStudyCoins } from '../utils/studyRewards';
+import { deferMcqCreditsFromXp } from '../utils/studyRewards';
 import { McqAnalysisOverlay } from './McqAnalysisOverlay';
 
 interface Props {
@@ -184,9 +184,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
           sessionRevealPtsRef.current += pts;
           showMcqScore(pts);
           const _routineOn = loadRoutineData(user.id).enabled;
-          const _coinMult  = _routineOn ? (1 / 6) : (1 / 8);
-          const _coinEarned = Math.max(1, Math.floor(pts * _coinMult));
-          deferStudyCoins(user.id, _coinEarned);
+          deferMcqCreditsFromXp(user.id, pts, _routineOn);
           const updated = { ...user, totalScore: (user.totalScore || 0) + pts };
           onUpdateUser(updated);
           saveUserToLive(updated);
@@ -405,9 +403,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
         showMcqScore(pts);
         if (onUpdateUser) {
           const _routineOn  = loadRoutineData(user.id).enabled;
-          const _coinMult   = _routineOn ? (1 / 6) : (1 / 8);
-          const _coinEarned = Math.max(1, Math.floor(pts * _coinMult));
-          deferStudyCoins(user.id, _coinEarned);
+          deferMcqCreditsFromXp(user.id, pts, _routineOn);
           const updated = { ...user, totalScore: (user.totalScore || 0) + pts };
           onUpdateUser(updated);
           saveUserToLive(updated);
@@ -1212,9 +1208,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
                           showMcqScore(pts);
                           if (onUpdateUser) {
                             const _routineOn  = loadRoutineData(user.id).enabled;
-                            const _coinMult   = _routineOn ? (1 / 6) : (1 / 8);
-                            const _coinEarned = Math.max(1, Math.floor(pts * _coinMult));
-                            deferStudyCoins(user.id, _coinEarned);
+                            deferMcqCreditsFromXp(user.id, pts, _routineOn);
                             const updated = { ...user, totalScore: (user.totalScore || 0) + pts };
                             onUpdateUser(updated);
                             saveUserToLive(updated);

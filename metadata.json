@@ -1,0 +1,8 @@
+{
+  "name": "Remix 032026",
+  "description": "NSTA - Comprehensive learning platform with syllabus, notes, audio studio, MCQs, and student progress tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
