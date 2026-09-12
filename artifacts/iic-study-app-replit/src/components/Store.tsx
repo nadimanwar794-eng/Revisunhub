@@ -50,7 +50,7 @@ interface Props {
   initialTier?: 'FREE' | 'SUBSCRIPTION' | 'CREDITS' | 'DIAMONDS' | 'EXCHANGE' | 'HISTORY';
 }
 
-/* ─── Fixed color palette ─── */
+/* ─── Fixed Color Palette ─── */
 const C = {
   bg:           '#07070e',
   surface:      '#0f0f1a',
@@ -97,6 +97,46 @@ const C = {
   diamondBorder:'rgba(56,189,248,0.35)',
   diamondGlow:  'rgba(56,189,248,0.25)',
 };
+
+/* ─── 4 Complete Credit Pass Tiers Setup ─── */
+const CREDIT_PASS_TIERS = [
+  {
+    id: 'credit_pass_starter',
+    name: 'Starter Credit Pass',
+    dailyCredits: 10,
+    badge: 'STARTER',
+    icon: '🪙',
+    scoreMultiplier: 1.1,
+    desc: 'Daily revision tests aur practice ke liye basic coin pass'
+  },
+  {
+    id: 'credit_pass_active',
+    name: 'Active Learner Pass',
+    dailyCredits: 20,
+    badge: 'POPULAR',
+    icon: '⚡',
+    scoreMultiplier: 1.25,
+    desc: 'Regular tests aur daily questions unlock karne ke liye'
+  },
+  {
+    id: 'credit_pass_pro',
+    name: 'Pro Study Pass',
+    dailyCredits: 30,
+    badge: 'BEST VALUE',
+    icon: '🌟',
+    scoreMultiplier: 1.4,
+    desc: 'Full mock tests aur AI revision tools ke liye recommended'
+  },
+  {
+    id: 'credit_pass_elite',
+    name: 'Elite Power Pass',
+    dailyCredits: 50,
+    badge: 'MAX CREDITS',
+    icon: '👑',
+    scoreMultiplier: 1.6,
+    desc: 'Heavy daily practice aur maximum coin accumulation pass'
+  }
+];
 
 /* ─── Unified Diamond Constants ─── */
 const DIAMOND_SUB_DURATIONS_LIST = [
@@ -253,11 +293,15 @@ const SubHistory: React.FC<{ user: User; onBack: () => void }> = ({ user, onBack
   );
 };
 
-/* ─── Helper Functions ─── */
+/* ─── Credit Price Helper Function ─── */
 function getCreditPrice(planDuration: string, isUltra: boolean, plan?: any, settings?: SystemSettings): number {
   if (plan) {
-    if (isUltra && typeof plan.creditPriceUltra === 'number' && plan.creditPriceUltra > 0) return plan.creditPriceUltra;
-    if (!isUltra && typeof plan.creditPriceBasic === 'number' && plan.creditPriceBasic > 0) return plan.creditPriceBasic;
+    if (isUltra && typeof plan.creditPriceUltra === 'number' && plan.creditPriceUltra > 0) {
+      return plan.creditPriceUltra;
+    }
+    if (!isUltra && typeof plan.creditPriceBasic === 'number' && plan.creditPriceBasic > 0) {
+      return plan.creditPriceBasic;
+    }
   }
 
   const d = (planDuration || '').toLowerCase();
@@ -281,7 +325,8 @@ function getCreditPrice(planDuration: string, isUltra: boolean, plan?: any, sett
     return isUltra ? 4000 : 3000;
   }
 
-  return isUltra ? 3500 : 2625;
+  const base = isUltra ? 3500 : 2625;
+  return base;
 }
 
 function isDiscountEventLive(discountEvent?: any): boolean {
@@ -398,6 +443,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     if (initialTier) setTierType(initialTier);
   }, [initialTier]);
 
+  /* Diamonds State */
   const [diamondSubTab, setDiamondSubTab] = useState<'PACKS' | 'SUBSCRIPTION'>('SUBSCRIPTION');
   const [selectedDiamondDurations, setSelectedDiamondDurations] = useState<Record<string, string>>({});
   const [exchangeDiamondsCount, setExchangeDiamondsCount] = useState<number>(1);
@@ -405,6 +451,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   const [claimingDiamonds, setClaimingDiamonds] = useState(false);
   const [diamondClaimSuccessMsg, setDiamondClaimSuccessMsg] = useState<string | null>(null);
 
+  /* Plans State */
   const [selectedProPlanId, setSelectedProPlanId] = useState<string | null>(null);
   const [selectedMaxPlanId, setSelectedMaxPlanId] = useState<string | null>(null);
   const [selectedTierForPurchase, setSelectedTierForPurchase] = useState<'BASIC' | 'ULTRA'>('BASIC');
@@ -412,15 +459,27 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
 
   const packages = settings?.packages || [];
   const subscriptionPlans = settings?.subscriptionPlans || [];
+
+  /* Credits State Variables */
   const isCreditSubAllowed = settings?.allowCreditSubscription !== false;
   const [creditSubTab, setCreditSubTab] = useState<'PASS' | 'PACKAGES'>('PASS');
   const [planDurations, setPlanDurations] = useState<Record<string, CreditSubDurationId>>({});
-  const [showAllTiersModal, setShowAllTiersModal] = useState(false);
-  const [openFaqBasic, setOpenFaqBasic] = useState(false);
-  const [openFaqUltra, setOpenFaqUltra] = useState(false);
   const [claimingStorePass, setClaimingStorePass] = useState(false);
   const [passClaimSuccessMsg, setPassClaimSuccessMsg] = useState<string | null>(null);
 
+  const [creditPurchaseMsg, setCreditPurchaseMsg] = useState<string | null>(null);
+  const [showPaymentChooser, setShowPaymentChooser] = useState(false);
+  const [showCreditConfirm, setShowCreditConfirm] = useState(false);
+  const [creditConfirmLoading, setCreditConfirmLoading] = useState(false);
+
+  const [showAllTiersModal, setShowAllTiersModal] = useState(false);
+  const [openFaqBasic, setOpenFaqBasic] = useState(false);
+  const [openFaqUltra, setOpenFaqUltra] = useState(false);
+
+  /* User Credits Total */
+  const userCredits = getTotalCredits(user);
+
+  /* Daily Credit Pass Claim Handler */
   const handleClaimStorePass = async () => {
     if (!user || claimingStorePass) return;
     setClaimingStorePass(true);
@@ -483,11 +542,134 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   const event = settings?.specialDiscountEvent;
   const isSubscribed = user.isPremium && user.subscriptionEndDate && new Date(user.subscriptionEndDate) > new Date();
 
-  const [creditPurchaseMsg, setCreditPurchaseMsg] = useState<string | null>(null);
-  const [showPaymentChooser, setShowPaymentChooser] = useState(false);
-  const [showCreditConfirm, setShowCreditConfirm] = useState(false);
-  const [creditConfirmLoading, setCreditConfirmLoading] = useState(false);
+  const isUltraUser = user.isPremium && (user.subscriptionLevel === 'ULTRA' || (user.subscriptionLevel as any) === 'PRO');
+  const isBasicUser = user.isPremium && user.subscriptionLevel === 'BASIC';
 
+  const subDiscount = isSubscribed ? (isUltraUser ? 10 : 5) : 0;
+  const userBonusDiscount = (activeStoreDiscount > 0 ? activeStoreDiscount : 0) +
+    (scoreDiscount > 0 ? scoreDiscount : 0) +
+    (visitDiscount > 0 ? visitDiscount : 0);
+  const baseAccountDiscount = subDiscount + userBonusDiscount;
+  const eventDiscountPercent = (isDiscountEventLive(event) && event?.discountPercent) ? Number(event.discountPercent) : 0;
+
+  const validityEvent = settings?.validityDiscountEvent;
+  const isValidityDiscountActive = (() => {
+    if (validityEvent) {
+      if (validityEvent.enabled === false) return false;
+      if (!isDiscountEventLive(validityEvent)) return false;
+      if (!isDiscountAudienceAllowed(validityEvent, !!isSubscribed)) return false;
+      return true;
+    }
+    return true;
+  })();
+
+  /* Credit Duration Discount Helper */
+  const getCreditSubDurationDiscount = (durationId: CreditSubDurationId): number => {
+    if (!isValidityDiscountActive) return 0;
+    const monthlyPct = validityEvent?.monthlyPercent ?? 5;
+    const threeMonthlyPct = validityEvent?.threeMonthlyPercent ?? 10;
+    const sixMonthlyPct = validityEvent?.sixMonthlyPercent ?? 15;
+    const yearlyPct = validityEvent?.yearlyPercent ?? 20;
+
+    if (durationId === '1_MONTH') return monthlyPct;
+    if (durationId === '3_MONTH') return threeMonthlyPct;
+    if (durationId === '6_MONTH') return sixMonthlyPct;
+    if (durationId === '1_YEAR') return yearlyPct;
+    return 0;
+  };
+
+  const getPlanDurationDiscount = (plan: any): number => {
+    if (!plan) return 0;
+    if (!isValidityDiscountActive) return 0;
+
+    const monthlyPct = validityEvent?.monthlyPercent ?? 5;
+    const threeMonthlyPct = validityEvent?.threeMonthlyPercent ?? 10;
+    const sixMonthlyPct = validityEvent?.sixMonthlyPercent ?? 15;
+    const yearlyPct = validityEvent?.yearlyPercent ?? 20;
+
+    const id = (plan.id || '').toLowerCase();
+    const name = (plan.name || '').toLowerCase();
+    const dur = (plan.duration || '').toLowerCase();
+
+    if (id.includes('weekly') || name.includes('weekly') || dur.includes('7') || dur.includes('week')) return 0;
+    if (id.includes('monthly') || name.includes('monthly') || dur.includes('30') || dur.includes('1 month') || dur === '30 days') return monthlyPct;
+    if (id.includes('quarterly') || id.includes('3month') || id.includes('3-month') || name.includes('quarterly') || name.includes('3 month') || dur.includes('3 month') || dur.includes('90')) return threeMonthlyPct;
+    if (id.includes('6month') || id.includes('6-month') || id.includes('half') || name.includes('6 month') || name.includes('half') || dur.includes('6 month') || dur.includes('180')) return sixMonthlyPct;
+    if (id.includes('yearly') || id.includes('annual') || name.includes('yearly') || name.includes('annual') || dur.includes('year') || dur.includes('365') || dur.includes('12 month')) return yearlyPct;
+    return 0;
+  };
+
+  const calculatePlanDiscount = (plan: any, isProTier: boolean) => {
+    if (!plan) {
+      return {
+        durDiscount: 0, subDiscount, userBonusDiscount, baseDiscount: 0,
+        eventDiscount: eventDiscountPercent, eventEffectiveDiscount: 0, totalEffectiveDiscount: 0,
+        basePrice: 0, finalPrice: 0, isLifetimePlan: false,
+      };
+    }
+    const planNameL2 = (plan.name || '').toLowerCase();
+    const planDurL2 = (plan.duration || '').toLowerCase();
+    const isLifetimePlan = planNameL2.includes('lifetime') || planDurL2.includes('lifetime') || (plan as any).tier === 'LIFETIME';
+
+    const basePrice = isProTier ? plan.basicPrice : plan.ultraPrice;
+    if (isLifetimePlan) {
+      const lifetimePrice = isProTier ? 9999 : 19999;
+      return {
+        durDiscount: 0, subDiscount: 0, userBonusDiscount: 0, baseDiscount: 0, eventDiscount: 0,
+        eventEffectiveDiscount: 0, totalEffectiveDiscount: 0, basePrice: lifetimePrice, finalPrice: lifetimePrice,
+        isLifetimePlan: true,
+      };
+    }
+
+    const durDiscount = getPlanDurationDiscount(plan);
+    const baseDiscount = Math.min(100, durDiscount + baseAccountDiscount);
+
+    let eventEffectiveDiscount = 0;
+    if (eventDiscountPercent > 0 && baseDiscount < 100) {
+      const remainingBalance = 100 - baseDiscount;
+      eventEffectiveDiscount = Math.round((remainingBalance * eventDiscountPercent) / 100);
+    }
+
+    const totalEffectiveDiscount = Math.min(100, baseDiscount + eventEffectiveDiscount);
+    const finalPrice = Math.max(0, Math.round(basePrice * (1 - totalEffectiveDiscount / 100)));
+
+    return {
+      durDiscount, subDiscount, userBonusDiscount, baseDiscount, eventDiscount: eventDiscountPercent,
+      eventEffectiveDiscount, totalEffectiveDiscount, basePrice, finalPrice, isLifetimePlan: false,
+    };
+  };
+
+  const totalDiscount = (() => {
+    const base = baseAccountDiscount;
+    if (eventDiscountPercent > 0 && base < 100) {
+      const rem = 100 - base;
+      return Math.min(100, Math.round(base + (rem * eventDiscountPercent) / 100));
+    }
+    return Math.min(100, base);
+  })();
+
+  /* Credit Discount Calculation */
+  const creditDiscountPercent = (() => {
+    const creditEvent = settings?.creditSubDiscountEvent;
+    const discountEvent = creditEvent || event;
+    let disc = 0;
+    if (isDiscountEventLive(discountEvent) && isDiscountAudienceAllowed(discountEvent, !!isSubscribed)) {
+      disc = Number(discountEvent?.discountPercent) || 0;
+    }
+    if (isUltraUser) disc = Math.max(disc, 40);
+    else if (isBasicUser || isSubscribed) disc = Math.max(disc, 20);
+    return Math.min(100, Math.max(0, disc));
+  })();
+
+  /* Plan Credit Cost Helper */
+  const getPlanCreditCost = (plan: any, ultra: boolean) => {
+    const baseCost = getCreditPrice(plan.duration || plan.name || '', ultra, plan, settings);
+    return creditDiscountPercent > 0
+      ? Math.max(0, Math.round(baseCost * (1 - creditDiscountPercent / 100)))
+      : baseCost;
+  };
+
+  /* Credit Subscription Purchase Handler (full) */
   const handleCreditPurchase = async (plan: any) => {
     if (!isCreditSubAllowed) {
       setCreditPurchaseMsg('❌ Admin ne credits se subscription khareedna band kiya hua hai.');
@@ -503,7 +685,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
       return;
     }
     const creditCost = getPlanCreditCost(plan, isUltra);
-    const userCredits = getTotalCredits(user);
     if (userCredits < creditCost) {
       setCreditPurchaseMsg(`Credits kam hain! Chahiye: ${creditCost.toLocaleString('en-IN')} CR`);
       setTimeout(() => setCreditPurchaseMsg(null), 4000);
@@ -642,130 +823,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     { id: 'EXCHANGE'     as const, label: 'Exchange',     emoji: '🔄', color: '#10b981',bg: 'rgba(16,185,129,0.12)',border: 'rgba(16,185,129,0.3)',glow: 'rgba(16,185,129,0.18)' },
   ];
 
-  const isUltraUser = user.isPremium && (user.subscriptionLevel === 'ULTRA' || (user.subscriptionLevel as any) === 'PRO');
-  const isBasicUser = user.isPremium && user.subscriptionLevel === 'BASIC';
-
-  const subDiscount = isSubscribed ? (isUltraUser ? 10 : 5) : 0;
-  const userBonusDiscount = (activeStoreDiscount > 0 ? activeStoreDiscount : 0) +
-    (scoreDiscount > 0 ? scoreDiscount : 0) +
-    (visitDiscount > 0 ? visitDiscount : 0);
-  const baseAccountDiscount = subDiscount + userBonusDiscount;
-  const eventDiscountPercent = (isDiscountEventLive(event) && event?.discountPercent) ? Number(event.discountPercent) : 0;
-
-  const validityEvent = settings?.validityDiscountEvent;
-  const isValidityDiscountActive = (() => {
-    if (validityEvent) {
-      if (validityEvent.enabled === false) return false;
-      if (!isDiscountEventLive(validityEvent)) return false;
-      if (!isDiscountAudienceAllowed(validityEvent, !!isSubscribed)) return false;
-      return true;
-    }
-    return true;
-  })();
-
-  const getCreditSubDurationDiscount = (durationId: CreditSubDurationId): number => {
-    if (!isValidityDiscountActive) return 0;
-    const monthlyPct = validityEvent?.monthlyPercent ?? 5;
-    const threeMonthlyPct = validityEvent?.threeMonthlyPercent ?? 10;
-    const sixMonthlyPct = validityEvent?.sixMonthlyPercent ?? 15;
-    const yearlyPct = validityEvent?.yearlyPercent ?? 20;
-
-    if (durationId === '1_MONTH') return monthlyPct;
-    if (durationId === '3_MONTH') return threeMonthlyPct;
-    if (durationId === '6_MONTH') return sixMonthlyPct;
-    if (durationId === '1_YEAR') return yearlyPct;
-    return 0;
-  };
-
-  const getPlanDurationDiscount = (plan: any): number => {
-    if (!plan) return 0;
-    if (!isValidityDiscountActive) return 0;
-
-    const monthlyPct = validityEvent?.monthlyPercent ?? 5;
-    const threeMonthlyPct = validityEvent?.threeMonthlyPercent ?? 10;
-    const sixMonthlyPct = validityEvent?.sixMonthlyPercent ?? 15;
-    const yearlyPct = validityEvent?.yearlyPercent ?? 20;
-
-    const id = (plan.id || '').toLowerCase();
-    const name = (plan.name || '').toLowerCase();
-    const dur = (plan.duration || '').toLowerCase();
-
-    if (id.includes('weekly') || name.includes('weekly') || dur.includes('7') || dur.includes('week')) return 0;
-    if (id.includes('monthly') || name.includes('monthly') || dur.includes('30') || dur.includes('1 month') || dur === '30 days') return monthlyPct;
-    if (id.includes('quarterly') || id.includes('3month') || id.includes('3-month') || name.includes('quarterly') || name.includes('3 month') || dur.includes('3 month') || dur.includes('90')) return threeMonthlyPct;
-    if (id.includes('6month') || id.includes('6-month') || id.includes('half') || name.includes('6 month') || name.includes('half') || dur.includes('6 month') || dur.includes('180')) return sixMonthlyPct;
-    if (id.includes('yearly') || id.includes('annual') || name.includes('yearly') || name.includes('annual') || dur.includes('year') || dur.includes('365') || dur.includes('12 month')) return yearlyPct;
-    return 0;
-  };
-
-  const calculatePlanDiscount = (plan: any, isProTier: boolean) => {
-    if (!plan) {
-      return {
-        durDiscount: 0, subDiscount, userBonusDiscount, baseDiscount: 0,
-        eventDiscount: eventDiscountPercent, eventEffectiveDiscount: 0, totalEffectiveDiscount: 0,
-        basePrice: 0, finalPrice: 0, isLifetimePlan: false,
-      };
-    }
-    const planNameL2 = (plan.name || '').toLowerCase();
-    const planDurL2 = (plan.duration || '').toLowerCase();
-    const isLifetimePlan = planNameL2.includes('lifetime') || planDurL2.includes('lifetime') || (plan as any).tier === 'LIFETIME';
-
-    const basePrice = isProTier ? plan.basicPrice : plan.ultraPrice;
-    if (isLifetimePlan) {
-      const lifetimePrice = isProTier ? 9999 : 19999;
-      return {
-        durDiscount: 0, subDiscount: 0, userBonusDiscount: 0, baseDiscount: 0, eventDiscount: 0,
-        eventEffectiveDiscount: 0, totalEffectiveDiscount: 0, basePrice: lifetimePrice, finalPrice: lifetimePrice,
-        isLifetimePlan: true,
-      };
-    }
-
-    const durDiscount = getPlanDurationDiscount(plan);
-    const baseDiscount = Math.min(100, durDiscount + baseAccountDiscount);
-
-    let eventEffectiveDiscount = 0;
-    if (eventDiscountPercent > 0 && baseDiscount < 100) {
-      const remainingBalance = 100 - baseDiscount;
-      eventEffectiveDiscount = Math.round((remainingBalance * eventDiscountPercent) / 100);
-    }
-
-    const totalEffectiveDiscount = Math.min(100, baseDiscount + eventEffectiveDiscount);
-    const finalPrice = Math.max(0, Math.round(basePrice * (1 - totalEffectiveDiscount / 100)));
-
-    return {
-      durDiscount, subDiscount, userBonusDiscount, baseDiscount, eventDiscount: eventDiscountPercent,
-      eventEffectiveDiscount, totalEffectiveDiscount, basePrice, finalPrice, isLifetimePlan: false,
-    };
-  };
-
-  const totalDiscount = (() => {
-    const base = baseAccountDiscount;
-    if (eventDiscountPercent > 0 && base < 100) {
-      const rem = 100 - base;
-      return Math.min(100, Math.round(base + (rem * eventDiscountPercent) / 100));
-    }
-    return Math.min(100, base);
-  })();
-
-  const creditDiscountPercent = (() => {
-    const creditEvent = settings?.creditSubDiscountEvent;
-    const discountEvent = creditEvent || event;
-    let disc = 0;
-    if (isDiscountEventLive(discountEvent) && isDiscountAudienceAllowed(discountEvent, !!isSubscribed)) {
-      disc = Number(discountEvent?.discountPercent) || 0;
-    }
-    if (isUltraUser) disc = Math.max(disc, 40);
-    else if (isBasicUser || isSubscribed) disc = Math.max(disc, 20);
-    return Math.min(100, Math.max(0, disc));
-  })();
-
-  const getPlanCreditCost = (plan: any, ultra: boolean) => {
-    const baseCost = getCreditPrice(plan.duration || plan.name || '', ultra, plan, settings);
-    return creditDiscountPercent > 0
-      ? Math.max(0, Math.round(baseCost * (1 - creditDiscountPercent / 100)))
-      : baseCost;
-  };
-
   const isGroupStudyHidden =
     settings?.isGroupStudyEnabled === false ||
     (settings?.hiddenFeatures || []).includes('GROUP_STUDY') ||
@@ -874,8 +931,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     heroIconColor: '#cbd5e1',
     heroTitle: 'Free Plan',
     heroSub: 'Free Starter Tier · Standard Access & Limits',
-    cardSurface: '#0f172a',
-    cardBorder: 'rgba(148,163,184,0.18)',
   } : isSubTab ? {
     bg: '#080a18',
     bgGrad: 'radial-gradient(ellipse 120% 70% at 50% -10%, rgba(124,58,237,0.18) 0%, #080a18 65%)',
@@ -889,8 +944,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     heroIconColor: '#c084fc',
     heroTitle: 'VIP Subscriptions',
     heroSub: 'Pro & Max Elite Plans · Superpowers & Multipliers',
-    cardSurface: '#0f0c22',
-    cardBorder: 'rgba(168,85,247,0.20)',
   } : isCreditsTab ? {
     bg: '#0d0a04',
     bgGrad: 'radial-gradient(ellipse 120% 70% at 50% -10%, rgba(251,191,36,0.16) 0%, #0d0a04 65%)',
@@ -903,9 +956,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     heroIconShadow: '0 0 16px rgba(251,191,36,0.25)',
     heroIconColor: '#fbbf24',
     heroTitle: 'Credits Store',
-    heroSub: 'Instant Coin Packages & Daily Drop Pass',
-    cardSurface: '#161106',
-    cardBorder: 'rgba(251,191,36,0.18)',
+    heroSub: 'Instant Coin Packages & 4 Daily Drop Passes',
   } : isDiamondsTab ? {
     bg: '#030d1a',
     bgGrad: 'radial-gradient(ellipse 120% 70% at 50% -10%, rgba(56,189,248,0.18) 0%, #030d1a 65%)',
@@ -919,8 +970,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     heroIconColor: '#38bdf8',
     heroTitle: 'Diamonds Store',
     heroSub: 'Exclusive Lifetime Currency & Daily Drops',
-    cardSurface: '#081726',
-    cardBorder: 'rgba(56,189,248,0.18)',
   } : isExchangeTab ? {
     bg: '#04140e',
     bgGrad: 'radial-gradient(ellipse 120% 70% at 50% -10%, rgba(16,185,129,0.18) 0%, #04140e 65%)',
@@ -934,8 +983,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     heroIconColor: '#10b981',
     heroTitle: 'Currency Exchange',
     heroSub: 'Diamonds ko Instant Credits mein Swap Karein',
-    cardSurface: '#091c13',
-    cardBorder: 'rgba(16,185,129,0.18)',
   } : {
     bg: C.bg,
     bgGrad: 'none',
@@ -949,11 +996,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     heroIconColor: C.gold,
     heroTitle: 'Plan History',
     heroSub: 'Pichle sabhi plans aur invoices',
-    cardSurface: C.surface,
-    cardBorder: C.border,
   };
-
-  const userCredits = getTotalCredits(user);
 
   if (settings?.isPaymentEnabled === false) {
     return (
@@ -1033,7 +1076,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
         </>
       )}
 
-      {/* ── PAYMENT CHOOSER POPUP ── */}
+      {/* ── PAYMENT CHOOSER POPUP (WITH CREDIT OPTION) ── */}
       {showPaymentChooser && selectedPlan && (() => {
         const isProTarget = selectedTierForPurchase === 'BASIC';
         const discInfo = calculatePlanDiscount(selectedPlan, isProTarget);
@@ -1127,7 +1170,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
         );
       })()}
 
-      {/* ── CREDIT CONFIRM POPUP ── */}
+      {/* ── CREDIT CONFIRM POPUP (UI) ── */}
       {showCreditConfirm && selectedPlan && (() => {
         const creditCost = getPlanCreditCost(selectedPlan, !isPro);
         const afterBalance = userCredits - creditCost;
@@ -1146,7 +1189,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                     Credits se {isPro ? 'PRO' : 'MAX'} plan khareedne wale ho
                   </p>
                   <div className="mt-2.5 p-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[10.5px] text-amber-300 text-center font-medium leading-tight">
-                    ℹ️ Sabhi Premium study features unlock honge. Daily Credits claim sirf cash/UPI plans me milta hai.
+                    ℹ️ Sabhi Premium study features (MCQs, Notes, XP Boost) unlock honge. Daily Credits claim sirf cash/UPI plans me milta hai.
                   </div>
                 </div>
                 <div className="mx-4 mb-4 rounded-2xl overflow-hidden" style={{ border: `1px solid ${C.goldBorder}` }}>
@@ -1173,7 +1216,14 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                   <button onClick={() => handleCreditPurchase(selectedPlan)} disabled={creditConfirmLoading}
                     className="flex-1 py-3.5 rounded-2xl font-black text-sm transition-all active:scale-95 flex items-center justify-center gap-2"
                     style={{ background: creditConfirmLoading ? 'rgba(251,191,36,0.5)' : C.gold, color: '#000' }}>
-                    {creditConfirmLoading ? 'Saving...' : '🪙 Haan, Kharido!'}
+                    {creditConfirmLoading ? (
+                      <>
+                        <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                          <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="31.4" strokeDashoffset="10" />
+                        </svg>
+                        Saving...
+                      </>
+                    ) : <>🪙 Haan, Kharido!</>}
                   </button>
                 </div>
               </div>
@@ -1219,11 +1269,13 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 +
               </span>
             </button>
+            {/* Header me Credits Display */}
             <button
               id="store-header-credits-btn"
               onClick={() => setTierType('CREDITS')}
               className="flex items-center gap-1.5 px-2.5 rounded-2xl shrink-0 active:scale-95 transition-all group"
-              style={{ height: 34, background: C.goldBg, border: `1.5px solid ${C.goldBorder}` }}
+              style={{ height: 34, background: C.goldBg, border: `1.5px solid ${C.goldBorder}`, boxShadow: `0 0 10px rgba(251,191,36,0.12)` }}
+              title="Credits Pack Kharidein"
             >
               <span className="text-sm leading-none">🪙</span>
               <span className="font-black text-sm leading-none" style={{ color: C.gold }}>
@@ -1490,6 +1542,16 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
               />
             )}
 
+            {user.isPremium && isSubscriptionFromCoins(user) && (
+              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-2.5 text-xs text-amber-200">
+                <span className="text-base">✨</span>
+                <div>
+                  <span className="font-bold text-white">Active {user.subscriptionLevel === 'ULTRA' ? 'Max VIP' : 'Pro Learner'} Plan (Credits dwara activated):</span>
+                  <span className="text-amber-200/90 ml-1">Aapke sabhi premium study features, MCQs, notes aur XP boost unlocked hain.</span>
+                </div>
+              </div>
+            )}
+
             {(() => {
               const renderVipCard = (tierTarget: 'BASIC' | 'ULTRA') => {
                 const isProTier = tierTarget === 'BASIC';
@@ -1625,88 +1687,170 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
           </div>
         )}
 
-        {/* ── 4. CREDITS TAB (PASS & PACKS) ── */}
+        {/* ── 4. CREDITS TAB (4 DAILY DROP PASSES & PACKS) ── */}
         {tierType === 'CREDITS' && (() => {
-          const creditSubPlans = getCreditSubPlans(settings).filter(p => p.isActive !== false);
+          const calculatePricing = (plan: any, dur: any) => {
+            const totalCreds = plan.dailyCredits * dur.durationDays;
+            const baseRate = 0.11;
+            const base = Math.round(totalCreds * baseRate);
+            const finalPrice = Math.max(1, Math.round(base * (1 - dur.discount / 100)));
+            return {
+              basePrice: base,
+              finalPrice,
+              totalCredits: totalCreds,
+              discount: dur.discount,
+              perDayCost: (finalPrice / dur.durationDays).toFixed(1),
+              perCreditCost: (finalPrice / totalCreds).toFixed(2)
+            };
+          };
+
+          const CREDIT_PASS_DURATIONS_CUSTOM = [
+            { id: '7_DAYS', label: '7D', durationDays: 7, discount: 0 },
+            { id: '1_MONTH', label: '1M', durationDays: 30, discount: 5 },
+            { id: '3_MONTH', label: '3M', durationDays: 90, discount: 10 },
+            { id: '6_MONTH', label: '6M', durationDays: 180, discount: 15 },
+            { id: '1_YEAR', label: '1Y', durationDays: 365, discount: 20 },
+          ];
+
           return (
             <div className="space-y-4">
               {passClaimSuccessMsg && (
-                <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-300 text-xs font-black text-center">
+                <div className="p-3.5 rounded-2xl bg-emerald-500/20 text-emerald-300 text-xs font-black text-center border border-emerald-500/30 shadow-md">
                   {passClaimSuccessMsg}
                 </div>
               )}
 
-              {/* Status Header */}
+              {creditPurchaseMsg && (
+                <div className="p-3 rounded-xl text-center text-xs font-bold bg-white/10 text-white border border-white/20">
+                  {creditPurchaseMsg}
+                </div>
+              )}
+
+              {/* Status & Active Pass Card */}
               <div className="rounded-3xl p-5 border border-amber-400/30 bg-amber-950/20">
                 <div className="flex justify-between items-center mb-3">
                   <div>
                     <span className="text-[10px] font-black uppercase text-amber-400">Study Currency</span>
                     <h2 className="text-xl font-black text-white">{userCredits.toLocaleString('en-IN')} Credits</h2>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Mock tests, reading chapters & AI study tools</p>
                   </div>
                   <div className="w-10 h-10 rounded-xl bg-amber-400/20 flex items-center justify-center text-xl">🪙</div>
                 </div>
 
                 {isCreditSubActive(user) && user.creditSubscription && (
-                  <div className="rounded-2xl p-3 bg-black/40 border border-amber-400/30 mt-3">
-                    <div className="flex justify-between text-xs font-bold text-amber-300 mb-2">
-                      <span>Pass Active ({getCreditSubDaysRemaining(user.creditSubscription)} Din Baki)</span>
-                      <span>+{user.creditSubscription.dailyCredits} 🪙/din</span>
+                  <div className="rounded-2xl p-3.5 bg-black/40 border border-amber-400/30 mt-3">
+                    <div className="flex justify-between items-center text-xs font-bold text-amber-300 mb-2.5">
+                      <span>⚡ Pass Active ({getCreditSubDaysRemaining(user.creditSubscription)} Din Baki)</span>
+                      <span className="px-2 py-0.5 rounded-md bg-amber-400/20 border border-amber-400/30 text-amber-300 font-black">
+                        +{user.creditSubscription.dailyCredits} 🪙/din
+                      </span>
                     </div>
                     {canClaimCreditSubToday(user) ? (
                       <button onClick={handleClaimStorePass} disabled={claimingStorePass}
-                        className="w-full py-2 bg-amber-400 text-slate-950 rounded-xl font-black text-xs">
+                        className="w-full py-2.5 bg-gradient-to-r from-amber-400 to-yellow-300 text-slate-950 rounded-xl font-black text-xs active:scale-[0.98] transition-all shadow-md">
                         {claimingStorePass ? 'Claiming...' : `Claim +${user.creditSubscription.dailyCredits} Credits`}
                       </button>
                     ) : (
-                      <p className="text-[11px] text-center text-slate-400">✓ Aaj ka claim ho gaya!</p>
+                      <div className="p-2 rounded-xl bg-amber-400/10 text-center text-[11px] text-amber-300 font-bold border border-amber-400/20">
+                        ✓ Aaj ka claim ho gaya (+{user.creditSubscription.dailyCredits} 🪙)
+                      </div>
                     )}
                   </div>
                 )}
               </div>
 
-              {/* Sub-tabs */}
+              {/* Sub-tabs: 4 Passes vs Instant Packs */}
               <div className="grid grid-cols-2 gap-2 p-1 bg-black/40 border border-white/10 rounded-2xl">
-                <button onClick={() => setCreditSubTab('PASS')}
-                  className={`py-2 text-xs font-black rounded-xl ${creditSubTab === 'PASS' ? 'bg-amber-400 text-slate-950' : 'text-slate-400'}`}>
-                  ⚡ Credit Pass (Daily)
+                <button type="button" onClick={() => setCreditSubTab('PASS')}
+                  className={`py-2 text-xs font-black rounded-xl transition-all ${creditSubTab === 'PASS' ? 'bg-amber-400 text-slate-950 shadow-md' : 'text-slate-400'}`}>
+                  ⚡ 4 Credit Passes (Daily)
                 </button>
-                <button onClick={() => setCreditSubTab('PACKAGES')}
-                  className={`py-2 text-xs font-black rounded-xl ${creditSubTab === 'PACKAGES' ? 'bg-amber-400 text-slate-950' : 'text-slate-400'}`}>
-                  📦 Instant Packs
+                <button type="button" onClick={() => setCreditSubTab('PACKAGES')}
+                  className={`py-2 text-xs font-black rounded-xl transition-all ${creditSubTab === 'PACKAGES' ? 'bg-amber-400 text-slate-950 shadow-md' : 'text-slate-400'}`}>
+                  📦 Instant Packs (Direct)
                 </button>
               </div>
 
+              {/* Subtab 1: 4 Complete Credit Passes (10, 20, 30, 50 🪙/Day) */}
               {creditSubTab === 'PASS' && (
                 <div className="space-y-3">
-                  {creditSubPlans.map(plan => {
-                    const selectedDurationId = planDurations[plan.id] || '1_MONTH';
-                    const durOpt = CREDIT_SUB_DURATIONS.find(d => d.id === selectedDurationId) || CREDIT_SUB_DURATIONS[0];
-                    const pricing = calculateCreditSubPrice(plan, durOpt, false, getCreditSubDurationDiscount(durOpt.id));
+                  {CREDIT_PASS_TIERS.map(plan => {
+                    const selectedDurId = planDurations[plan.id] || '1_MONTH';
+                    const durOpt = CREDIT_PASS_DURATIONS_CUSTOM.find(d => d.id === selectedDurId) || CREDIT_PASS_DURATIONS_CUSTOM[1];
+                    const pricing = calculatePricing(plan, durOpt);
 
                     return (
-                      <div key={plan.id} className="rounded-2xl p-4 border border-amber-400/30 bg-black/50">
+                      <div key={plan.id} className="rounded-2xl p-4 border border-amber-400/30 bg-black/50 shadow-lg">
                         <div className="flex justify-between items-start mb-2">
                           <div>
-                            <h3 className="text-sm font-black text-white">{plan.name}</h3>
-                            <span className="text-[10px] text-amber-400 font-bold">+{plan.dailyCredits} 🪙/din</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-base">{plan.icon}</span>
+                              <h3 className="text-sm font-black text-white">{plan.name}</h3>
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-amber-400/15 text-amber-300 border border-amber-400/30">
+                                🪙 +{plan.dailyCredits}/din
+                              </span>
+                              {pricing.discount > 0 && (
+                                <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950">
+                                  {pricing.discount}% OFF
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-0.5">{plan.desc}</p>
                           </div>
-                          <span className="text-base font-black text-amber-400">₹{pricing.finalPrice}</span>
+                          <div className="text-right shrink-0">
+                            {pricing.discount > 0 && (
+                              <span className="text-[11px] line-through text-slate-400 font-bold block">
+                                ₹{pricing.basePrice}
+                              </span>
+                            )}
+                            <span className="text-lg font-black text-amber-400">₹{pricing.finalPrice}</span>
+                            <span className="block text-[8px] text-slate-400">₹{pricing.perDayCost}/din</span>
+                          </div>
                         </div>
 
-                        {/* Validity Buttons */}
-                        <div className="grid grid-cols-4 gap-1 my-2">
-                          {CREDIT_SUB_DURATIONS.map(dur => (
-                            <button key={dur.id} type="button"
-                              onClick={() => setPlanDurations(p => ({ ...p, [plan.id]: dur.id }))}
-                              className={`py-1 rounded text-[10px] font-bold border ${selectedDurationId === dur.id ? 'bg-amber-400 text-slate-950' : 'bg-white/5 text-slate-300 border-white/10'}`}>
-                              {dur.label}
-                            </button>
-                          ))}
+                        {/* 5 Validity Buttons (7D, 1M, 3M, 6M, 1Y) */}
+                        <div className="p-2 rounded-xl bg-black/40 border border-white/5 my-2.5">
+                          <div className="flex justify-between items-center text-[9px] text-slate-400 mb-1 px-0.5">
+                            <span className="font-bold text-amber-300 uppercase flex items-center gap-1">
+                              <Clock size={10} /> Validity Chunein:
+                            </span>
+                            <span>Total: <strong className="text-amber-300">{pricing.totalCredits.toLocaleString('en-IN')} 🪙</strong></span>
+                          </div>
+                          <div className="grid grid-cols-5 gap-1">
+                            {CREDIT_PASS_DURATIONS_CUSTOM.map(dur => (
+                              <button key={dur.id} type="button"
+                                onClick={() => setPlanDurations(p => ({ ...p, [plan.id]: dur.id }))}
+                                className={`py-1.5 rounded text-center border transition-all ${
+                                  selectedDurId === dur.id
+                                    ? 'bg-amber-400 text-slate-950 font-black shadow-[0_0_8px_rgba(251,191,36,0.3)]'
+                                    : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
+                                }`}>
+                                <span className="block text-[10px] font-black leading-tight">{dur.label}</span>
+                                <span className="text-[8px] text-slate-400 block">{dur.durationDays}D</span>
+                              </button>
+                            ))}
+                          </div>
                         </div>
 
-                        <button onClick={() => initiatePurchase({ ...plan, price: pricing.finalPrice, isCreditSub: true, durationDays: durOpt.durationDays })}
-                          className="w-full py-2 bg-amber-400 text-slate-950 rounded-xl font-black text-xs mt-2">
-                          Subscribe — ₹{pricing.finalPrice}
+                        {/* Quick Perks Strip */}
+                        <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-300 mb-2 px-0.5">
+                          <div className="flex items-center gap-1"><span className="text-amber-400">✓</span> Safe Balance (No Expiry)</div>
+                          <div className="flex items-center gap-1"><span className="text-amber-400">✓</span> Midnight 12 AM Reset</div>
+                          <div className="flex items-center gap-1"><span className="text-amber-400">✓</span> {plan.scoreMultiplier}x Score Multiplier</div>
+                          <div className="flex items-center gap-1"><span className="text-amber-400">✓</span> Instant Activation</div>
+                        </div>
+
+                        <button onClick={() => initiatePurchase({
+                          ...plan,
+                          price: pricing.finalPrice,
+                          finalPrice: pricing.finalPrice,
+                          isCreditSub: true,
+                          durationDays: durOpt.durationDays,
+                          durationLabel: durOpt.label,
+                          scoreMultiplier: plan.scoreMultiplier,
+                        })}
+                          className="w-full py-2.5 bg-gradient-to-r from-amber-400 to-yellow-300 text-slate-950 rounded-xl font-black text-xs active:scale-[0.98] transition-all shadow-md mt-1">
+                          Subscribe ({durOpt.label}) — ₹{pricing.finalPrice}
                         </button>
                       </div>
                     );
@@ -1714,15 +1858,21 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 </div>
               )}
 
+              {/* Subtab 2: Instant Credit Packs */}
               {creditSubTab === 'PACKAGES' && (
                 <div className="space-y-3">
-                  {packages.map(pkg => (
-                    <div key={pkg.id} className="p-4 rounded-2xl border border-white/10 bg-black/40 flex justify-between items-center">
+                  {(packages.length > 0 ? packages : [
+                    { id: 'pack_1', credits: 100, price: 29 },
+                    { id: 'pack_2', credits: 500, price: 99 },
+                    { id: 'pack_3', credits: 1500, price: 249 },
+                    { id: 'pack_4', credits: 4000, price: 599 },
+                  ]).map(pkg => (
+                    <div key={pkg.id} className="p-4 rounded-2xl border border-white/10 bg-black/40 flex justify-between items-center hover:border-amber-400/30 transition-all">
                       <div>
-                        <h4 className="text-sm font-black text-white">{pkg.credits} Credits</h4>
-                        <p className="text-[11px] text-slate-400">Instant direct topup</p>
+                        <h4 className="text-sm font-black text-white">{pkg.credits.toLocaleString('en-IN')} Credits</h4>
+                        <p className="text-[11px] text-slate-400">Instant direct top-up</p>
                       </div>
-                      <button onClick={() => initiatePurchase(pkg)} className="px-4 py-2 bg-amber-400 text-slate-950 font-black rounded-xl text-xs">
+                      <button onClick={() => initiatePurchase(pkg)} className="px-5 py-2.5 bg-amber-400 text-slate-950 font-black rounded-xl text-xs active:scale-95 transition-all shadow-md">
                         ₹{pkg.price}
                       </button>
                     </div>
@@ -1736,7 +1886,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
         {/* ── 5. DIAMONDS TAB (10 TO 50 💎 / DAY UNIFIED CARDS & INSTANT PACKS) ── */}
         {tierType === 'DIAMONDS' && (
           <div className="space-y-4">
-            {/* Balance & Active Daily Drop Card */}
             <div className="rounded-3xl p-5 border border-sky-400/30 bg-sky-950/20">
               <div className="flex justify-between items-center mb-2">
                 <div>
@@ -1777,7 +1926,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
               )}
             </div>
 
-            {/* Sub-navigation: Daily Passes vs Instant Packs */}
             <div className="grid grid-cols-2 gap-2 p-1 bg-black/40 border border-white/10 rounded-2xl">
               <button
                 type="button"
@@ -1799,7 +1947,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
               </button>
             </div>
 
-            {/* SUB-SECTION 1: UNIFIED DIAMOND PASSES (10 to 50 💎 / Day) */}
             {diamondSubTab === 'SUBSCRIPTION' && (
               <div className="space-y-4">
                 {diamondUnifiedTemplates.map(template => {
@@ -1821,7 +1968,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                         boxShadow: '0 8px 30px rgba(56,189,248,0.12)'
                       }}
                     >
-                      {/* Header */}
                       <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-white/10">
                         <div>
                           <div className="flex items-center gap-1.5 flex-wrap">
@@ -1851,7 +1997,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                         </div>
                       </div>
 
-                      {/* 5 Validity Selectors (7D, 30D, 90D, 180D, 365D) */}
                       <div className="p-2 rounded-xl bg-black/40 border border-white/5 my-2.5">
                         <div className="flex items-center justify-between mb-1.5 px-0.5">
                           <span className="text-[10px] font-black uppercase tracking-wider text-sky-400 flex items-center gap-1">
@@ -1883,7 +2028,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                         </div>
                       </div>
 
-                      {/* Features List */}
                       <div className="my-2 p-2.5 rounded-xl bg-black/35 border border-white/10">
                         <div className="grid grid-cols-2 gap-1.5">
                           {template.features.map((feat, idx) => (
@@ -1895,7 +2039,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                         </div>
                       </div>
 
-                      {/* Subscribe CTA Button */}
                       <button
                         type="button"
                         onClick={() => initiatePurchase({
@@ -1917,7 +2060,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
               </div>
             )}
 
-            {/* SUB-SECTION 2: INSTANT DIAMOND PACKS */}
             {diamondSubTab === 'PACKS' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {DIAMOND_PACKS.map(pack => (
