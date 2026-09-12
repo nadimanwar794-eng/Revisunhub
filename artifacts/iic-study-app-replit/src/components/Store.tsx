@@ -938,7 +938,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
             {/* Scrollable Comparison Area */}
             <div className="p-3.5 sm:p-4 space-y-4 overflow-y-auto flex-1 scrollbar-thin text-xs">
               
-              <!-- SECTION 1: FREE VS BASIC (SKY BLUE) -->
+              {/* SECTION 1: FREE VS BASIC (SKY BLUE) */}
               <div className="rounded-2xl p-3 border border-sky-400/30 bg-gradient-to-b from-[#081e34]/70 to-[#040d18] shadow-lg">
                 <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-white/10">
                   <div className="flex items-center gap-1.5">
@@ -951,7 +951,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <!-- Left: Free Side -->
+                  {/* Left: Free Side */}
                   <div className="rounded-xl p-2.5 bg-black/45 border border-white/10 space-y-2">
                     <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
                       <span className="font-black text-[11px] text-slate-300 flex items-center gap-1">
@@ -992,7 +992,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                     </div>
                   </div>
 
-                  <!-- Right: Basic Side (Sky Blue) -->
+                  {/* Right: Basic Side (Sky Blue) */}
                   <div className="rounded-xl p-2.5 bg-sky-950/30 border border-sky-400/40 space-y-2">
                     <div className="flex items-center justify-between pb-1.5 border-b border-sky-400/20">
                       <span className="font-black text-[11px] text-sky-300 flex items-center gap-1">
@@ -1035,7 +1035,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 </div>
               </div>
 
-              <!-- SECTION 2: FREE VS ULTRA (PURPLE) -->
+              {/* SECTION 2: FREE VS ULTRA (PURPLE) */}
               <div className="rounded-2xl p-3 border border-purple-400/30 bg-gradient-to-b from-[#2e1065]/60 to-[#0e041d] shadow-lg">
                 <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-white/10">
                   <div className="flex items-center gap-1.5">
@@ -1048,7 +1048,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <!-- Left: Free Side -->
+                  {/* Left: Free Side */}
                   <div className="rounded-xl p-2.5 bg-black/45 border border-white/10 space-y-2">
                     <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
                       <span className="font-black text-[11px] text-slate-300 flex items-center gap-1">
@@ -1089,7 +1089,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                     </div>
                   </div>
 
-                  <!-- Right: Ultra Side (Purple) -->
+                  {/* Right: Ultra Side (Purple) */}
                   <div className="rounded-xl p-2.5 bg-purple-950/30 border border-purple-400/40 space-y-2">
                     <div className="flex items-center justify-between pb-1.5 border-b border-purple-400/20">
                       <span className="font-black text-[11px] text-purple-300 flex items-center gap-1">
@@ -1134,7 +1134,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
 
             </div>
 
-            <!-- Bottom Sticky Continue Button -->
+            {/* Bottom Sticky Continue Button */}
             <div className="p-3.5 border-t border-white/10 bg-slate-900/90 shrink-0">
               <button
                 type="button"
@@ -2394,4 +2394,3 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     </div>
   );
 };
-
