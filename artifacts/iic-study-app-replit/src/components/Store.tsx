@@ -806,7 +806,31 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack })
   ];
 
   // ── SUPERPOWERS ADDED WITH BASIC (PRO) PLAN ──
+  const isGroupStudyHidden =
+    settings?.isGroupStudyEnabled === false ||
+    (settings?.hiddenFeatures || []).includes('GROUP_STUDY') ||
+    (settings?.hiddenHomeButtons || []).includes('GROUP_STUDY');
+
+  // Filter helper to guarantee removal of Group Study from feature lists if hidden by Admin
+  const filterGroupStudy = (list: string[]) => {
+    if (!isGroupStudyHidden) return list;
+    return (list || []).filter(f => {
+      const lower = (f || '').toLowerCase();
+      return !lower.includes('group study') &&
+             !lower.includes('live classroom') &&
+             !lower.includes('mcq battle') &&
+             !lower.includes('live room');
+    });
+  };
+
   const basicSuperPowers = [
+    ...(!isGroupStudyHidden ? [{
+      title: 'Group Study & Live Classroom',
+      desc: 'Friends ke sath real-time live study room join karein aur Live MCQ Battles me compete karein!',
+      badge: 'LIVE STUDY',
+      icon: '👥',
+      highlight: true
+    }] : []),
     { title: '+66% Extra Daily XP Limit', desc: 'Daily score limit 1,500 se badhkar 2,500 points ho jati hai — Rank fast badhao!', badge: '+66% XP', icon: '🚀', highlight: true },
     { title: '1.5X Score Multiplier', desc: 'Har test, lesson aur activity par seedha 50% bonus XP point boost!', badge: '1.5X BOOST', icon: '⚡', highlight: true },
     { title: 'Daily 50 Credits Pass', desc: 'Har din 50 credits auto-claim karein (Mahine ke 1,500 Credits bilkul muft)!', badge: '50 CR/DAY', icon: '🪙', highlight: true },
@@ -823,6 +847,13 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack })
 
   // ── SUPERPOWERS ADDED WITH ULTRA (MAX) PLAN ──
   const ultraSuperPowers = [
+    ...(!isGroupStudyHidden ? [{
+      title: 'Host Live Classroom & MCQ Battles',
+      desc: 'Apna khud ka live room create karein, whiteboard par padhayein aur custom Live MCQ Battles host karein!',
+      badge: 'HOST & TEACH',
+      icon: '🎓',
+      highlight: true
+    }] : []),
     { title: '+133% Massive Daily XP Limit', desc: '1,400+ daily score capacity — Leaderboard me #1 rank hasil karne ki power!', badge: '+133% MAX', icon: '👑', highlight: true },
     { title: '2.0X Ultra Score Multiplier', desc: 'Seedha 100% (2X Double) bonus points har activity par (Sabse tez rank boost)!', badge: '2X SPEED', icon: '🔥', highlight: true },
     { title: 'Daily 100 Credits Pass', desc: 'Har din 100 credits muft claim karein (Mahine ke 3,000 Credits)!', badge: '100 CR/DAY', icon: '🪙', highlight: true },
@@ -839,6 +870,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack })
   ];
 
   const defaultBasicFeatures = [
+    ...(!isGroupStudyHidden ? ['Group Study: Join Live Rooms & Battles'] : []),
     'Daily Claim: 50 Credits / Day',
     'Daily XP Limit: +66%',
     'XP Multiplier: 1.5X Boost',
@@ -854,6 +886,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack })
   ];
 
   const defaultUltraFeatures = [
+    ...(!isGroupStudyHidden ? ['👑 Group Study Pro: Host Live Classroom & Battles'] : []),
     'Daily Claim: 100 Credits / Day',
     'All Basic Features Included',
     '⚡ Ultra Mode (Reading Notes)',
@@ -940,13 +973,15 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack })
     accent: C.gold,
   };
 
-  const featuresList = isPro
-    ? ((settings?.storeFeatures?.basic?.length && !settings?.storeFeatures?.basic?.includes('Full MCQs Unlocked'))
-        ? settings.storeFeatures.basic.filter(f => f.trim())
-        : defaultBasicFeatures)
-    : ((settings?.storeFeatures?.ultra?.length && !settings?.storeFeatures?.ultra?.includes('Everything in Pro'))
-        ? settings.storeFeatures.ultra.filter(f => f.trim())
-        : defaultUltraFeatures);
+  const featuresList = filterGroupStudy(
+    isPro
+      ? ((settings?.storeFeatures?.basic?.length && !settings?.storeFeatures?.basic?.includes('Full MCQs Unlocked'))
+          ? settings.storeFeatures.basic.filter(f => f.trim())
+          : defaultBasicFeatures)
+      : ((settings?.storeFeatures?.ultra?.length && !settings?.storeFeatures?.ultra?.includes('Everything in Pro'))
+          ? settings.storeFeatures.ultra.filter(f => f.trim())
+          : defaultUltraFeatures)
+  );
 
   const getPerMonthPrice = (plan: any, price: number) => {
     if ((plan.duration || '').toLowerCase().includes('year') || (plan.duration || '').includes('365')) return Math.round(price / 12);
@@ -2046,13 +2081,15 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack })
 
                     const activePlan = subscriptionPlans.find(p => p.id === activePlanId) || subscriptionPlans[0];
                     const activeDetails = computePlanDetails(activePlan);
-                    const cardFeatures = isProTier
-                      ? ((settings?.storeFeatures?.basic?.length && !settings?.storeFeatures?.basic?.includes('Full MCQs Unlocked'))
-                          ? settings.storeFeatures.basic.filter(f => f.trim())
-                          : defaultBasicFeatures)
-                      : ((settings?.storeFeatures?.ultra?.length && !settings?.storeFeatures?.ultra?.includes('3,000 MCQs Daily'))
-                          ? settings.storeFeatures.ultra.filter(f => f.trim())
-                          : defaultUltraFeatures);
+                    const cardFeatures = filterGroupStudy(
+                      isProTier
+                        ? ((settings?.storeFeatures?.basic?.length && !settings?.storeFeatures?.basic?.includes('Full MCQs Unlocked'))
+                            ? settings.storeFeatures.basic.filter(f => f.trim())
+                            : defaultBasicFeatures)
+                        : ((settings?.storeFeatures?.ultra?.length && !settings?.storeFeatures?.ultra?.includes('3,000 MCQs Daily'))
+                            ? settings.storeFeatures.ultra.filter(f => f.trim())
+                            : defaultUltraFeatures)
+                    );
 
                     if (!activePlan || !activeDetails) return null;
 
