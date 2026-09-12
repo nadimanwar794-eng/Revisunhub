@@ -98,6 +98,66 @@ const C = {
   diamondGlow:  'rgba(56,189,248,0.25)',
 };
 
+/* ─── Unified Diamond Constants ─── */
+const DIAMOND_SUB_DURATIONS_LIST = [
+  { id: '7_DAYS', label: '7D', days: 7, ratePerDiamond: 1.80 },
+  { id: '30_DAYS', label: '1M', days: 30, ratePerDiamond: 1.50 },
+  { id: '90_DAYS', label: '3M', days: 90, ratePerDiamond: 1.30 },
+  { id: '180_DAYS', label: '6M', days: 180, ratePerDiamond: 1.15 },
+  { id: '365_DAYS', label: '1Y', days: 365, ratePerDiamond: 1.00 },
+];
+
+const diamondUnifiedTemplates = [
+  {
+    id: 'starter_diamond',
+    name: 'Starter Diamond Pass',
+    icon: '💎',
+    dailyDiamonds: 10,
+    features: [
+      'Daily 10 💎 Drop Claim',
+      'Chapters Permanently Unlock',
+      'Lifetime Content Access',
+      'Instant Credit Swap Ready'
+    ]
+  },
+  {
+    id: 'active_diamond',
+    name: 'Active Diamond Pass',
+    icon: '⚡',
+    dailyDiamonds: 20,
+    features: [
+      'Daily 20 💎 Drop Claim',
+      'Tez Chapters Unlocking',
+      'Permanent Vault Access',
+      '1 💎 = 30 🪙 Auto Swap'
+    ]
+  },
+  {
+    id: 'premium_diamond',
+    name: 'Premium Diamond Pass',
+    icon: '🌟',
+    dailyDiamonds: 30,
+    features: [
+      'Daily 30 💎 Drop Claim',
+      'Premium Content Unlocks',
+      'Heavy Diamond Reserve',
+      'Priority Support Claim'
+    ]
+  },
+  {
+    id: 'elite_diamond',
+    name: 'Elite Diamond Pass',
+    icon: '👑',
+    dailyDiamonds: 50,
+    features: [
+      'Daily 50 💎 Huge Drop',
+      'Sabse Tez Unlock Speed',
+      'Max Savings per Diamond',
+      'VIP Lifetime Diamond Stack'
+    ]
+  }
+];
+
 /* ─── Subscription History Component ─── */
 const SubHistory: React.FC<{ user: User; onBack: () => void }> = ({ user, onBack }) => {
   const history = user.subscriptionHistory || [];
@@ -338,7 +398,8 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     if (initialTier) setTierType(initialTier);
   }, [initialTier]);
 
-  const [diamondSubTab, setDiamondSubTab] = useState<'PACKS' | 'SUBSCRIPTION' | 'EXCHANGE'>('PACKS');
+  const [diamondSubTab, setDiamondSubTab] = useState<'PACKS' | 'SUBSCRIPTION'>('SUBSCRIPTION');
+  const [selectedDiamondDurations, setSelectedDiamondDurations] = useState<Record<string, string>>({});
   const [exchangeDiamondsCount, setExchangeDiamondsCount] = useState<number>(1);
   const [exchangeMsg, setExchangeMsg] = useState<string | null>(null);
   const [claimingDiamonds, setClaimingDiamonds] = useState(false);
@@ -890,11 +951,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     heroSub: 'Pichle sabhi plans aur invoices',
     cardSurface: C.surface,
     cardBorder: C.border,
-  };
-
-  const getPerMonthPrice = (plan: any, price: number) => {
-    if ((plan.duration || '').toLowerCase().includes('year') || (plan.duration || '').includes('365')) return Math.round(price / 12);
-    return null;
   };
 
   const userCredits = getTotalCredits(user);
@@ -1677,14 +1733,16 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
           );
         })()}
 
-        {/* ── 5. DIAMONDS TAB ── */}
+        {/* ── 5. DIAMONDS TAB (10 TO 50 💎 / DAY UNIFIED CARDS & INSTANT PACKS) ── */}
         {tierType === 'DIAMONDS' && (
           <div className="space-y-4">
+            {/* Balance & Active Daily Drop Card */}
             <div className="rounded-3xl p-5 border border-sky-400/30 bg-sky-950/20">
               <div className="flex justify-between items-center mb-2">
                 <div>
-                  <span className="text-[10px] font-black uppercase text-sky-400">Lifetime Currency</span>
+                  <span className="text-[10px] font-black uppercase text-sky-400">Permanent Currency</span>
                   <h2 className="text-xl font-black text-white">{(user.diamonds ?? 0).toLocaleString('en-IN')} Diamonds</h2>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Chapters hamesha ke liye unlock karein (Lifetime Access)</p>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-sky-400/20 flex items-center justify-center text-xl">💎</div>
               </div>
@@ -1696,36 +1754,170 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                     <span>+{user.diamondSubscription.dailyDiamonds} 💎/din</span>
                   </div>
                   {canClaimDailyDiamonds(user) ? (
-                    <button onClick={async () => {
-                      setClaimingDiamonds(true);
-                      const res = claimDailyDiamonds(user);
-                      if (res && await saveUserToLive(res.updatedUser)) {
-                        onUserUpdate(res.updatedUser);
-                        setDiamondClaimSuccessMsg('Diamonds Claimed!');
-                      }
-                      setClaimingDiamonds(false);
-                    }} disabled={claimingDiamonds} className="w-full py-2 bg-sky-400 text-slate-950 rounded-xl font-black text-xs">
-                      Claim Daily Drop
+                    <button
+                      onClick={async () => {
+                        setClaimingDiamonds(true);
+                        const res = claimDailyDiamonds(user);
+                        if (res && await saveUserToLive(res.updatedUser)) {
+                          onUserUpdate(res.updatedUser);
+                          setDiamondClaimSuccessMsg('Diamonds Claimed!');
+                          setTimeout(() => setDiamondClaimSuccessMsg(null), 5000);
+                        }
+                        setClaimingDiamonds(false);
+                      }}
+                      disabled={claimingDiamonds}
+                      className="w-full py-2 bg-sky-400 text-slate-950 rounded-xl font-black text-xs active:scale-95 transition-all shadow-md"
+                    >
+                      {claimingDiamonds ? 'Claiming...' : `Aaj Ke +${user.diamondSubscription.dailyDiamonds} 💎 Claim Karein`}
                     </button>
                   ) : (
-                    <p className="text-[11px] text-center text-slate-400">✓ Aaj ka claim ho gaya</p>
+                    <p className="text-[11px] text-center text-slate-400">✓ Aaj ka claim ho gaya!</p>
                   )}
                 </div>
               )}
             </div>
 
-            {/* Sub-nav */}
+            {/* Sub-navigation: Daily Passes vs Instant Packs */}
             <div className="grid grid-cols-2 gap-2 p-1 bg-black/40 border border-white/10 rounded-2xl">
-              <button onClick={() => setDiamondSubTab('PACKS')}
-                className={`py-2 text-xs font-black rounded-xl ${diamondSubTab === 'PACKS' ? 'bg-sky-400 text-slate-950' : 'text-slate-400'}`}>
-                📦 Diamond Packs
+              <button
+                type="button"
+                onClick={() => setDiamondSubTab('SUBSCRIPTION')}
+                className={`py-2 text-xs font-black rounded-xl transition-all ${
+                  diamondSubTab === 'SUBSCRIPTION' ? 'bg-sky-400 text-slate-950 shadow-md' : 'text-slate-400'
+                }`}
+              >
+                ⭐ Daily Pass (7D to 365D)
               </button>
-              <button onClick={() => setDiamondSubTab('SUBSCRIPTION')}
-                className={`py-2 text-xs font-black rounded-xl ${diamondSubTab === 'SUBSCRIPTION' ? 'bg-sky-400 text-slate-950' : 'text-slate-400'}`}>
-                ⭐ Subscriptions
+              <button
+                type="button"
+                onClick={() => setDiamondSubTab('PACKS')}
+                className={`py-2 text-xs font-black rounded-xl transition-all ${
+                  diamondSubTab === 'PACKS' ? 'bg-sky-400 text-slate-950 shadow-md' : 'text-slate-400'
+                }`}
+              >
+                📦 Instant Diamond Packs
               </button>
             </div>
 
+            {/* SUB-SECTION 1: UNIFIED DIAMOND PASSES (10 to 50 💎 / Day) */}
+            {diamondSubTab === 'SUBSCRIPTION' && (
+              <div className="space-y-4">
+                {diamondUnifiedTemplates.map(template => {
+                  const selectedDurId = selectedDiamondDurations[template.id] || '30_DAYS';
+                  const currentDur = DIAMOND_SUB_DURATIONS_LIST.find(d => d.id === selectedDurId) || DIAMOND_SUB_DURATIONS_LIST[1];
+                  
+                  const totalDiamonds = template.dailyDiamonds * currentDur.days;
+                  const baseStandardPrice = totalDiamonds * 2.00;
+                  const finalPrice = Math.round(totalDiamonds * currentDur.ratePerDiamond);
+                  const discountPct = Math.round(((baseStandardPrice - finalPrice) / baseStandardPrice) * 100);
+
+                  return (
+                    <div
+                      key={template.id}
+                      className="rounded-2xl p-4 border shadow-xl relative overflow-hidden"
+                      style={{
+                        background: 'linear-gradient(145deg, rgba(8,30,52,0.85) 0%, rgba(3,15,28,0.98) 100%)',
+                        borderColor: '#38bdf855',
+                        boxShadow: '0 8px 30px rgba(56,189,248,0.12)'
+                      }}
+                    >
+                      {/* Header */}
+                      <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-white/10">
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-base">{template.icon}</span>
+                            <h2 className="text-base font-black text-white">{template.name}</h2>
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-sky-400/20 text-sky-300 border border-sky-400/30">
+                              💎 +{template.dailyDiamonds}/din
+                            </span>
+                            {discountPct > 0 && (
+                              <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950">
+                                {discountPct}% OFF
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-slate-300 mt-1">
+                            Total: <strong className="text-sky-300">{totalDiamonds.toLocaleString('en-IN')} Diamonds</strong> (₹{currentDur.ratePerDiamond.toFixed(2)}/💎)
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <div className="flex items-baseline justify-end gap-1">
+                            {discountPct > 0 && (
+                              <span className="text-[11px] line-through text-slate-400">₹{baseStandardPrice}</span>
+                            )}
+                            <span className="text-2xl font-black text-sky-300">₹{finalPrice.toLocaleString('en-IN')}</span>
+                          </div>
+                          <span className="text-[9px] text-slate-400 block font-medium">₹{(finalPrice / currentDur.days).toFixed(1)}/din</span>
+                        </div>
+                      </div>
+
+                      {/* 5 Validity Selectors (7D, 30D, 90D, 180D, 365D) */}
+                      <div className="p-2 rounded-xl bg-black/40 border border-white/5 my-2.5">
+                        <div className="flex items-center justify-between mb-1.5 px-0.5">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-sky-400 flex items-center gap-1">
+                            <Clock size={11} /> VALIDITY CHUNEIN:
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-bold">{currentDur.days} Din Active</span>
+                        </div>
+                        <div className="grid grid-cols-5 gap-1">
+                          {DIAMOND_SUB_DURATIONS_LIST.map(dur => {
+                            const isSel = dur.id === selectedDurId;
+                            return (
+                              <button
+                                key={dur.id}
+                                type="button"
+                                onClick={() => setSelectedDiamondDurations(prev => ({ ...prev, [template.id]: dur.id }))}
+                                className={`py-1.5 px-0.5 rounded-lg text-center border text-xs transition-all ${
+                                  isSel
+                                    ? 'bg-sky-400 text-slate-950 font-black shadow-[0_0_10px_rgba(56,189,248,0.4)]'
+                                    : 'bg-white/5 text-slate-300 border-white/10 hover:bg-white/10'
+                                }`}
+                              >
+                                <span className="block font-black text-[10px] leading-tight">{dur.label}</span>
+                                <span className={`text-[8px] block ${isSel ? 'text-slate-900 font-bold' : 'text-slate-400'}`}>
+                                  ₹{dur.ratePerDiamond}/💎
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Features List */}
+                      <div className="my-2 p-2.5 rounded-xl bg-black/35 border border-white/10">
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {template.features.map((feat, idx) => (
+                            <div key={idx} className="flex items-start gap-1 text-[10.5px] text-slate-200">
+                              <span className="text-sky-400 font-bold">✓</span>
+                              <span className="truncate">{feat}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Subscribe CTA Button */}
+                      <button
+                        type="button"
+                        onClick={() => initiatePurchase({
+                          ...template,
+                          isDiamondSub: true,
+                          durationDays: currentDur.days,
+                          durationLabel: currentDur.label,
+                          price: finalPrice,
+                          totalDiamonds: totalDiamonds,
+                          ratePerDiamond: currentDur.ratePerDiamond
+                        })}
+                        className="w-full py-3 rounded-xl font-black text-xs text-slate-950 bg-gradient-to-r from-sky-400 to-cyan-300 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 shadow-md mt-3"
+                      >
+                        <Zap size={14} /> Subscribe {template.name} ({currentDur.label}) — ₹{finalPrice.toLocaleString('en-IN')}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* SUB-SECTION 2: INSTANT DIAMOND PACKS */}
             {diamondSubTab === 'PACKS' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {DIAMOND_PACKS.map(pack => (
@@ -1734,27 +1926,12 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                       <h4 className="text-sm font-black text-white">{pack.diamonds} 💎</h4>
                       <p className="text-[11px] text-slate-400">{pack.name}</p>
                     </div>
-                    <button onClick={() => initiatePurchase({ ...pack, isDiamondPack: true })}
-                      className="px-4 py-2 bg-sky-400 text-slate-950 font-black rounded-xl text-xs">
+                    <button
+                      type="button"
+                      onClick={() => initiatePurchase({ ...pack, isDiamondPack: true })}
+                      className="px-4 py-2 bg-sky-400 text-slate-950 font-black rounded-xl text-xs active:scale-95 transition-all shadow-md"
+                    >
                       ₹{pack.price}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {diamondSubTab === 'SUBSCRIPTION' && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {DIAMOND_SUBSCRIPTION_PLANS.map(plan => (
-                  <div key={plan.id} className="p-4 rounded-2xl border border-sky-400/20 bg-black/40">
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="text-sm font-black text-white">{plan.name}</h4>
-                      <span className="text-sm font-black text-sky-400">₹{plan.price}</span>
-                    </div>
-                    <p className="text-xs text-slate-300 mb-3">💎 {plan.dailyDiamonds}/day for {plan.durationDays} days</p>
-                    <button onClick={() => initiatePurchase({ ...plan, isDiamondSub: true })}
-                      className="w-full py-2 bg-sky-400 text-slate-950 font-black rounded-xl text-xs">
-                      Subscribe
                     </button>
                   </div>
                 ))}
