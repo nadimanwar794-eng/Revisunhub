@@ -1213,168 +1213,134 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
               />
             )}
 
-            {/* ── DEDICATED FREE PLAN COMPARISON CARD ── */}
-            <div
-              className="rounded-2xl p-4 border relative overflow-hidden shadow-xl"
-              style={{
-                background: 'linear-gradient(145deg, rgba(15,23,42,0.85) 0%, rgba(8,12,22,0.98) 100%)',
-                borderColor: 'rgba(148,163,184,0.35)',
-              }}
-            >
-              <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-white/10">
-                <div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-base">🎯</span>
-                    <h2 className="text-base font-black text-white">Free Starter Tier</h2>
-                    {(!user.isPremium || user.subscriptionLevel === 'FREE') && (
-                      <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/40">
-                        ACTIVE PLAN
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-slate-400 mt-0.5">
-                    Hamesha muft · Dekhein Free me kya milta hai aur Basic/Ultra me kya extra unlock hota hai
-                  </p>
-                </div>
-                <div className="text-right shrink-0">
-                  <span className="text-2xl font-black text-slate-200">₹0</span>
-                  <span className="text-[9px] text-slate-400 block font-bold uppercase">Forever Free</span>
-                </div>
-              </div>
+            {/* ── UNIFIED ALL-IN-ONE FREE COMPARISON CARD ── */}
+            {(() => {
+              const allTierMixFeatures = [
+                // 1. Free Starter Tier Features
+                { tier: 'FREE', text: 'Standard Daily MCQs Practice', icon: '❓' },
+                { tier: 'FREE', text: 'Standard Reading Mode Notes', icon: '📖' },
+                { tier: 'FREE', text: 'Daily Free Coin Claim', icon: '🪙' },
+                { tier: 'FREE', text: 'Login Streak & XP Tracker', icon: '🔥' },
+                { tier: 'FREE', text: 'Public Leaderboard View', icon: '🏆' },
+                { tier: 'FREE', text: 'Normal Speed Audio Reader', icon: '🎧' },
 
-              {/* Free Features Highlights Grid */}
-              <div className="grid grid-cols-3 gap-1.5 my-2.5">
-                <div className="p-2 rounded-xl bg-black/40 border border-white/5 text-center">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase block">Daily XP</span>
-                  <span className="text-xs font-black text-slate-200">1,500 pts</span>
-                </div>
-                <div className="p-2 rounded-xl bg-black/40 border border-white/5 text-center">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase block">Score Multiplier</span>
-                  <span className="text-xs font-black text-slate-200">1.0X Base</span>
-                </div>
-                <div className="p-2 rounded-xl bg-black/40 border border-white/5 text-center">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase block">Store Discount</span>
-                  <span className="text-xs font-black text-slate-200">0% Base</span>
-                </div>
-              </div>
+                // 2. Basic (Pro) Features (Sky Color)
+                ...(!isGroupStudyHidden ? [{ tier: 'BASIC', text: 'Group Study: Join Live Rooms & Battles', icon: '👥' }] : []),
+                { tier: 'BASIC', text: 'Daily XP Limit: +66%', icon: '🚀' },
+                { tier: 'BASIC', text: 'Credit Off Anywhere: 20%', icon: '🏷️' },
+                { tier: 'BASIC', text: 'Projector & PDF Mode', icon: '📽️' },
+                { tier: 'BASIC', text: 'Text Color & Fonts Custom', icon: '🎨' },
+                { tier: 'BASIC', text: 'Offline Download Available', icon: '📥' },
+                { tier: 'BASIC', text: 'Community MCQ Submission', icon: '💬' },
+                { tier: 'BASIC', text: 'Daily Claim: 50 Credits / Day', icon: '🪙' },
+                { tier: 'BASIC', text: 'XP Multiplier: 1.5X Boost', icon: '⚡' },
+                { tier: 'BASIC', text: 'Store Discount: +5%', icon: '💎' },
+                { tier: 'BASIC', text: 'Writing & Correction Mode', icon: '✍️' },
+                { tier: 'BASIC', text: 'All Basic Themes Free', icon: '🎭' },
+                { tier: 'BASIC', text: 'Detailed Score History', icon: '📊' },
 
-              {/* 1. Free Mein Kya Mil Raha Hai (Green) */}
-              <div className="p-3 rounded-xl bg-black/45 border border-emerald-500/20 mb-2.5">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs">✓</span>
-                    <span className="text-xs font-black text-emerald-400">Free Me Kya Mil Raha Hai</span>
-                  </div>
-                  <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                    UNLOCKED FOR ALL
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5 text-[10.5px]">
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-emerald-400">✓</span>
-                    <span className="truncate">Standard Daily MCQs</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-emerald-400">✓</span>
-                    <span className="truncate">Standard Reading Mode</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-emerald-400">✓</span>
-                    <span className="truncate">Login Streak & Tracker</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-emerald-400">✓</span>
-                    <span className="truncate">Free Daily Coin Claim</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-emerald-400">✓</span>
-                    <span className="truncate">Public Leaderboard</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-emerald-400">✓</span>
-                    <span className="truncate">Normal Speed Audio</span>
-                  </div>
-                </div>
-              </div>
+                // 3. Ultra (Max) Features (Purple Color)
+                ...(!isGroupStudyHidden ? [{ tier: 'ULTRA', text: 'Group Study Pro: Host Live Classroom & Battles', icon: '🎓' }] : []),
+                { tier: 'ULTRA', text: 'Daily Claim: 100 Credits / Day', icon: '🪙' },
+                { tier: 'ULTRA', text: 'All Basic Features Included', icon: '✨' },
+                { tier: 'ULTRA', text: 'Ultra Mode (Reading Notes)', icon: '⚡' },
+                { tier: 'ULTRA', text: 'Store Discount: +10% (Pro & Max)', icon: '💎' },
+                { tier: 'ULTRA', text: 'Daily XP Limit: +133%', icon: '🚀' },
+                { tier: 'ULTRA', text: 'XP Multiplier: 2.0X Super Boost', icon: '🔥' },
+                { tier: 'ULTRA', text: 'Global Student Chat', icon: '🌐' },
+                { tier: 'ULTRA', text: 'Priority Content Requests', icon: '💡' },
+                { tier: 'ULTRA', text: 'Concept Video Mode', icon: '🎬' },
+                { tier: 'ULTRA', text: 'VIP Golden Crown & Glow', icon: '👑' },
+                { tier: 'ULTRA', text: 'Credit Off Anywhere: 40%', icon: '🏷️' },
+                { tier: 'ULTRA', text: 'All Ultra Themes Free', icon: '🎭' },
+                { tier: 'ULTRA', text: 'Flashcard Memory Mode', icon: '🗂️' },
+                { tier: 'ULTRA', text: '3,000 MCQ / Day Limit', icon: '🎯' },
+              ];
 
-              {/* 2. Basic Upgrade Features (Cyan Accent) */}
-              <div className="p-3 rounded-xl bg-cyan-950/20 border border-cyan-400/30 mb-2.5">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs">⭐</span>
-                    <span className="text-xs font-black text-cyan-300">Basic (Pro) Upgrade Features</span>
+              return (
+                <div
+                  className="rounded-2xl p-4 border relative overflow-hidden shadow-xl"
+                  style={{
+                    background: 'linear-gradient(145deg, rgba(15,23,42,0.85) 0%, rgba(8,12,22,0.98) 100%)',
+                    borderColor: 'rgba(148,163,184,0.35)',
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-white/10">
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-base">🎯</span>
+                        <h2 className="text-base font-black text-white">Free Starter Tier</h2>
+                        {(!user.isPremium || user.subscriptionLevel === 'FREE') && (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/40">
+                            ACTIVE PLAN
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        Free starter perks aur Basic (Sky) & Ultra (Purple) unlocks ka complete mix overview
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-2xl font-black text-slate-200">₹0</span>
+                      <span className="text-[9px] text-slate-400 block font-bold uppercase">Forever Free</span>
+                    </div>
                   </div>
-                  <span className="text-[9px] font-bold text-cyan-300 bg-cyan-500/15 px-2 py-0.5 rounded-full border border-cyan-400/30">
-                    PRO COLOR
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5 text-[10.5px]">
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-cyan-400 font-bold">⚡</span>
-                    <span className="truncate">1.5X Score Multiplier</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-cyan-400 font-bold">🪙</span>
-                    <span className="truncate">Daily 50 Credits Drop</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-cyan-400 font-bold">🏷️</span>
-                    <span className="truncate">Flat 20% Off Everywhere</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-cyan-400 font-bold">📽️</span>
-                    <span className="truncate">Projector & PDF Mode</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-cyan-400 font-bold">✍️</span>
-                    <span className="truncate">Writing & Mistake Correction</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-cyan-400 font-bold">🎨</span>
-                    <span className="truncate">All Basic Themes Free</span>
-                  </div>
-                </div>
-              </div>
 
-              {/* 3. Ultra Upgrade Features (Purple Accent) */}
-              <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-400/30">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs">👑</span>
-                    <span className="text-xs font-black text-purple-300">Ultra (Max) Upgrade Features</span>
+                  {/* Badges Indicator */}
+                  <div className="flex items-center gap-1.5 my-2.5 overflow-x-auto pb-1 scrollbar-hide text-[9.5px] font-black">
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
+                      ● Free Features
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-400 border border-sky-400/30 shrink-0">
+                      ● Basic (Sky) Unlocks
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-400/30 shrink-0">
+                      ● Ultra (Purple) Unlocks
+                    </span>
                   </div>
-                  <span className="text-[9px] font-bold text-purple-300 bg-purple-500/15 px-2 py-0.5 rounded-full border border-purple-400/30">
-                    ULTRA COLOR
-                  </span>
+
+                  {/* Unified Features Grid with Individual Tier Colors */}
+                  <div className="p-2.5 rounded-xl bg-black/40 border border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {allTierMixFeatures.map((item, idx) => {
+                      const isFree = item.tier === 'FREE';
+                      const isBasic = item.tier === 'BASIC';
+                      const isUltra = item.tier === 'ULTRA';
+
+                      const textColor = isFree
+                        ? 'text-slate-300'
+                        : isBasic
+                        ? 'text-sky-300'
+                        : 'text-purple-300';
+
+                      const badgeStyle = isFree
+                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                        : isBasic
+                        ? 'bg-sky-500/20 text-sky-300 border-sky-400/35'
+                        : 'bg-purple-500/20 text-purple-300 border-purple-400/35';
+
+                      const badgeText = isFree ? 'FREE' : isBasic ? 'BASIC' : 'ULTRA';
+
+                      return (
+                        <div
+                          key={idx}
+                          className="flex items-center justify-between gap-1.5 p-2 rounded-lg bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] transition-colors"
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-xs shrink-0">{item.icon}</span>
+                            <span className={`text-[11px] font-bold truncate ${textColor}`}>
+                              {item.text}
+                            </span>
+                          </div>
+                          <span className={`text-[8px] font-black px-1.5 py-0.2 rounded border shrink-0 leading-tight ${badgeStyle}`}>
+                            {badgeText}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-1.5 text-[10.5px]">
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-purple-400 font-bold">🔥</span>
-                    <span className="truncate">2.0X Double Score Boost</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-purple-400 font-bold">🪙</span>
-                    <span className="truncate">Daily 100 Credits Drop</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-purple-400 font-bold">🏷️</span>
-                    <span className="truncate">Flat 40% Off Everywhere</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-purple-400 font-bold">🗂️</span>
-                    <span className="truncate">Flashcard Memory Mode</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-purple-400 font-bold">🎬</span>
-                    <span className="truncate">Full Concept Video Mode</span>
-                  </div>
-                  <div className="flex items-start gap-1 text-slate-300">
-                    <span className="text-purple-400 font-bold">👑</span>
-                    <span className="truncate">Golden VIP Crown & Themes</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {(() => {
               const renderVipCard = (tierTarget: 'BASIC' | 'ULTRA') => {
