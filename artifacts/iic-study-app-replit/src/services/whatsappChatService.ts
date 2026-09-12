@@ -2,6 +2,9 @@
 import { ref, set, get, update, onValue, push, remove } from 'firebase/database';
 import { doc, setDoc, collection, getDocs, limit, query, onSnapshot } from 'firebase/firestore';
 import { rtdb, db } from '../firebase';
+import { User } from '../types';
+import { isDiamondSubActive } from '../utils/diamondUtils';
+import { isCreditSubActive } from '../utils/creditSubscriptionUtils';
 
 export interface ChatContact {
   id: string;
@@ -79,6 +82,285 @@ export interface ChatGroup {
   lastMessageTime?: number;
   lastMessageSender?: string;
   isOfficial?: boolean;
+  requiredTier?: 'FREE' | 'BASIC' | 'ULTRA' | 'DIAMONDS' | 'CREDITS';
+}
+
+/**
+ * 5 Default Official Groups in NSTA Messenger:
+ * 1. Free Community Hub: Open to all users (Free, Basic, Ultra)
+ * 2. Basic VIP Club: Only Basic & Ultra active subscribers
+ * 3. Ultra Elite Club: Only Ultra active subscribers
+ * 4. Diamond VIP Lounge: Only active Diamond Subscription holders
+ * 5. Credit Pass Hub: Only active Daily Credit Pass subscribers
+ */
+export const DEFAULT_STUDY_GROUPS: ChatGroup[] = [
+  {
+    id: 'group_default_free',
+    name: '🆓 Free Community Hub',
+    emoji: '🆓',
+    subject: 'All Students Open Chat',
+    description: 'Sabhi students ke liye open discussion aur general study doubt-solving hub.',
+    creatorId: 'admin_official',
+    creatorName: 'IIC Academy',
+    createdAt: 1700000000000,
+    memberCount: 280,
+    isPrivate: false,
+    isOfficial: true,
+    requiredTier: 'FREE',
+    members: {},
+    lastMessage: 'Welcome students! Daily doubt solving & study discussions open.',
+    lastMessageTime: Date.now() - 1000 * 60 * 20,
+    lastMessageSender: 'Admin',
+  },
+  {
+    id: 'group_default_basic',
+    name: '🔵 Basic VIP Club',
+    emoji: '🔵',
+    subject: 'Basic & Ultra Study Hub',
+    description: 'Exclusive study group for Basic & Ultra subscribers. Special worksheets and discussions.',
+    creatorId: 'admin_official',
+    creatorName: 'IIC Academy',
+    createdAt: 1700000000000,
+    memberCount: 145,
+    isPrivate: false,
+    isOfficial: true,
+    requiredTier: 'BASIC',
+    members: {},
+    lastMessage: 'Basic & Ultra practice worksheets upload ho gayi hain.',
+    lastMessageTime: Date.now() - 1000 * 60 * 60,
+    lastMessageSender: 'Admin',
+  },
+  {
+    id: 'group_default_ultra',
+    name: '⚡ Ultra Elite Club',
+    emoji: '⚡',
+    subject: 'Ultra VIP Mastermind',
+    description: 'Exclusive mastermind study group reserved for Ultra subscribers only.',
+    creatorId: 'admin_official',
+    creatorName: 'IIC Academy',
+    createdAt: 1700000000000,
+    memberCount: 68,
+    isPrivate: false,
+    isOfficial: true,
+    requiredTier: 'ULTRA',
+    members: {},
+    lastMessage: 'Ultra members ke liye special strategy session update!',
+    lastMessageTime: Date.now() - 1000 * 60 * 120,
+    lastMessageSender: 'Admin',
+  },
+  {
+    id: 'group_default_diamond',
+    name: '💎 Diamond VIP Lounge',
+    emoji: '💎',
+    subject: 'Diamond Store VIPs',
+    description: 'Exclusive group for active Diamond Subscription holders & Diamond VIPs.',
+    creatorId: 'admin_official',
+    creatorName: 'IIC Academy',
+    createdAt: 1700000000000,
+    memberCount: 42,
+    isPrivate: false,
+    isOfficial: true,
+    requiredTier: 'DIAMONDS',
+    members: {},
+    lastMessage: 'Diamond store subscribers ke daily bonus drops active hain.',
+    lastMessageTime: Date.now() - 1000 * 60 * 180,
+    lastMessageSender: 'Admin',
+  },
+  {
+    id: 'group_default_credit',
+    name: '🪙 Credit Pass Hub',
+    emoji: '🪙',
+    subject: 'Daily Credit Pass Holders',
+    description: 'Exclusive group for active Daily Credit Pass subscribers.',
+    creatorId: 'admin_official',
+    creatorName: 'IIC Academy',
+    createdAt: 1700000000000,
+    memberCount: 85,
+    isPrivate: false,
+    isOfficial: true,
+    requiredTier: 'CREDITS',
+    members: {},
+    lastMessage: 'Daily Credit Pass members ke daily bonus rewards update!',
+    lastMessageTime: Date.now() - 1000 * 60 * 240,
+    lastMessageSender: 'Admin',
+  },
+];
+
+/**
+ * Check if a user is allowed in a specific group.
+ * If user subscription has expired, entry is locked!
+ */
+export function isUserAllowedInGroup(
+  group: ChatGroup,
+  user: User
+): { allowed: boolean; reason?: string; requiredPlanName?: string; storeTarget?: 'BASIC' | 'ULTRA' | 'DIAMONDS' | 'CREDITS' } {
+  if (user.role === 'ADMIN' || user.role === 'TEACHER') {
+    return { allowed: true };
+  }
+
+  // Creator can always access their created groups
+  if (group.creatorId === user.id) {
+    return { allowed: true };
+  }
+
+  // Non-official or unassigned tier groups are open to all members
+  if (!group.requiredTier || group.requiredTier === 'FREE') {
+    return { allowed: true };
+  }
+
+  const isUltra = !!(
+    user.isPremium &&
+    (user.subscriptionLevel === 'ULTRA' || (user.subscriptionLevel as any) === 'PRO') &&
+    (!user.subscriptionEndDate || new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+  const isBasic = !!(
+    user.isPremium &&
+    (user.subscriptionLevel === 'BASIC' || isUltra) &&
+    (!user.subscriptionEndDate || new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+
+  if (group.requiredTier === 'BASIC') {
+    if (isBasic) return { allowed: true };
+    return {
+      allowed: false,
+      reason: 'Yeh group sirf BASIC aur ULTRA active subscribers ke liye hai. Subscription khatam ya inactive hone par group locked ho gaya hai.',
+      requiredPlanName: 'Basic VIP Plan',
+      storeTarget: 'BASIC',
+    };
+  }
+
+  if (group.requiredTier === 'ULTRA') {
+    if (isUltra) return { allowed: true };
+    return {
+      allowed: false,
+      reason: 'Yeh group sirf ULTRA VIP active subscribers ke liye reserved hai. Subscription khatam ya inactive hone par group locked ho gaya hai.',
+      requiredPlanName: 'Ultra Elite Plan',
+      storeTarget: 'ULTRA',
+    };
+  }
+
+  if (group.requiredTier === 'DIAMONDS') {
+    const isDiaActive = isDiamondSubActive(user);
+    if (isDiaActive) return { allowed: true };
+    return {
+      allowed: false,
+      reason: 'Yeh group sirf active Diamond Store Subscription holders ke liye reserved hai. Subscription khatam ya inactive hone par group locked ho gaya hai.',
+      requiredPlanName: 'Diamond Store Subscription',
+      storeTarget: 'DIAMONDS',
+    };
+  }
+
+  if (group.requiredTier === 'CREDITS') {
+    const isCredActive = isCreditSubActive(user);
+    if (isCredActive) return { allowed: true };
+    return {
+      allowed: false,
+      reason: 'Yeh group sirf active Daily Credit Pass subscribers ke liye reserved hai. Credit Pass khatam ya inactive hone par group locked ho gaya hai.',
+      requiredPlanName: 'Credit Store Daily Pass',
+      storeTarget: 'CREDITS',
+    };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * NSTA Messenger Friend Limits:
+ * - Free user: Max 10 friends
+ * - Basic user: Max 25 friends
+ * - Ultra user: Max 50 friends
+ * - Level scaling: Har level pe sabke friend limit me 10 badhenge (e.g. Level 1 = base, Level 2 = +10, Level 10 = +90, Level 11 = +100...)
+ */
+export function getMaxFriendsLimit(user: User): { base: number; levelBonus: number; total: number; userLevel: number; tierName: string } {
+  if (user.role === 'ADMIN' || user.role === 'TEACHER') {
+    return { base: 99999, levelBonus: 0, total: 99999, userLevel: 10, tierName: 'ADMIN' };
+  }
+  const isUltra = !!(
+    user.isPremium &&
+    (user.subscriptionLevel === 'ULTRA' || (user.subscriptionLevel as any) === 'PRO') &&
+    (!user.subscriptionEndDate || new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+  const isBasic = !!(
+    user.isPremium &&
+    user.subscriptionLevel === 'BASIC' &&
+    (!user.subscriptionEndDate || new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+  const base = isUltra ? 50 : isBasic ? 25 : 10;
+  const tierName = isUltra ? 'ULTRA' : isBasic ? 'BASIC' : 'FREE';
+  const userLevel = Math.max(1, Number(user.level || 1));
+  const levelBonus = Math.max(0, userLevel - 1) * 10;
+  return { base, levelBonus, total: base + levelBonus, userLevel, tierName };
+}
+
+/**
+ * NSTA Messenger Daily Message Limits:
+ * - Free user: 20 messages / day
+ * - Basic user: 50 messages / day
+ * - Ultra user: 100 messages / day
+ * - Admin/Teacher: Unlimited
+ */
+export function getNstaDailyMessageLimit(user: User): number {
+  if (user.role === 'ADMIN' || user.role === 'TEACHER') return 999999;
+  const isUltra = !!(
+    user.isPremium &&
+    (user.subscriptionLevel === 'ULTRA' || (user.subscriptionLevel as any) === 'PRO') &&
+    (!user.subscriptionEndDate || new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+  if (isUltra) return 100;
+  const isBasic = !!(
+    user.isPremium &&
+    user.subscriptionLevel === 'BASIC' &&
+    (!user.subscriptionEndDate || new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+  if (isBasic) return 50;
+  return 20; // Free user daily message limit
+}
+
+export function getNstaDailyMessageCount(userId: string): number {
+  if (!userId) return 0;
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `nsta_daily_msgs_${userId}_${today}`;
+  return parseInt(localStorage.getItem(key) || '0', 10);
+}
+
+export function incrementNstaDailyMessageCount(userId: string): number {
+  if (!userId) return 1;
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `nsta_daily_msgs_${userId}_${today}`;
+  const current = parseInt(localStorage.getItem(key) || '0', 10);
+  const updated = current + 1;
+  localStorage.setItem(key, String(updated));
+  return updated;
+}
+
+export function canUserSendNstaMessage(user: User): {
+  allowed: boolean;
+  count: number;
+  limit: number;
+  remaining: number;
+  planName: string;
+} {
+  const limit = getNstaDailyMessageLimit(user);
+  const count = getNstaDailyMessageCount(user.id);
+  const isUltra = !!(
+    user.isPremium &&
+    (user.subscriptionLevel === 'ULTRA' || (user.subscriptionLevel as any) === 'PRO') &&
+    (!user.subscriptionEndDate || new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+  const isBasic = !!(
+    user.isPremium &&
+    user.subscriptionLevel === 'BASIC' &&
+    (!user.subscriptionEndDate || new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+  const planName = user.role === 'ADMIN' ? 'Admin' : isUltra ? 'Ultra' : isBasic ? 'Basic' : 'Free';
+  const remaining = Math.max(0, limit - count);
+  return {
+    allowed: count < limit,
+    count,
+    limit,
+    remaining,
+    planName,
+  };
 }
 
 export interface ConversationSummary {
@@ -1856,21 +2138,22 @@ function saveLocalMessage(key: string, msg: ChatMessage, currentUserId?: string)
 }
 
 export function getLocalGroups(): ChatGroup[] {
+  let userCreated: ChatGroup[] = [];
   try {
     const raw = localStorage.getItem('wa_study_groups');
     if (raw) {
       const parsed: ChatGroup[] = JSON.parse(raw);
-      // Strip any legacy demo group IDs
-      const cleaned = parsed.filter(
+      // Strip any legacy demo group IDs and default group duplicates
+      userCreated = parsed.filter(
         (g) =>
           g.id !== 'group_board_warriors' &&
           g.id !== 'group_maths_doubts' &&
-          g.id !== 'group_lucent_gk'
+          g.id !== 'group_lucent_gk' &&
+          !DEFAULT_STUDY_GROUPS.some((def) => def.id === g.id)
       );
-      return cleaned;
     }
   } catch {}
-  return [];
+  return [...DEFAULT_STUDY_GROUPS, ...userCreated];
 }
 
 // ── Starter Peer Messages (No fake demo messages) ───────────────

@@ -65,7 +65,7 @@ export default defineConfig({
         ],
       },
       workbox: {
-        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+        maximumFileSizeToCacheInBytes: 15000000,
         globIgnores: ['**/*.map'],
         skipWaiting: true,
         clientsClaim: true,

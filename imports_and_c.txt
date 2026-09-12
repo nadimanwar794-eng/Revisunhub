@@ -1,0 +1,105 @@
+// @ts-nocheck
+import React, { useState, useEffect } from 'react';
+import { User, CreditPackage, SystemSettings } from '../types';
+import {
+Sparkles, Check, MessageSquare, Lock, Ticket, ShieldCheck, Star,
+ChevronRight, ChevronDown, Flame, BadgeCheck, History, TrendingDown,
+Calendar, Clock, Crown, DollarSign, ArrowLeft, Zap, Gift, Coins,
+Package, Wallet, X, ArrowLeftRight
+} from 'lucide-react';
+import { saveUserToLive } from '../firebase';
+import { getLevelInfo, getScoreDiscountFromScore, getNextLevelInfo, getLevelProgress, getLevelDailyLimitsWithOverride, UNLIMITED } from '../utils/levelSystem';
+import { SCORE_MULTIPLIERS, getDailyScoreLimit, getUserScoreMultiplier } from '../utils/scoreSystem';
+import { addSubscription, isSubscriptionFromCoins } from '../utils/subscriptionUtils';
+import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
+import { recordCreditTx } from '../utils/creditHistory';
+import {
+loadRoutineData, saveRoutineData, checkAndResetDaily,
+getUserSubTier, ensureTodayClaimEntry, claimAllPendingCoins,
+getUnclaimedCoins, getDailyClaimAmount, DAILY_CLAIM_PRO, DAILY_CLAIM_MAX_PRO,
+type UserSubTier,
+} from '../utils/routineStorage';
+import {
+getCreditSubPlans,
+isCreditSubActive,
+canClaimCreditSubToday,
+getCreditSubDaysRemaining,
+claimDailyCreditSub,
+CREDIT_SUB_DURATIONS,
+type CreditSubDurationId,
+calculateCreditSubPrice,
+getCreditSubPlanMultiplier,
+} from '../utils/creditSubscriptionUtils';
+import {
+DIAMOND_PACKS,
+PRESET_DIAMOND_SUB_TEMPLATES,
+CREDITS_PER_DIAMOND,
+exchangeDiamondsForCredits,
+claimDailyDiamonds,
+canClaimDailyDiamonds,
+DIAMOND_SUBSCRIPTION_PLANS,
+} from '../utils/diamondUtils';
+import {
+DIAMOND_SUB_DURATIONS,
+type DiamondSubDurationId,
+calculateDiamondSubPrice,
+} from '../utils/diamondSubOptions';
+
+interface Props {
+user: User;
+settings?: SystemSettings;
+onUserUpdate: (user: User) => void;
+renderEarnContent?: React.ReactNode;
+onBack?: () => void;
+themeColor?: string;
+tierTheme?: any;
+initialTier?: 'FREE' | 'SUBSCRIPTION' | 'CREDITS' | 'DIAMONDS' | 'HISTORY';
+}
+
+/* ─── Fixed color palette ─── */
+const C = {
+bg: '#07070e',
+surface: '#0f0f1a',
+surfaceHigh: '#181826',
+surfaceMid: '#13131f',
+border: 'rgba(255,255,255,0.07)',
+borderMed: 'rgba(255,255,255,0.13)',
+text: '#f1f5f9',
+textMuted: '#64748b',
+textDim: '#2d3748',
+
+pro: '#22d3ee',
+proBg: 'rgba(34,211,238,0.08)',
+proBorder: 'rgba(34,211,238,0.30)',
+proGlow: 'rgba(34,211,238,0.20)',
+proGrad: 'linear-gradient(135deg,#0891b2 0%,#22d3ee 60%,#67e8f9 100%)',
+
+max: '#c084fc',
+maxBg: 'rgba(192,132,252,0.08)',
+maxBorder: 'rgba(192,132,252,0.30)',
+maxGlow: 'rgba(192,132,252,0.20)',
+maxGrad: 'linear-gradient(135deg,#7c3aed 0%,#a855f7 50%,#e879f9 100%)',
+
+credit: '#10b981',
+creditBg: 'rgba(16,185,129,0.10)',
+creditBorder: 'rgba(16,185,129,0.32)',
+creditGlow: 'rgba(16,185,129,0.22)',
+creditGrad: 'linear-gradient(135deg,#059669 0%,#10b981 60%,#34d399 100%)',
+
+gold: '#fbbf24',
+goldBg: 'rgba(251,191,36,0.10)',
+goldBorder: 'rgba(251,191,36,0.28)',
+
+earn: '#34d399',
+earnBg: 'rgba(52,211,153,0.08)',
+earnBorder: 'rgba(52,211,153,0.28)',
+
+green: '#34d399',
+greenBg: 'rgba(52,211,153,0.09)',
+greenBorder: 'rgba(52,211,153,0.30)',
+
+diamond: '#38bdf8',
+diamondBg: 'rgba(56,189,248,0.12)',
+diamondBorder:'rgba(56,189,248,0.35)',
+diamondGlow: 'rgba(56,189,248,0.25)',
+};

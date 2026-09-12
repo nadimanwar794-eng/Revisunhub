@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { User, ViewState, SystemSettings, Subject, Chapter, MCQItem, RecoveryRequest, ActivityLogEntry, LeaderboardEntry, RecycleBinItem, Stream, Board, ClassLevel, GiftCode, SubscriptionPlan, CreditPackage, CreditSubscriptionPlan, UserCreditSubscription, SpinReward, SpinGameType, HtmlModule, PremiumNoteSlot, ContentInfoConfig, ContentInfoItem, SubscriptionHistoryEntry, UniversalAnalysisLog, ContentType, LessonContent, DeepDiveEntry, AdditionalNoteEntry, TeacherStorePlan, TeacherCode, HomeworkItem, LucentNoteEntry, LucentPageNote, AppNotification, BroadcastRedeemCode, LoginBonusRandomGiftOption } from '../types';
 import { DEFAULT_CREDIT_SUB_PLANS, PRESET_CREDIT_SUB_TEMPLATES, grantCreditSubscription, cancelCreditSubscription, getCreditSubPlanMultiplier } from '../utils/creditSubscriptionUtils';
+import { activateDiamondSub, cancelDiamondSub, isDiamondSubActive, getDiamondSubDaysRemaining, DIAMOND_SUBSCRIPTION_PLANS } from '../utils/diamondUtils';
 import { List, GraduationCap, LayoutDashboard, Users, Search, Trash2, Save, X, Eye, EyeOff, Shield, Megaphone, CheckCircle, ListChecks, Database, FileText, Monitor, Sparkles, Banknote, BrainCircuit, AlertOctagon, ArrowLeft, ArrowRight, Key, Bell, ShieldCheck, Lock, Globe, Layers, Zap, PenTool, RefreshCw, RotateCcw, Plus, LogOut, Download, Upload, CreditCard, Ticket, Video, Image as ImageIcon, Type, Link, FileJson, Activity, AlertTriangle, Gift, Book, Mail, Edit3, MessageSquare, ShoppingBag, Cloud, Rocket, Code2, Layers as LayersIcon, Wifi, WifiOff, Copy, Crown, Gamepad2, Calendar, BookOpen, Image, HelpCircle, Youtube, Play, Star, Trophy, Palette, Settings, Headphones, Layout, Bot, LayoutDashboard as DashboardIcon, Loader2, Gauge, LayoutGrid, ArrowUpCircle, KeyRound, Award, Send, GitCompare, Lightbulb, ThumbsUp, ThumbsDown, Building2, TrendingUp, Coins } from 'lucide-react';
 import { getSubjectsList, DEFAULT_SUBJECTS, DEFAULT_APP_FEATURES, ALL_APP_FEATURES, STUDENT_APP_FEATURES, DEFAULT_CONTENT_INFO_CONFIG, ADMIN_PERMISSIONS, APP_VERSION, STATIC_SYLLABUS, LEVEL_UNLOCKABLE_FEATURES, LUCENT_SUBJECT_OPTIONS_BASE, getClassSubjectOptions, SUPPORT_PHONE } from '../constants';
 import { AdminClassMcqManager } from './AdminClassMcqManager';
@@ -1532,11 +1533,13 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   // --- USER EDIT MODAL STATE ---
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [editUserCredits, setEditUserCredits] = useState(0);
+  const [editUserDiamonds, setEditUserDiamonds] = useState(0);
   const [editUserScore, setEditUserScore] = useState(0);
   const [editUserPass, setEditUserPass] = useState('');
+  const [selectedUserDiamondSubPlanId, setSelectedUserDiamondSubPlanId] = useState<string>('7_DAYS_PASS');
   const [dmText, setDmText] = useState('');
   const [dmUser, setDmUser] = useState<User | null>(null);
-  const [giftType, setGiftType] = useState<'NONE' | 'CREDITS' | 'SUBSCRIPTION' | 'ANIMATION' | 'SCORE'>('NONE');
+  const [giftType, setGiftType] = useState<'NONE' | 'CREDITS' | 'DIAMONDS' | 'DIAMOND_SUBSCRIPTION' | 'SUBSCRIPTION' | 'ANIMATION' | 'SCORE'>('NONE');
   const [giftValue, setGiftValue] = useState<string | number>('');
   const [giftDuration, setGiftDuration] = useState(24); // Hours
   const [giftCreditsExpiry, setGiftCreditsExpiry] = useState(30); // Days until gifted credits expire
@@ -1977,7 +1980,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   };
 
   // --- GIFT CODE STATE ---
-  const [newCodeType, setNewCodeType] = useState<'CREDITS' | 'CREDIT_SUBSCRIPTION' | 'SUBSCRIPTION' | 'DISCOUNT' | 'CONTENT_UNLOCK' | 'TOPBAR_EFFECT_COLOR' | 'TOPBAR_EFFECT_ID' | 'SCORE' | 'SCORE_BOOST' | 'SCORE_LIMIT_BOOST' | 'THEME_COLOR'>('CREDITS');
+  const [newCodeType, setNewCodeType] = useState<'CREDITS' | 'CREDIT_SUBSCRIPTION' | 'DIAMONDS' | 'DIAMOND_SUBSCRIPTION' | 'SUBSCRIPTION' | 'DISCOUNT' | 'CONTENT_UNLOCK' | 'TOPBAR_EFFECT_COLOR' | 'TOPBAR_EFFECT_ID' | 'SCORE' | 'SCORE_BOOST' | 'SCORE_LIMIT_BOOST' | 'THEME_COLOR'>('CREDITS');
+  const [newCodeDiamonds, setNewCodeDiamonds] = useState<number>(50);
+  const [newCodeDiamondSubPlan, setNewCodeDiamondSubPlan] = useState<string>('7_DAYS_PASS');
   const [newCodeCreditPlanId, setNewCodeCreditPlanId] = useState<string>('');
   const [newCodeCreditDaily, setNewCodeCreditDaily] = useState<number>(100);
   const [newCodeCreditDays, setNewCodeCreditDays] = useState<number>(30);
@@ -2010,6 +2015,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
   // --- BROADCAST REDEEM CODE STATE ---
   const [broadcastType, setBroadcastType] = useState<BroadcastRedeemCode['type']>('CREDITS');
+  const [broadcastDiamondAmount, setBroadcastDiamondAmount] = useState<number>(50);
+  const [broadcastDiamondSubPlan, setBroadcastDiamondSubPlan] = useState<string>('7_DAYS_PASS');
   const [broadcastCreditPlanId, setBroadcastCreditPlanId] = useState<string>('');
   const [broadcastCreditDaily, setBroadcastCreditDaily] = useState<number>(100);
   const [broadcastCreditDays, setBroadcastCreditDays] = useState<number>(30);
@@ -2291,7 +2298,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
       const boardNotesStr = localStorage.getItem('nst_board_notes');
       const parsedNotes = _sp<string>(boardNotesStr, '');
-      if (parsedNotes) setBoardNotes(parsedNotes);
+      if (parsedNotes && typeof (window as any).setBoardNotes === 'function') (window as any).setBoardNotes(parsedNotes);
 
       // Load IndexedDB trash (auto-saved before Firebase deletions)
       loadIndexedDbTrash();
@@ -2826,6 +2833,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   const openEditUser = (user: User) => {
       setEditingUser(user);
       setEditUserCredits(user.credits);
+      setEditUserDiamonds(user.diamonds || 0);
       setEditUserScore(user.totalScore || 0);
       setEditUserPass(user.password);
       setEditSubscriptionTier(user.subscriptionTier || 'FREE');
@@ -3019,6 +3027,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       const updatedUser: User = { 
           ...editingUser, 
           credits: editUserCredits,
+          diamonds: editUserDiamonds,
           totalScore: editUserScore,
           password: editUserPass,
           subscriptionTier: editSubscriptionTier,
@@ -3068,6 +3077,20 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
               giftPayload = {
                   type: giftType,
                   value: giftValue,
+                  durationHours: giftDuration
+              };
+          } else if (giftType === 'DIAMONDS') {
+              // Gift diamonds via inbox — user must claim to receive them
+              giftPayload = {
+                  type: 'DIAMONDS',
+                  value: Number(giftValue) || 50,
+                  durationHours: giftDuration
+              };
+          } else if (giftType === 'DIAMOND_SUBSCRIPTION') {
+              // Gift diamond subscription pass via inbox
+              giftPayload = {
+                  type: 'DIAMOND_SUBSCRIPTION',
+                  value: String(giftValue || '7_DAYS_PASS'),
                   durationHours: giftDuration
               };
           } else {
@@ -3128,6 +3151,12 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
               if (newCodeType === 'CREDIT_SUBSCRIPTION') {
                   prefix = 'CRSUB';
                   code = prefix + '-' + code.substring(0, 8);
+              } else if (newCodeType === 'DIAMONDS') {
+                  prefix = 'DIA';
+                  code = prefix + '-' + code.substring(0, 8);
+              } else if (newCodeType === 'DIAMOND_SUBSCRIPTION') {
+                  prefix = 'DIASUB';
+                  code = prefix + '-' + code.substring(0, 8);
               } else if (newCodeType === 'CONTENT_UNLOCK') {
                   if (newCodeContentType === 'VIDEO') prefix = 'V';
                   if (newCodeContentType === 'PDF') prefix = 'N';
@@ -3141,6 +3170,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   code: code.toUpperCase(),
                   type: newCodeType || 'CREDITS',
                   ...(newCodeType === 'CREDITS' ? { amount: newCodeAmount || 10 } : {}),
+                  ...(newCodeType === 'DIAMONDS' ? { diamondAmount: newCodeDiamonds || 50, amount: newCodeDiamonds || 50 } : {}),
+                  ...(newCodeType === 'DIAMOND_SUBSCRIPTION' ? { diamondSubPlanId: newCodeDiamondSubPlan || '7_DAYS_PASS' } : {}),
                   ...(newCodeType === 'CREDIT_SUBSCRIPTION' ? {
                       creditPlanId: newCodeCreditPlanId || `csp-redeem-${Date.now()}`,
                       creditPlanName: newCodeCreditPlanName || `${newCodeCreditDaily} Daily Credits Pass`,
@@ -3226,6 +3257,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
               message: broadcastMessage.trim(),
               title: broadcastTitle.trim() || `🎁 Admin ka Special Gift!`,
               amount: broadcastType === 'CREDITS' ? broadcastAmount : undefined,
+              diamondAmount: broadcastType === 'DIAMONDS' ? broadcastDiamondAmount : undefined,
+              diamondSubPlanId: broadcastType === 'DIAMOND_SUBSCRIPTION' ? broadcastDiamondSubPlan : undefined,
               scoreAmount: broadcastType === 'SCORE' ? broadcastScoreAmount : undefined,
               scoreBoostPercent: broadcastType === 'SCORE_BOOST' ? broadcastScoreBoostPercent : undefined,
               scoreBoostDurationHours: broadcastType === 'SCORE_BOOST' ? broadcastScoreBoostHours : undefined,
@@ -6673,6 +6706,67 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       className={`w-12 h-6 rounded-full transition-colors relative shrink-0 p-0.5 ${localSettings.hideLockedForFreeAndBasic ? 'bg-amber-600' : 'bg-slate-300'}`}
                   >
                       <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${localSettings.hideLockedForFreeAndBasic ? 'translate-x-6' : 'translate-x-0'}`} />
+                  </button>
+              </div>
+
+              {/* NSTA MESSENGER VISIBILITY TOGGLE */}
+              <div id="setting-nsta-messenger-visibility" className="mt-4 p-4 rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50/70 to-teal-50/70 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-lg shrink-0 shadow-sm shadow-emerald-300">
+                          💬
+                      </div>
+                      <div>
+                          <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                              NSTA Messenger
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${!localSettings.hideNstaMessenger ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-rose-100 text-rose-800 border border-rose-300'}`}>
+                                  {!localSettings.hideNstaMessenger ? 'VISIBLE (ACTIVE)' : 'HIDDEN'}
+                              </span>
+                          </h4>
+                          <p className="text-[11px] text-slate-600 mt-0.5">
+                              Student Dashboard par floating NSTA Messenger (chat support) button chalu ya hide karein.
+                          </p>
+                      </div>
+                  </div>
+                  <button
+                      type="button"
+                      id="toggle-hide-nsta-messenger"
+                      onClick={() => {
+                          const nextVal = !localSettings.hideNstaMessenger;
+                          setLocalSettings({ ...localSettings, hideNstaMessenger: nextVal });
+                      }}
+                      className={`w-12 h-6 rounded-full transition-colors relative shrink-0 p-0.5 ${!localSettings.hideNstaMessenger ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                      title={!localSettings.hideNstaMessenger ? 'Click to Hide Messenger' : 'Click to Show Messenger'}
+                  >
+                      <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${!localSettings.hideNstaMessenger ? 'translate-x-6' : 'translate-x-0'}`} />
+                  </button>
+              </div>
+
+              {/* STUDY ROOM CREATION VISIBILITY TOGGLE */}
+              <div id="setting-study-room-creation-visibility" className="mt-4 p-4 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-purple-50/70 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-lg shrink-0 shadow-sm shadow-indigo-300">
+                          👥
+                      </div>
+                      <div>
+                          <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                              Study Room Banane Ka Option
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${!localSettings.hideCreateStudyRoom ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-rose-100 text-rose-800 border border-rose-300'}`}>
+                                  {!localSettings.hideCreateStudyRoom ? 'VISIBLE (ACTIVE)' : 'HIDDEN'}
+                              </span>
+                          </h4>
+                          <p className="text-[11px] text-slate-600 mt-0.5">
+                              Students ke liye naya Study Room banane ka option ("Apna Study Room Banayein" aur "Live Room") chalu ya hide karein.
+                          </p>
+                      </div>
+                  </div>
+                  <button
+                      type="button"
+                      id="toggle-hide-create-study-room"
+                      onClick={() => toggleSetting('hideCreateStudyRoom')}
+                      className={`w-12 h-6 rounded-full transition-colors relative shrink-0 p-0.5 ${!localSettings.hideCreateStudyRoom ? 'bg-indigo-600' : 'bg-slate-300'}`}
+                      title={!localSettings.hideCreateStudyRoom ? 'Click to Hide Study Room Creation' : 'Click to Show Study Room Creation'}
+                  >
+                      <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${!localSettings.hideCreateStudyRoom ? 'translate-x-6' : 'translate-x-0'}`} />
                   </button>
               </div>
 
@@ -11082,7 +11176,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                   <button onClick={() => {
 
                                                       const currentNotes = localSettings.lucentNotes || [];
-                                                      const updatedNote = currentNotes.find((n: any) => n.id === bnModalEntry.id);
+                                                      const updatedNote = currentNotes.find((n: any) => n.id === entry.id);
                                                       if (updatedNote) {
                                                           const subjName = getSubjectNameSafe(updatedNote.classLevel, updatedNote.subject, localSettings);
                                                           syncClassNotesMcqsToRevisionHub(updatedNote, subjName).catch(console.error);
@@ -16890,6 +16984,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                           <label className="text-[10px] font-bold text-indigo-700 uppercase block mb-1">Code Type</label>
                           <select value={broadcastType} onChange={e => setBroadcastType(e.target.value as any)} className="w-full p-2.5 rounded-xl border border-indigo-200 font-bold bg-white text-sm">
                               <option value="CREDITS">💰 Credits (Coins)</option>
+                              <option value="DIAMONDS">💎 Diamonds (App Currency)</option>
+                              <option value="DIAMOND_SUBSCRIPTION">💎 Diamond Subscription Pass</option>
                               <option value="CREDIT_SUBSCRIPTION">⚡ Credit Subscription Pass</option>
                               <option value="SCORE">⭐ Score Points</option>
                               <option value="SCORE_BOOST">🚀 Score Booster</option>
@@ -16929,6 +17025,26 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                           <div>
                               <label className="text-[10px] font-bold text-indigo-700 uppercase block mb-1">Credits Amount</label>
                               <input type="number" value={broadcastAmount} onChange={e => setBroadcastAmount(Number(e.target.value))} className="w-full p-2.5 rounded-xl border border-indigo-200 font-bold bg-white text-sm" />
+                          </div>
+                      )}
+                      {broadcastType === 'DIAMONDS' && (
+                          <div>
+                              <label className="text-[10px] font-bold text-sky-700 uppercase block mb-1">💎 Diamonds Amount</label>
+                              <input type="number" min={1} value={broadcastDiamondAmount} onChange={e => setBroadcastDiamondAmount(Number(e.target.value))} className="w-full p-2.5 rounded-xl border border-sky-300 font-bold bg-white text-sm text-sky-900" />
+                          </div>
+                      )}
+                      {broadcastType === 'DIAMOND_SUBSCRIPTION' && (
+                          <div className="flex flex-col gap-2 p-3 bg-sky-50/70 rounded-xl border border-sky-200 col-span-full">
+                              <label className="text-[10px] font-bold text-sky-800 uppercase block mb-1">💎 Diamond Subscription Plan</label>
+                              <select
+                                  value={broadcastDiamondSubPlan}
+                                  onChange={e => setBroadcastDiamondSubPlan(e.target.value)}
+                                  className="w-full p-2.5 rounded-xl border border-sky-300 bg-white font-bold text-sm text-sky-900"
+                              >
+                                  <option value="7_DAYS_PASS">7 Days Pass (+10 💎 / day = 70 total)</option>
+                                  <option value="30_DAYS_PASS">Monthly Pass (+25 💎 / day = 750 total)</option>
+                              </select>
+                              <p className="text-[10px] text-sky-700">Subscribers ko daily diamonds claim karne ka pass milega.</p>
                           </div>
                       )}
                       {broadcastType === 'CREDIT_SUBSCRIPTION' && (
@@ -17101,6 +17217,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               className="p-3 rounded-xl border border-pink-200 font-bold bg-white"
                           >
                               <option value="CREDITS">Credits (Coins)</option>
+                              <option value="DIAMONDS">💎 Diamonds (Currency)</option>
+                              <option value="DIAMOND_SUBSCRIPTION">💎 Diamond Subscription Pass</option>
                               <option value="CREDIT_SUBSCRIPTION">⚡ Credit Subscription Pass</option>
                               <option value="SCORE">⭐ Score Points</option>
                               <option value="SCORE_BOOST">🚀 Score Booster</option>
@@ -17277,6 +17395,25 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               <label className="text-xs font-bold text-pink-700 uppercase block mb-1">Amount</label>
                               <input type="number" value={newCodeAmount} onChange={e => setNewCodeAmount(Number(e.target.value))} className="p-3 rounded-xl border border-pink-200 w-32 font-bold" />
                           </div>
+                      ) : newCodeType === 'DIAMONDS' ? (
+                          <div>
+                              <label className="text-xs font-bold text-sky-700 uppercase block mb-1">💎 Diamonds Amount</label>
+                              <input type="number" min={1} value={newCodeDiamonds} onChange={e => setNewCodeDiamonds(Number(e.target.value))} className="p-3 rounded-xl border border-sky-300 w-36 font-bold text-sky-900 bg-white" />
+                              <p className="text-[10px] text-sky-600 mt-1">Instant Diamonds milenge redeem karne par.</p>
+                          </div>
+                      ) : newCodeType === 'DIAMOND_SUBSCRIPTION' ? (
+                          <div className="flex flex-col gap-2">
+                              <label className="text-xs font-bold text-sky-700 uppercase block mb-1">💎 Diamond Subscription Plan</label>
+                              <select 
+                                  value={newCodeDiamondSubPlan} 
+                                  onChange={e => setNewCodeDiamondSubPlan(e.target.value)} 
+                                  className="p-3 rounded-xl border border-sky-300 font-bold text-sky-900 bg-white"
+                              >
+                                  <option value="7_DAYS_PASS">7 Days Pass (+10 💎 / day = 70 total)</option>
+                                  <option value="30_DAYS_PASS">Monthly Pass (+25 💎 / day = 750 total)</option>
+                              </select>
+                              <p className="text-[10px] text-sky-600">Redeemer ko daily diamonds claim karne ka pass active hoga.</p>
+                          </div>
                       ) : newCodeType === 'SCORE' ? (
                           <div>
                               <label className="text-xs font-bold text-pink-700 uppercase block mb-1">Score Points</label>
@@ -17401,6 +17538,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   </td>
                                   <td className="p-3 font-bold text-pink-600">
                                       {code.type === 'CREDIT_SUBSCRIPTION' ? `⚡ +${code.creditDailyAmount || 100} CR/d (${code.creditDurationDays || 30}d)`
+                                          : code.type === 'DIAMONDS' ? `💎 ${code.diamondAmount || code.amount || 50} Diamonds`
+                                          : code.type === 'DIAMOND_SUBSCRIPTION' ? `💎 Diamond Pass (${code.diamondSubPlanId === '30_DAYS_PASS' ? '30d / 25💎/d' : '7d / 10💎/d'})`
                                           : code.type === 'SUBSCRIPTION' 
                                           ? `${code.subTier} ${code.subLevel}` 
                                           : code.type === 'DISCOUNT' ? `${code.discountPercent}% OFF`
@@ -18301,8 +18440,29 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
                       {/* CREDITS */}
                       <div>
-                          <label className="text-xs font-bold text-slate-600 uppercase">💎 Credits</label>
+                          <label className="text-xs font-bold text-slate-600 uppercase">💰 Credits</label>
                           <input type="number" value={editUserCredits} onChange={e => setEditUserCredits(Number(e.target.value))} className="w-full p-2 border rounded-lg" />
+                      </div>
+
+                      {/* DIAMONDS */}
+                      <div className="p-3 bg-sky-50 rounded-xl border border-sky-100">
+                          <label className="text-xs font-bold text-sky-800 uppercase flex items-center justify-between">
+                              <span className="flex items-center gap-1.5">💎 Diamonds (Main Store Currency)</span>
+                              <span className="text-[10px] text-sky-600 font-mono font-normal">Current: {editingUser?.diamonds || 0} 💎</span>
+                          </label>
+                          <div className="flex items-center gap-2 mt-1.5">
+                              <button type="button" onClick={() => setEditUserDiamonds(d => Math.max(0, d - 500))} className="px-2 h-9 bg-sky-100 text-sky-800 rounded-lg font-bold text-xs hover:bg-sky-200">−500</button>
+                              <button type="button" onClick={() => setEditUserDiamonds(d => Math.max(0, d - 50))} className="px-2 h-9 bg-sky-100 text-sky-800 rounded-lg font-bold text-xs hover:bg-sky-200">−50</button>
+                              <input 
+                                  type="number" 
+                                  value={editUserDiamonds} 
+                                  onChange={e => setEditUserDiamonds(Math.max(0, Number(e.target.value)))} 
+                                  className="flex-1 p-2 border border-sky-300 rounded-lg text-center font-black text-sky-900 bg-white" 
+                              />
+                              <button type="button" onClick={() => setEditUserDiamonds(d => d + 50)} className="px-2 h-9 bg-sky-100 text-sky-800 rounded-lg font-bold text-xs hover:bg-sky-200">+50</button>
+                              <button type="button" onClick={() => setEditUserDiamonds(d => d + 500)} className="px-2 h-9 bg-sky-100 text-sky-800 rounded-lg font-bold text-xs hover:bg-sky-200">+500</button>
+                          </div>
+                          <p className="text-[10px] text-sky-700 mt-1">Admin apne man se diamonds set kar sakta hai ya quick buttons se add/cut kar sakta hai.</p>
                       </div>
                       
                       {/* PASSWORD */}
@@ -18515,6 +18675,83 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                           )}
                       </div>
 
+                      {/* --- DIAMOND SUBSCRIPTION (DIAMOND PASS) --- */}
+                      <div className="border-t pt-3">
+                          <label className="text-xs font-bold text-sky-700 uppercase flex items-center gap-1.5">
+                              <span>💎</span>
+                              Diamond Subscription Pass
+                          </label>
+                          <p className="text-[10px] text-slate-500 mb-2">
+                              User ko daily diamonds claim karne ka pass provide karein ya revoke karein.
+                          </p>
+
+                          {isDiamondSubActive(editingUser) && editingUser.diamondSubscription ? (
+                              <div className="p-3 bg-sky-50 border border-sky-200 rounded-xl space-y-2">
+                                  <div className="flex items-center justify-between">
+                                      <span className="text-xs font-black text-sky-900">
+                                          💎 {editingUser.diamondSubscription.planName}
+                                      </span>
+                                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-200 text-sky-900 font-bold">
+                                          ACTIVE ({getDiamondSubDaysRemaining(editingUser)} Din Baki)
+                                      </span>
+                                  </div>
+                                  <div className="text-xs text-slate-700 grid grid-cols-2 gap-1">
+                                      <div>💎 Daily: <strong>+{editingUser.diamondSubscription.dailyDiamonds} 💎/d</strong></div>
+                                      <div>📅 End: <strong>{new Date(editingUser.diamondSubscription.endDate).toLocaleDateString()}</strong></div>
+                                      <div>✅ Claimed: <strong>{editingUser.diamondSubscription.totalClaimedDays || 0} Din</strong></div>
+                                      <div>💎 Total: <strong>{editingUser.diamondSubscription.totalDiamondsClaimed || 0} 💎</strong></div>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={async () => {
+                                          if (!confirm(`Kya aap ${editingUser.name} ka Diamond Subscription Pass cancel karna chahte hain?`)) return;
+                                          const updated = cancelDiamondSub(editingUser);
+                                          const ok = await saveUserToLive(updated);
+                                          if (ok) {
+                                              setEditingUser(updated);
+                                              setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                                              alert('Diamond subscription revoked successfully.');
+                                          }
+                                      }}
+                                      className="w-full py-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold rounded-lg transition">
+                                      ❌ Revoke / Cancel Diamond Pass
+                                  </button>
+                              </div>
+                          ) : (
+                              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                                  <span className="text-xs text-slate-500 italic block">No active diamond subscription pass</span>
+                                  <div className="flex gap-2">
+                                      <select
+                                          value={selectedUserDiamondSubPlanId}
+                                          onChange={e => setSelectedUserDiamondSubPlanId(e.target.value)}
+                                          className="flex-1 p-2 border border-sky-200 rounded-lg text-xs bg-white font-medium">
+                                          {DIAMOND_SUBSCRIPTION_PLANS.map(p => (
+                                              <option key={p.id} value={p.id}>
+                                                  {p.name} (+{p.dailyDiamonds} 💎/d · {p.durationDays} Days · Total {p.totalDiamonds} 💎)
+                                              </option>
+                                          ))}
+                                      </select>
+                                      <button
+                                          type="button"
+                                          onClick={async () => {
+                                              const plan = DIAMOND_SUBSCRIPTION_PLANS.find(p => p.id === selectedUserDiamondSubPlanId) || DIAMOND_SUBSCRIPTION_PLANS[0];
+                                              if (!confirm(`Kya aap ${editingUser.name} ko "${plan.name}" Diamond Pass grant karna chahte hain?`)) return;
+                                              const updated = activateDiamondSub(editingUser, plan.id);
+                                              const ok = await saveUserToLive(updated);
+                                              if (ok) {
+                                                  setEditingUser(updated);
+                                                  setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                                                  alert(`Diamond Pass "${plan.name}" successfully granted to ${editingUser.name}!`);
+                                              }
+                                          }}
+                                          className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold rounded-lg transition shadow-sm whitespace-nowrap">
+                                          💎 Grant Diamond Pass
+                                      </button>
+                                  </div>
+                              </div>
+                          )}
+                      </div>
+
                       {/* BUTTONS (SPLIT FOR FREE VS PAID) */}
                       <div className="flex gap-2 pt-4 border-t">
                           <button onClick={() => setEditingUser(null)} className="flex-1 py-2 text-slate-600 hover:bg-slate-100 rounded font-bold text-xs">Cancel</button>
@@ -18560,6 +18797,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       >
                           <option value="NONE">None</option>
                           <option value="CREDITS">💰 Credits (Coins) — with expiry</option>
+                          <option value="DIAMONDS">💎 Diamonds (Main Currency)</option>
+                          <option value="DIAMOND_SUBSCRIPTION">💎 Diamond Subscription Pass</option>
                           <option value="SCORE">⭐ Score Points — directly add</option>
                           <option value="SUBSCRIPTION">📋 Subscription</option>
                       </select>
@@ -18584,6 +18823,36 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   />
                                   <span className="text-xs text-slate-500">days after gifting</span>
                               </div>
+                          </div>
+                      )}
+
+                      {giftType === 'DIAMONDS' && (
+                          <div className="space-y-1">
+                              <label className="text-xs font-bold text-sky-800">Diamonds Amount:</label>
+                              <input 
+                                  type="number" 
+                                  placeholder="Diamonds amount (e.g. 100)" 
+                                  value={giftValue} 
+                                  onChange={e => setGiftValue(Number(e.target.value))} 
+                                  className="w-full p-2 border border-sky-300 rounded-lg text-sm font-bold text-sky-900 bg-white"
+                                  min={1}
+                              />
+                              <p className="text-[10px] text-sky-600">💎 User mailbox mein claim karte hi Diamonds add ho jayenge.</p>
+                          </div>
+                      )}
+
+                      {giftType === 'DIAMOND_SUBSCRIPTION' && (
+                          <div className="space-y-2">
+                              <label className="text-xs font-bold text-sky-800">Diamond Subscription Pass:</label>
+                              <select
+                                  value={String(giftValue || '7_DAYS_PASS')}
+                                  onChange={e => setGiftValue(e.target.value)}
+                                  className="w-full p-2 border border-sky-300 rounded-lg text-sm font-bold text-sky-900 bg-white"
+                              >
+                                  <option value="7_DAYS_PASS">7 Days Pass (+10 💎/day = 70 total)</option>
+                                  <option value="30_DAYS_PASS">Monthly Pass (+25 💎/day = 750 total)</option>
+                              </select>
+                              <p className="text-[10px] text-sky-600">💎 User mailbox mein claim karte hi Diamond Pass active ho jayega.</p>
                           </div>
                       )}
 

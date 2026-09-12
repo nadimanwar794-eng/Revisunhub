@@ -10,7 +10,7 @@ import { tryEarnScore, awardMilestone, getDailyScoreEarned, DAILY_SCORE_LIMIT, g
 import { ScoreHistoryDashboard } from "./ScoreHistoryDashboard";
 import { StudentProgressDashboard } from "./StudentProgressDashboard";
 import { SuggestionsPanel } from "./SuggestionsPanel";
-import { applyDeduction, getTotalCredits } from "../utils/creditSystem";
+import { applyDeduction, getTotalCredits, getCreditCost } from "../utils/creditSystem";
 import { fireCreditNotify } from "../utils/creditNotify";
 import { LevelLeaderboard } from "./LevelLeaderboard";
 import { StudentLevelPage } from "./StudentLevelPage";
@@ -85,6 +85,7 @@ import {
   getCreditSubDaysRemaining,
   getCreditSubPlanMultiplier,
 } from "../utils/creditSubscriptionUtils";
+import { activateDiamondSub, canClaimDiamondSubToday } from "../utils/diamondUtils";
 import { Button } from "./ui/button";
 import { getActiveChallenges, saveChallenge20 } from "../services/questionBank";
 import { generateDailyChallengeQuestions, getChallengeDateKey, isDailyChallenge20 } from "../utils/challengeGenerator";
@@ -172,6 +173,7 @@ import {
   Rocket,
   Ticket,
   TrendingUp,
+  Brain,
   BrainCircuit,
   FileText,
   CheckSquare,
@@ -203,6 +205,7 @@ import {
   Search,
   Users,
   Target,
+  Store as StoreIcon,
   History as HistoryIcon,
   GitCompare,
   MoreVertical,
@@ -285,7 +288,6 @@ import { recordNoteStar, recordNoteUnstar, subscribeToTopNoteStars, hashTopic, N
 import { PerformanceGraph } from "./PerformanceGraph";
 import { StudentSidebar } from "./StudentSidebar";
 import { StudyGoalTimer } from "./StudyGoalTimer";
-import { ExplorePage } from "./ExplorePage";
 import { StudentHistoryModal } from "./StudentHistoryModal";
 import { AdminWhiteBoard } from "./AdminWhiteBoard";
 import { generateDailyRoutine } from "../utils/routineGenerator";
@@ -637,6 +639,54 @@ const MeniscusNavIndicator = ({ activeIndex, totalTabs, activeColor, ActiveIcon 
   );
 };
 // ────────────────────────────────────────────────────────────────────────
+
+const TopBarCycler = ({ user, onTabChange, setStoreInitialTier }: any) => {
+  const [index, setIndex] = useState(0);
+
+  const cycle = [
+    { id: 'CREDITS', icon: '🪙', value: (user.credits || 0).toLocaleString('en-IN'), color: 'text-amber-300', bg: 'rgba(251,191,36,0.1)' },
+    { id: 'DIAMONDS', icon: '💎', value: (user.diamonds || 0).toLocaleString('en-IN'), color: 'text-sky-300', bg: 'rgba(56,189,248,0.1)' },
+    { id: 'STORE', icon: <StoreIcon size={12} className="text-emerald-400" />, value: 'Store', color: 'text-emerald-300', bg: 'rgba(16,185,129,0.1)' },
+    { id: 'PRO', icon: '⭐', value: 'PRO Plan', color: 'text-cyan-300', bg: 'rgba(34,211,238,0.1)' },
+    { id: 'MAX', icon: '👑', value: 'MAX VIP', color: 'text-purple-300', bg: 'rgba(192,132,252,0.1)' },
+  ];
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setIndex(prev => (prev + 1) % cycle.length);
+    }, 3000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const current = cycle[index];
+
+  const handleClick = () => {
+    if (current.id === 'CREDITS') setStoreInitialTier('CREDITS');
+    else if (current.id === 'DIAMONDS') setStoreInitialTier('DIAMONDS');
+    else setStoreInitialTier('SUBSCRIPTION'); // Go to sub page for Store/Pro/Max
+    onTabChange('STORE');
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      className="relative flex items-center justify-center overflow-hidden rounded-xl active:scale-95 transition-all shadow-sm h-7 min-w-[70px] border border-white/10"
+      style={{ background: current.bg }}
+    >
+      <div
+        key={current.id}
+        className="animate-in slide-in-from-bottom-2 fade-in duration-300 flex items-center gap-1 px-2"
+      >
+        <span className="text-[12px] leading-none shrink-0 flex items-center justify-center">
+          {current.icon}
+        </span>
+        <span className={`font-black text-[10px] tabular-nums ${current.color}`}>
+          {current.value}
+        </span>
+      </div>
+    </button>
+  );
+};
 
 export const StudentDashboard: React.FC<Props> = ({
   user,
@@ -1032,9 +1082,10 @@ export const StudentDashboard: React.FC<Props> = ({
   }, [activeTab, tierTheme.primary, tierTheme.topBarGrad, user.isPremium, user.subscriptionLevel, user.subscriptionEndDate, settings?.statusBarColor]);
 
   // ── HTML Write-Mode Daily Quota (ALL tiers) ──────────────────────────────
-  const _subValid      = SubscriptionEngine.isPremium(user); // true only if not expired
-  const _isUltraUser   = _subValid && user.subscriptionLevel === 'ULTRA';
-  const _isBasicUser   = _subValid && user.subscriptionLevel === 'BASIC';
+  const _subValid          = SubscriptionEngine.isPremium(user); // true only if not expired
+  const _isUltraUser       = _subValid && user.subscriptionLevel === 'ULTRA';
+  const _isBasicUser       = _subValid && user.subscriptionLevel === 'BASIC';
+  const _isFreeOrBasicUser = !_isAdminUser && !_isUltraUser;
   const _todayKey      = new Date().toISOString().split('T')[0];
     const _themeUserTier = user.isPremium && user.subscriptionLevel === 'ULTRA' ? 'ultra'
       : user.isPremium && user.subscriptionLevel === 'BASIC' ? 'basic' : 'free';
@@ -1173,13 +1224,50 @@ export const StudentDashboard: React.FC<Props> = ({
   ) => {
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
     if (_isAdm) { action(); return; }
+
+    const _primary = (user as any).primaryCurrency || 'CREDITS';
+    const _hidePopup = (user as any).hideCoinPopup ?? true;
+
     const { cost, discountPct } = _getCoinCost(baseCost);
-    const total = getTotalCredits(user);
-    if (total < cost) {
-      showAlert(`⚠️ Coins kam hain! ${cost} CR chahiye, aapke paas sirf ${total} CR hai.`, 'INFO');
+    const diaCost = Math.ceil(cost / 10); // 1 Diamond = 10 Credits
+
+    let canAfford = false;
+    let err = '';
+
+    if (_primary === 'DIAMONDS') {
+      const totalDia = user.diamonds || 0;
+      canAfford = totalDia >= diaCost;
+      err = `⚠️ Diamonds kam hain! ${diaCost} 💎 chahiye, aapke paas sirf ${totalDia} 💎 hai.`;
+    } else {
+      const total = getTotalCredits(user);
+      canAfford = total >= cost;
+      err = `⚠️ Coins kam hain! ${cost} CR chahiye, aapke paas sirf ${total} CR hai.`;
+    }
+
+    if (!canAfford) {
+      showAlert(err, 'INFO');
       onCancel?.();
       return;
     }
+
+    if (_hidePopup && (!bulkOpt || bulkOpt.count < 2)) {
+      // Auto-deduct
+      let updatedUser = { ...user };
+      if (_primary === 'DIAMONDS') {
+        updatedUser.diamonds = (updatedUser.diamonds || 0) - diaCost;
+      } else {
+        const afterDed = applyDeduction(user, cost);
+        if (afterDed) updatedUser = afterDed;
+      }
+      handleUserUpdate(updatedUser);
+      // Trigger effect
+      if (_primary === 'DIAMONDS') triggerRewardEffect(0, `-${diaCost} 💎`);
+      else triggerRewardEffect(0, `-${cost} 🪙`);
+      
+      action();
+      return;
+    }
+
     const _bulkOption = (bulkOpt && bulkOpt.count >= 2) ? {
       count: bulkOpt.count,
       originalTotal: bulkOpt.count * cost,
@@ -1187,6 +1275,7 @@ export const StudentDashboard: React.FC<Props> = ({
       action: bulkOpt.action,
       pages: (bulkOpt.pages || []).map(p => ({ name: p.name, cost: p.cost })),
     } : undefined;
+
     setCoinGate({ cost, originalCost: baseCost, discountPct, reason, action, onCancel, bulkOption: _bulkOption, pageInfo });
   };
 
@@ -1398,6 +1487,8 @@ export const StudentDashboard: React.FC<Props> = ({
     settings?.isGroupStudyEnabled === false ||
     (settings?.hiddenFeatures || []).includes('GROUP_STUDY') ||
     (settings?.hiddenHomeButtons || []).includes('GROUP_STUDY');
+
+  const isCreateStudyRoomHidden = isGroupStudyHidden || !!settings?.hideCreateStudyRoom;
 
   useEffect(() => {
     const unsub = subscribeToActiveRooms((rooms) => {
@@ -1768,6 +1859,8 @@ export const StudentDashboard: React.FC<Props> = ({
       // Build type label
       let typeLabel = '';
       if (bc.type === 'CREDITS') typeLabel = `💰 ${bc.amount || 0} Credits`;
+      else if (bc.type === 'DIAMONDS') typeLabel = `💎 ${bc.diamondAmount || bc.amount || 50} Diamonds`;
+      else if (bc.type === 'DIAMOND_SUBSCRIPTION') typeLabel = `💎 Diamond Pass (${bc.diamondSubPlanId === '30_DAYS_PASS' ? '30 Days / 25💎 daily' : '7 Days / 10💎 daily'})`;
       else if (bc.type === 'CREDIT_SUBSCRIPTION') typeLabel = `⚡ Credit Pass +${bc.creditDailyAmount || 100} CR/d (${bc.creditDurationDays || 30} Days)`;
       else if (bc.type === 'DISCOUNT') typeLabel = `🏷️ ${bc.discountPercent || 0}% Discount`;
       else if (bc.type === 'SUBSCRIPTION') typeLabel = `⭐ ${bc.subTier || ''} ${bc.subLevel || ''} Subscription`;
@@ -2486,6 +2579,10 @@ export const StudentDashboard: React.FC<Props> = ({
   }, [activeSessionBoard, user.board, activeSessionClass, user.classLevel, activeTab, onTabChange]);
 
   const handleOpenGroupStudyForContext = useCallback((context: GroupStudyPrefilledContext) => {
+    if (isCreateStudyRoomHidden && !activeGroupStudyRoom) {
+      showAlert('Study room banane ka option admin dwara band kiya gaya hai.', 'INFO');
+      return;
+    }
     hapticMedium();
     setGroupStudyPrefilledContext(context);
     if (activeGroupStudyRoom && activeGroupStudyRoom.hostId === user?.id) {
@@ -2512,7 +2609,7 @@ export const StudentDashboard: React.FC<Props> = ({
       showAlert(`📡 Live Room Synced: ${context.chapterTitle || context.title || context.contentType}`, 'SUCCESS');
     }
     setShowGroupStudyModal(true);
-  }, [hapticMedium, activeGroupStudyRoom, user?.id, user?.board, user?.classLevel, activeSessionBoard, activeSessionClass, showAlert]);
+  }, [hapticMedium, activeGroupStudyRoom, user?.id, user?.board, user?.classLevel, activeSessionBoard, activeSessionClass, showAlert, isCreateStudyRoomHidden]);
 
   useEffect(() => {
     getChapterData("nst_universal_notes").then((data) => {
@@ -2617,6 +2714,7 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showContentNewSheet, setShowContentNewSheet] = useState(false);
   const [showCreditsMini, setShowCreditsMini] = useState(false);
   const [storeSubTab, setStoreSubTab] = useState<'STORE' | 'CREDITS'>('STORE');
+  const [storeInitialTier, setStoreInitialTier] = useState<'FREE' | 'SUBSCRIPTION' | 'CREDITS' | 'DIAMONDS' | 'HISTORY' | undefined>(undefined);
   const [inboxTab, setInboxTab] = useState<'MESSAGES' | 'UPDATES' | 'REWARDS' | 'HISTORY' | 'RULES'>('UPDATES');
   const [claimingDailyPass, setClaimingDailyPass] = useState(false);
   const [showSubDetailsModal, setShowSubDetailsModal] = useState(false);
@@ -2746,6 +2844,7 @@ export const StudentDashboard: React.FC<Props> = ({
   const [splashPurchaseDuration, setSplashPurchaseDuration] = useState<1 | 7 | 30>(7);
   const [showLevelChooser, setShowLevelChooser] = useState(false);
   const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [showProfileSubs, setShowProfileSubs] = useState(false);
   const [rewardSubTab, setRewardSubTab] = useState<'EARNED' | 'RULES' | 'HISTORY'>('EARNED');
   const [rewardHistorySeenCount, setRewardHistorySeenCount] = useState<number>(() => {
     const saved = localStorage.getItem(`nst_reward_hist_seen_${user?.id || ''}`);
@@ -6918,6 +7017,18 @@ export const StudentDashboard: React.FC<Props> = ({
         applySubscription(tier, level, duration);
         updatedUser.totalScore = (user.totalScore || 0) + 5;
         triggerRewardEffect(0, 'Subscription Unlocked! 🎉');
+      } else if (gift.type === "DIAMONDS") {
+        const diaAmt = Number(gift.value) || 50;
+        updatedUser.diamonds = (user.diamonds || 0) + diaAmt;
+        updatedUser.totalScore = (user.totalScore || 0) + 5;
+        successMsg = `💎 Shandaar! +${diaAmt} Diamonds aapke account mein add ho gaye!`;
+        triggerRewardEffect(diaAmt, `+${diaAmt} 💎 Diamonds!`);
+      } else if (gift.type === "DIAMOND_SUBSCRIPTION") {
+        const pId = (gift.value as string) || '7_DAYS_PASS';
+        updatedUser = activateDiamondSub(updatedUser, pId);
+        updatedUser.totalScore = (user.totalScore || 0) + 5;
+        successMsg = `💎 Diamond Pass Activate Ho Gaya! Store se roz apne diamonds claim karein!`;
+        triggerRewardEffect(0, 'Diamond Pass Active! 💎');
       }
     } else if (reward) {
       if (reward.type === 'COINS') {
@@ -6964,6 +7075,9 @@ export const StudentDashboard: React.FC<Props> = ({
           "bonusCredits",
           "giftedCredits",
           "giftedCreditsExpiry",
+          "diamonds",
+          "diamondSubscription",
+          "creditSubscription",
           "isPremium",
           "subscriptionTier",
           "subscriptionLevel",
@@ -8725,20 +8839,22 @@ export const StudentDashboard: React.FC<Props> = ({
                     </button>
                   )}
                   {/* Live Room button for Homework (MCQ, PDF, Notes) */}
-                  <button
-                    onClick={() => handleOpenGroupStudyForContext({
-                      contentType: effectiveMode === 'mcq' ? 'MCQ' : (effectiveMode === 'pdf' ? 'PDF' : (effectiveMode === 'notes' && hwNotesViewMode === 'html' ? 'WRITING_NOTES' : 'READING_NOTES')),
-                      title: activeHw.title,
-                      subject: activeHw.targetSubject,
-                      chapterTitle: activeHw.title,
-                      pdfUrl: (activeHw as any).pdfUrl,
-                    })}
-                    className="h-8 px-2 flex items-center gap-1 rounded-xl bg-emerald-500/25 border border-emerald-400/40 text-emerald-200 active:scale-90 transition shrink-0"
-                    title="Live Study Room"
-                  >
-                    <Users size={13} className="text-emerald-300" />
-                    <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
-                  </button>
+                  {!isCreateStudyRoomHidden && (
+                    <button
+                      onClick={() => handleOpenGroupStudyForContext({
+                        contentType: effectiveMode === 'mcq' ? 'MCQ' : (effectiveMode === 'pdf' ? 'PDF' : (effectiveMode === 'notes' && hwNotesViewMode === 'html' ? 'WRITING_NOTES' : 'READING_NOTES')),
+                        title: activeHw.title,
+                        subject: activeHw.targetSubject,
+                        chapterTitle: activeHw.title,
+                        pdfUrl: (activeHw as any).pdfUrl,
+                      })}
+                      className="h-8 px-2 flex items-center gap-1 rounded-xl bg-emerald-500/25 border border-emerald-400/40 text-emerald-200 active:scale-90 transition shrink-0"
+                      title="Live Study Room"
+                    >
+                      <Users size={13} className="text-emerald-300" />
+                      <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
+                    </button>
+                  )}
                   <span className="bg-white/20 text-white text-[11px] font-black px-2.5 py-1 rounded-full shrink-0">
                     {flatIdx + 1}/{filteredHw.length}
                   </span>
@@ -8968,20 +9084,22 @@ export const StudentDashboard: React.FC<Props> = ({
                     {activeHw.title || 'Competition'}
                     {activeHw.date && <span className="text-slate-400 font-medium"> · {new Date(activeHw.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</span>}
                   </span>
-                  <button
-                    onClick={() => handleOpenGroupStudyForContext({
-                      contentType: effectiveMode === 'mcq' ? 'MCQ' : 'WRITING_NOTES',
-                      title: activeHw.title || 'Competition Homework',
-                      subject: activeHw.targetSubject || 'Competition',
-                      chapterTitle: activeHw.title,
-                      totalQuestions: _hwMcqs.length,
-                    })}
-                    className="h-7 px-2 flex items-center gap-1 rounded-lg bg-pink-50 border border-pink-300 text-pink-700 active:scale-90 transition shrink-0"
-                    title="Live Study Room"
-                  >
-                    <Radio size={12} className="text-pink-600 animate-pulse" />
-                    <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
-                  </button>
+                  {!isCreateStudyRoomHidden && (
+                    <button
+                      onClick={() => handleOpenGroupStudyForContext({
+                        contentType: effectiveMode === 'mcq' ? 'MCQ' : 'WRITING_NOTES',
+                        title: activeHw.title || 'Competition Homework',
+                        subject: activeHw.targetSubject || 'Competition',
+                        chapterTitle: activeHw.title,
+                        totalQuestions: _hwMcqs.length,
+                      })}
+                      className="h-7 px-2 flex items-center gap-1 rounded-lg bg-pink-50 border border-pink-300 text-pink-700 active:scale-90 transition shrink-0"
+                      title="Live Study Room"
+                    >
+                      <Radio size={12} className="text-pink-600 animate-pulse" />
+                      <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
+                    </button>
+                  )}
                   {/* Write mode badges + controls */}
                   {effectiveMode === 'notes' && hwNotesViewMode === 'html' && (
                     <>
@@ -9265,7 +9383,7 @@ export const StudentDashboard: React.FC<Props> = ({
                         key={`hw-reader-${activeHw.id}-chunk`}
                         triggerControlsRef={hwControlsRef}
                         onBack={goBack}
-                        onOpenGroupStudy={() => handleOpenGroupStudyForContext({
+                        onOpenGroupStudy={isCreateStudyRoomHidden ? undefined : () => handleOpenGroupStudyForContext({
                           contentType: 'READING_NOTES',
                           title: activeHw.title || 'Homework',
                           subject: activeHw.targetSubject || 'Competition',
@@ -12181,7 +12299,11 @@ export const StudentDashboard: React.FC<Props> = ({
           user={user}
           settings={settings}
           onUserUpdate={handleUserUpdate}
-          onBack={() => onTabChange('HOME')}
+          onBack={() => {
+            setStoreInitialTier(undefined);
+            onTabChange('HOME');
+          }}
+          initialTier={storeInitialTier}
           themeColor={(tierTheme as any).primary}
           tierTheme={tierTheme}
         />
@@ -13015,12 +13137,47 @@ export const StudentDashboard: React.FC<Props> = ({
 
           {/* ── STATS ROW ── */}
           <div className="px-3 mb-3">
-            <div className="grid grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-4 gap-1.5 sm:gap-2.5">
+              {/* Diamonds mini-card — Tap to open Diamond Store */}
+              <button
+                id="profile-diamonds-btn"
+                onClick={() => {
+                  setStoreInitialTier('DIAMONDS');
+                  onTabChange("STORE");
+                }}
+                className="rounded-2xl p-2 sm:p-3.5 flex flex-col items-center active:scale-95 transition-transform cursor-pointer w-full text-center group"
+                style={{
+                  background: _light
+                    ? 'linear-gradient(145deg, rgba(6,182,212,0.12), rgba(6,182,212,0.05))'
+                    : 'linear-gradient(145deg, rgba(6,182,212,0.22), rgba(6,182,212,0.08))',
+                  border: '1.5px solid rgba(6,182,212,0.30)',
+                  boxShadow: '0 4px 16px rgba(6,182,212,0.16)',
+                }}
+                title="Aapke Diamonds — Tap karke Diamond Store kholein"
+              >
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center mb-1.5 sm:mb-2.5 text-base sm:text-lg" style={{
+                  background: 'linear-gradient(135deg, rgba(6,182,212,0.40), rgba(6,182,212,0.18))',
+                  border: '1px solid rgba(6,182,212,0.45)',
+                  boxShadow: '0 2px 10px rgba(6,182,212,0.28)',
+                }}>
+                  💎
+                </div>
+                <div className="font-black tabular-nums text-center leading-none mb-1 text-cyan-300" style={{
+                  fontSize: (user.diamonds ?? 0) > 99999 ? 13 : 20,
+                }}>
+                  {(user.diamonds ?? 0).toLocaleString('en-IN')}
+                </div>
+                <div className="font-black uppercase tracking-widest" style={{ fontSize: 8, color: _pTxtSubColor }}>Diamonds</div>
+              </button>
+
               {/* Credits mini-card — Tap to open Store */}
               <button
                 id="profile-credits-btn"
-                onClick={() => onTabChange("STORE")}
-                className="rounded-2xl p-3.5 flex flex-col items-center active:scale-95 transition-transform cursor-pointer w-full text-center group"
+                onClick={() => {
+                  setStoreInitialTier('CREDITS');
+                  onTabChange("STORE");
+                }}
+                className="rounded-2xl p-2 sm:p-3.5 flex flex-col items-center active:scale-95 transition-transform cursor-pointer w-full text-center group"
                 style={{
                   background: _light
                     ? `linear-gradient(145deg, ${tierTheme.primary}12, ${tierTheme.primary}06)`
@@ -13054,7 +13211,7 @@ export const StudentDashboard: React.FC<Props> = ({
               {/* Streak mini-card */}
               <button
                 onClick={() => setShowStreakPopup(true)}
-                className="rounded-2xl p-3.5 flex flex-col items-center active:scale-95 transition-transform"
+                className="rounded-2xl p-2 sm:p-3.5 flex flex-col items-center active:scale-95 transition-transform"
                 style={{
                   background: _light
                     ? 'linear-gradient(145deg, rgba(251,146,60,0.12), rgba(251,146,60,0.05))'
@@ -13063,28 +13220,28 @@ export const StudentDashboard: React.FC<Props> = ({
                   boxShadow: '0 4px 16px rgba(251,146,60,0.16)',
                 }}
               >
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-2.5" style={{
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center mb-1.5 sm:mb-2.5" style={{
                   background: 'linear-gradient(135deg, rgba(251,146,60,0.40), rgba(251,146,60,0.18))',
                   border: '1px solid rgba(251,146,60,0.45)',
                   boxShadow: '0 2px 10px rgba(251,146,60,0.28)',
                 }}>
                   <Flame size={16} style={{ color: '#fb923c' }} />
                 </div>
-                <div className="font-black tabular-nums leading-none mb-1" style={{ fontSize: 22, color: _pTxtColor }}>
+                <div className="font-black tabular-nums leading-none mb-1" style={{ fontSize: 20, color: _pTxtColor }}>
                   {user.streak > 0 ? user.streak : '0'}
                 </div>
                 <div className="font-black uppercase tracking-widest" style={{ fontSize: 8, color: _pTxtSubColor }}>Streak</div>
               </button>
 
               {/* XP Score mini-card */}
-              <div className="rounded-2xl p-3.5 flex flex-col items-center" style={{
+              <div className="rounded-2xl p-2 sm:p-3.5 flex flex-col items-center" style={{
                 background: _light
                   ? 'linear-gradient(145deg, rgba(234,179,8,0.12), rgba(234,179,8,0.05))'
                   : 'linear-gradient(145deg, rgba(234,179,8,0.20), rgba(234,179,8,0.08))',
                 border: '1.5px solid rgba(234,179,8,0.28)',
                 boxShadow: '0 4px 16px rgba(234,179,8,0.14)',
               }}>
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center mb-2.5" style={{
+                <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center mb-1.5 sm:mb-2.5" style={{
                   background: 'linear-gradient(135deg, rgba(234,179,8,0.40), rgba(234,179,8,0.18))',
                   border: '1px solid rgba(234,179,8,0.45)',
                   boxShadow: '0 2px 10px rgba(234,179,8,0.28)',
@@ -13847,6 +14004,116 @@ export const StudentDashboard: React.FC<Props> = ({
               <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
             </button>
 
+            {/* ── Active Subscriptions & History ── */}
+            <button
+              onClick={() => setShowProfileSubs(v => !v)}
+              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
+              style={{ borderBottom: _pSep }}>
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: _pIconBg, border: _pIconBdr }}>
+                <span className="text-base leading-none">👑</span>
+              </div>
+              <div className="flex-1 text-left">
+                <p className={`text-sm font-bold ${_pTxt}`}>My Subscriptions</p>
+                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>Active plans aur billing history dekhein</p>
+              </div>
+              <ChevronRight size={15} style={{ color: _pTxtMutedColor, transform: showProfileSubs ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} className="shrink-0" />
+            </button>
+
+            {showProfileSubs && (() => {
+              const hist = user.subscriptionHistory || [];
+              const hasAny = user.isPremium || user.creditSubscription || user.diamondSubscription || hist.length > 0;
+              
+              if (!hasAny) {
+                return (
+                  <div className="px-4 py-6 text-center" style={{ borderBottom: _pSep, background: 'rgba(0,0,0,0.1)' }}>
+                    <span className="text-2xl mb-2 block">🤷</span>
+                    <p className={`text-xs font-bold ${_pTxt}`}>Koi Subscription Nahi Hai</p>
+                    <p className={`text-[10px] ${_pTxtSub} mt-1`}>Aapka account abhi Base Tier (Free) par hai.</p>
+                  </div>
+                );
+              }
+
+              return (
+                <div className="px-4 py-4" style={{ borderBottom: _pSep, background: 'rgba(0,0,0,0.15)' }}>
+                  
+                  {/* Active Plans */}
+                  <div className="mb-5">
+                    <p className={`text-[10px] font-black uppercase tracking-widest ${_pTxtSub} mb-3 flex items-center gap-1.5`}>
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Active Plans
+                    </p>
+                    
+                    <div className="space-y-2">
+                      {user.isPremium && (
+                        <div className="p-3 rounded-xl flex items-center justify-between" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-xl leading-none">{user.subscriptionLevel === 'ULTRA' ? '👑' : '⭐'}</span>
+                            <div>
+                              <p className={`text-sm font-black ${_pTxt}`}>{user.subscriptionLevel === 'ULTRA' ? 'MAX (Ultra)' : 'PRO (Basic)'} VIP</p>
+                              {user.activeSubscriptions && user.activeSubscriptions.length > 0 && (
+                                <p className="text-[10px] text-emerald-400 font-bold mt-0.5">Active & Valid</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {user.creditSubscription && user.creditSubscription.status === 'ACTIVE' && (
+                        <div className="p-3 rounded-xl flex items-center justify-between" style={{ background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.2)' }}>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-xl leading-none">🪙</span>
+                            <div>
+                              <p className={`text-sm font-black ${_pTxt}`}>{user.creditSubscription.planName}</p>
+                              <p className="text-[10px] text-amber-400 font-bold mt-0.5">Roz {user.creditSubscription.dailyCredits} Credits</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {user.diamondSubscription && user.diamondSubscription.status === 'ACTIVE' && (
+                        <div className="p-3 rounded-xl flex items-center justify-between" style={{ background: 'rgba(56,189,248,0.05)', border: '1px solid rgba(56,189,248,0.2)' }}>
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-xl leading-none">💎</span>
+                            <div>
+                              <p className={`text-sm font-black ${_pTxt}`}>{user.diamondSubscription.planName}</p>
+                              <p className="text-[10px] text-sky-400 font-bold mt-0.5">Roz {user.diamondSubscription.dailyDiamonds} Diamonds</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* History */}
+                  {hist.length > 0 && (
+                    <div>
+                      <p className={`text-[10px] font-black uppercase tracking-widest ${_pTxtSub} mb-3`}>Billing History</p>
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                        {hist.slice().sort((a: any, b: any) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()).map((h: any, i: number) => {
+                          const isCoin = h.grantSource === 'CREDITS';
+                          const isFree = h.isFree;
+                          return (
+                            <div key={i} className="p-2.5 rounded-lg flex justify-between items-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              <div>
+                                <p className={`text-xs font-bold ${_pTxt}`}>{h.level === 'ULTRA' ? 'MAX (Ultra)' : h.level === 'BASIC' ? 'PRO (Basic)' : 'Subscription'}</p>
+                                <p className={`text-[9px] ${_pTxtSub} mt-0.5`}>{new Date(h.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-xs font-black text-white">
+                                  {isFree ? 'FREE' : isCoin ? `-${h.originalPrice || h.price} 🪙` : `₹${h.price}`}
+                                </p>
+                                <p className="text-[9px] text-emerald-400 font-medium mt-0.5">{(h.durationHours || 720) / 24} Din</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* ── Settings Button ── */}
             <button
               onClick={() => setShowProfileSettings(v => !v)}
@@ -13859,6 +14126,92 @@ export const StudentDashboard: React.FC<Props> = ({
               <ChevronRight size={15} style={{ color: _pTxtMutedColor, transform: showProfileSettings ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} className="shrink-0" />
             </button>
             {showProfileSettings && (<>
+
+            {/* ── Primary Currency Setup ── */}
+            {(() => {
+              const _primary = (user as any).primaryCurrency || 'CREDITS';
+              return (
+                <button
+                  onClick={async () => {
+                    try {
+                      const newCurr = _primary === 'CREDITS' ? 'DIAMONDS' : 'CREDITS';
+                      const uRef = doc(db, 'users', user.id);
+                      await updateDoc(uRef, { primaryCurrency: newCurr });
+                      const updated = { ...user, primaryCurrency: newCurr };
+                      handleUserUpdate(updated);
+                      showAlert(`💰 Primary Currency set to ${newCurr}`, 'SUCCESS');
+                    } catch {
+                      showAlert('❌ Currency update failed', 'ERROR');
+                    }
+                  }}
+                  className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
+                  style={{ borderBottom: _pSep }}>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
+                    background: _primary === 'DIAMONDS' ? 'rgba(56,189,248,0.15)' : 'rgba(251,191,36,0.15)',
+                    border: `1px solid ${_primary === 'DIAMONDS' ? 'rgba(56,189,248,0.4)' : 'rgba(251,191,36,0.4)'}`,
+                  }}>
+                    <span className="text-base leading-none">{_primary === 'DIAMONDS' ? '💎' : '🪙'}</span>
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className={`text-sm font-bold ${_pTxt}`}>
+                      {_primary === 'DIAMONDS' ? 'Primary: Diamonds' : 'Primary: Credits'}
+                    </p>
+                    <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
+                      Deduction popups is currency se charge karenge
+                    </p>
+                  </div>
+                  <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
+                </button>
+              );
+            })()}
+
+            {/* ── Auto-Deduct / Hide Popup Toggle ── */}
+            {(() => {
+              const _hidePopup = (user as any).hideCoinPopup ?? true; // defukt on rahega new acciunt me
+              return (
+                <button
+                  onClick={async () => {
+                    try {
+                      const uRef = doc(db, 'users', user.id);
+                      await updateDoc(uRef, { hideCoinPopup: !_hidePopup });
+                      const updated = { ...user, hideCoinPopup: !_hidePopup };
+                      handleUserUpdate(updated);
+                      showAlert(_hidePopup ? '👀 Popups enabled' : '⚡ Auto-deduct active', 'SUCCESS');
+                    } catch {
+                      showAlert('❌ Setting could not be updated', 'ERROR');
+                    }
+                  }}
+                  className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
+                  style={{ borderBottom: _pSep }}>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
+                    background: _hidePopup ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+                    border: `1px solid ${_hidePopup ? 'rgba(16,185,129,0.40)' : 'rgba(239,68,68,0.40)'}`,
+                  }}>
+                    <span className="text-base leading-none">{_hidePopup ? '⚡' : '🛡️'}</span>
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className={`text-sm font-bold ${_pTxt}`}>
+                      {_hidePopup ? 'Auto-Deduct: ON' : 'Popups: ON'}
+                    </p>
+                    <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
+                      {_hidePopup
+                        ? 'Confirmation popups hidden (Fast mode)'
+                        : 'Credits/Diamonds spend se pehle puchega'}
+                    </p>
+                  </div>
+                  {/* Toggle pill */}
+                  <div className="shrink-0 w-10 h-5 rounded-full relative transition-all"
+                    style={{ background: _hidePopup ? 'rgba(16,185,129,0.70)' : 'rgba(255,255,255,0.12)' }}>
+                    <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
+                      style={{
+                        background: '#fff',
+                        left: _hidePopup ? '1.375rem' : '0.125rem',
+                        boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                      }} />
+                  </div>
+                </button>
+              );
+            })()}
 
             {/* ── Theme Override Toggle ── */}
             {(() => {
@@ -15194,12 +15547,13 @@ export const StudentDashboard: React.FC<Props> = ({
             {/* Mail */}
             {(() => {
               const pendingCreditSub = canClaimCreditSubToday(user) ? 1 : 0;
-              const pendingRewards = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub;
+              const pendingDiamondSub = canClaimDiamondSubToday(user) ? 1 : 0;
+              const pendingRewards = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub + pendingDiamondSub;
               const totalCount = unreadCount + unreadNotifCount + _newContentCount + pendingRewards;
               return (
                 <button
                   onClick={() => {
-                    if (pendingCreditSub > 0 && unreadCount === 0 && unreadNotifCount === 0) {
+                    if ((pendingCreditSub > 0 || pendingDiamondSub > 0) && unreadCount === 0 && unreadNotifCount === 0) {
                       setInboxTab('REWARDS');
                     } else {
                       setInboxTab('UPDATES');
@@ -15384,7 +15738,12 @@ export const StudentDashboard: React.FC<Props> = ({
                           {
                             label: 'Store',
                             right: '🛍️',
-                            action: () => { onTabChange("STORE"); setShowDotsMenu(false); },
+                            action: () => { setStoreInitialTier('SUBSCRIPTION'); onTabChange("STORE"); setShowDotsMenu(false); },
+                          },
+                          {
+                            label: 'Diamond Store',
+                            right: `💎 ${(user.diamonds ?? 0).toLocaleString('en-IN')}`,
+                            action: () => { setStoreInitialTier('DIAMONDS'); onTabChange("STORE"); setShowDotsMenu(false); },
                           },
                           {
                             label: 'Score History',
@@ -15518,23 +15877,13 @@ export const StudentDashboard: React.FC<Props> = ({
             onOpenScorePanel={() => setShowScorePanel(true)}
           />
 
-          {/* Right: Credits button */}
-          <div className="flex items-center gap-1.5 shrink-0">
-            {/* Credit Balance with Plus (+) icon - no background */}
-            <button
-              id="topbar-row2-credits-btn"
-              onClick={() => onTabChange("STORE")}
-              className="inline-flex items-center gap-1 px-1 py-0.5 active:scale-95 transition-all shrink-0 cursor-pointer group select-none"
-              title="Aapke Credits — Tap karke Store se aur paayein"
-            >
-              <span className="text-[12px] leading-none select-none">🪙</span>
-              <span className="font-black text-[11px] tabular-nums text-amber-300 group-hover:text-amber-200">
-                {(user.credits || 0).toLocaleString('en-IN')}
-              </span>
-              <span className="text-amber-400 group-hover:scale-110 transition-transform ml-0.5">
-                <Plus size={11} strokeWidth={3.5} />
-              </span>
-            </button>
+          {/* Right: Unified Cycling Button */}
+          <div className="flex items-center shrink-0">
+            <TopBarCycler
+              user={user}
+              onTabChange={onTabChange}
+              setStoreInitialTier={setStoreInitialTier}
+            />
           </div>
         </div>
       </div>
@@ -19518,20 +19867,22 @@ export const StudentDashboard: React.FC<Props> = ({
                     >
                       <RotateCcw size={12} /> Rotate
                     </button>
-                    <button
-                      onClick={() => handleOpenGroupStudyForContext({
-                        contentType: lessonCompareFullViewMode === 'html' ? 'WRITING_NOTES' : 'READING_NOTES',
-                        title: lce.lessonTitle,
-                        subject: selectedSubject?.name,
-                        chapterTitle: lce.lessonTitle,
-                        board: selectedBoard,
-                        classLevel: selectedClass,
-                      })}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition-all shadow-sm"
-                      title="Live Study Room"
-                    >
-                      <Users size={12} className="text-emerald-600" /> Live
-                    </button>
+                    {!isCreateStudyRoomHidden && (
+                      <button
+                        onClick={() => handleOpenGroupStudyForContext({
+                          contentType: lessonCompareFullViewMode === 'html' ? 'WRITING_NOTES' : 'READING_NOTES',
+                          title: lce.lessonTitle,
+                          subject: selectedSubject?.name,
+                          chapterTitle: lce.lessonTitle,
+                          board: (user as any)?.board || 'BSEB',
+                          classLevel: (user as any)?.classLevel || '10',
+                        })}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-300 hover:bg-emerald-100 transition-all shadow-sm"
+                        title="Live Study Room"
+                      >
+                        <Users size={12} className="text-emerald-600" /> Live
+                      </button>
+                    )}
                   </div>
                   {lessonCompareFullViewMode === 'html' ? (
                     fullLessonHtml ? (
@@ -19581,13 +19932,13 @@ export const StudentDashboard: React.FC<Props> = ({
                           isAdmin={user.role === 'ADMIN' || user.role === 'SUB_ADMIN'}
                           isAdminImportant={isTopicAdminImportant}
                           language="hi-IN"
-                          onOpenGroupStudy={() => handleOpenGroupStudyForContext({
+                          onOpenGroupStudy={isCreateStudyRoomHidden ? undefined : () => handleOpenGroupStudyForContext({
                             contentType: 'READING_NOTES',
                             title: lce.lessonTitle,
                             subject: selectedSubject?.name,
                             chapterTitle: lce.lessonTitle,
-                            board: selectedBoard,
-                            classLevel: selectedClass,
+                            board: (user as any)?.board || 'BSEB',
+                            classLevel: (user as any)?.classLevel || '10',
                           })}
                         />
                       </div>
@@ -19993,7 +20344,8 @@ export const StudentDashboard: React.FC<Props> = ({
         !hwActiveHwId &&
         !lucentNoteViewer &&
         !coachingNotesReaderOpen &&
-        !isGroupStudyHidden && (
+        !isGroupStudyHidden &&
+        !settings?.hideNstaMessenger && (
           <div className="fixed bottom-[76px] right-3 sm:right-6 z-[250] pointer-events-auto flex items-center gap-2 animate-in fade-in slide-in-from-bottom-3 duration-300">
             {/* Nsta Messenger Floating Button (Enlarged & Prominent) */}
             <button
@@ -20928,7 +21280,7 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                               >Copy</button>
                             </div>
                             <button
-                              onClick={() => { try { navigator.clipboard.writeText((msg as any).redeemCode); } catch {} setShowInbox(false); setActiveTab('REDEEM'); }}
+                              onClick={() => { try { navigator.clipboard.writeText((msg as any).redeemCode); } catch {} setShowInbox(false); onTabChange('REDEEM'); }}
                               style={{ width: '100%', padding: '10px 0', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff', borderRadius: 11, fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
                             ><Gift size={14} /> Redeem Code</button>
                           </div>
@@ -20949,12 +21301,12 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                         {msg.type === 'GIFT' && msg.gift && !msg.isClaimed && !isExpired && (
                           <button onClick={() => claimRewardMessage(msg.id, null, msg.gift)}
                             style={{ marginTop: 12, width: '100%', padding: '10px 0', background: 'linear-gradient(135deg,#ec4899,#f43f5e)', color: '#fff', borderRadius: 11, fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                          ><Gift size={14} /> Claim Gift {msg.gift.type === 'CREDITS' ? `(+${msg.gift.value} CR)` : ''}</button>
+                          ><Gift size={14} /> Claim Gift {msg.gift.type === 'CREDITS' ? `(+${msg.gift.value} CR)` : msg.gift.type === 'DIAMONDS' ? `(+${msg.gift.value} 💎)` : msg.gift.type === 'DIAMOND_SUBSCRIPTION' ? `(💎 Diamond Pass)` : ''}</button>
                         )}
                         {msg.type === 'REWARD' && (msg.reward || msg.gift) && !msg.isClaimed && !isExpired && (
                           <button onClick={() => claimRewardMessage(msg.id, msg.reward || null, msg.reward ? undefined : msg.gift)}
                             style={{ marginTop: 12, width: '100%', padding: '10px 0', background: 'linear-gradient(135deg,#f59e0b,#ef4444)', color: '#fff', borderRadius: 11, fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                          ><Crown size={14} /> Claim Reward {!msg.reward && msg.gift?.type === 'CREDITS' ? `(+${msg.gift.value} CR)` : ''}</button>
+                          ><Crown size={14} /> Claim Reward {!msg.reward && msg.gift?.type === 'CREDITS' ? `(+${msg.gift.value} CR)` : !msg.reward && msg.gift?.type === 'DIAMONDS' ? `(+${msg.gift.value} 💎)` : ''}</button>
                         )}
                       </div>
                     </div>
@@ -22422,19 +22774,21 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                   {lucentActiveTab === 'NOTES' && lucentNotesViewMode === 'html' && (
                     <>
                       <span className="text-[9px] font-black text-teal-600 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">✏️ WRITE</span>
-                      <button
-                        onClick={() => handleOpenGroupStudyForContext({
-                          contentType: 'WRITING_NOTES',
-                          title: `${entry.lessonTitle || 'Notes'} · Pg ${currentPage?.pageNo || safeIndex + 1}`,
-                          subject: entry.subject || 'Lucent',
-                          chapterTitle: entry.lessonTitle,
-                        })}
-                        className="h-7 px-2 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 active:scale-90 transition shrink-0"
-                        title="Live Writing Room"
-                      >
-                        <Users size={12} className="text-emerald-600" />
-                        <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
-                      </button>
+                      {!isCreateStudyRoomHidden && (
+                        <button
+                          onClick={() => handleOpenGroupStudyForContext({
+                            contentType: 'WRITING_NOTES',
+                            title: `${entry.lessonTitle || 'Notes'} · Pg ${currentPage?.pageNo || safeIndex + 1}`,
+                            subject: entry.subject || 'Lucent',
+                            chapterTitle: entry.lessonTitle,
+                          })}
+                          className="h-7 px-2 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 active:scale-90 transition shrink-0"
+                          title="Live Writing Room"
+                        >
+                          <Users size={12} className="text-emerald-600" />
+                          <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
+                        </button>
+                      )}
                       {_isAdminUser && (
                         <button onClick={() => { const src = (currentPage as any)?.htmlNotes || (currentPage as any)?.content || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'lucent_html', entryId: entry.id, pageIndex: safeIndex, title: `${entry.lessonTitle} · Page ${currentPage?.pageNo ?? safeIndex + 1}`, originalEntry: entry }); setLucentWriteMenuOpen(false); }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-200 text-orange-500 active:scale-90 transition shrink-0" title="Edit HTML"><Pencil size={12} /></button>
                       )}
@@ -22460,19 +22814,21 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                   {/* MCQ MODE */}
                   {lucentActiveTab === 'MCQS' && (
                     <>
-                      <button
-                        onClick={() => handleOpenGroupStudyForContext({
-                          contentType: 'MCQ',
-                          title: `${entry.lessonTitle || 'MCQ'} · Pg ${currentPage?.pageNo || safeIndex + 1}`,
-                          subject: entry.subject || 'Lucent',
-                          chapterTitle: entry.lessonTitle,
-                        })}
-                        className="h-7 px-2 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 active:scale-90 transition shrink-0"
-                        title="Live MCQ Room"
-                      >
-                        <Users size={12} className="text-emerald-600" />
-                        <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
-                      </button>
+                      {!isCreateStudyRoomHidden && (
+                        <button
+                          onClick={() => handleOpenGroupStudyForContext({
+                            contentType: 'MCQ',
+                            title: `${entry.lessonTitle || 'MCQ'} · Pg ${currentPage?.pageNo || safeIndex + 1}`,
+                            subject: entry.subject || 'Lucent',
+                            chapterTitle: entry.lessonTitle,
+                          })}
+                          className="h-7 px-2 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 active:scale-90 transition shrink-0"
+                          title="Live MCQ Room"
+                        >
+                          <Users size={12} className="text-emerald-600" />
+                          <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           const next = !lucentMcqAutoTts;
@@ -22515,20 +22871,22 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                   {/* PDF MODE */}
                   {lucentActiveTab === 'PDF' && (
                     <>
-                      <button
-                        onClick={() => handleOpenGroupStudyForContext({
-                          contentType: 'PDF',
-                          title: `${entry.lessonTitle || 'PDF'} · Pg ${currentPage?.pageNo || safeIndex + 1}`,
-                          subject: entry.subject || 'Lucent',
-                          chapterTitle: entry.lessonTitle,
-                          pdfUrl: (currentPage as any)?.pdfUrl,
-                        })}
-                        className="h-7 px-2 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 active:scale-90 transition shrink-0"
-                        title="Live PDF Room"
-                      >
-                        <Users size={12} className="text-emerald-600" />
-                        <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
-                      </button>
+                      {!isCreateStudyRoomHidden && (
+                        <button
+                          onClick={() => handleOpenGroupStudyForContext({
+                            contentType: 'PDF',
+                            title: `${entry.lessonTitle || 'PDF'} · Pg ${currentPage?.pageNo || safeIndex + 1}`,
+                            subject: entry.subject || 'Lucent',
+                            chapterTitle: entry.lessonTitle,
+                            pdfUrl: (currentPage as any)?.pdfUrl,
+                          })}
+                          className="h-7 px-2 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 active:scale-90 transition shrink-0"
+                          title="Live PDF Room"
+                        >
+                          <Users size={12} className="text-emerald-600" />
+                          <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
+                        </button>
+                      )}
                       <button onClick={async () => { const r = await rotateScreen(); if (r !== null) { setLucentPdfRotated(r === 'landscape'); } else { alert('📱 Phone ko sideways karein'); } }} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentPdfRotated ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Rotate"><RotateCcw size={12} /></button>
                       <button onClick={() => setLucentPdfNight(m => m === 'normal' ? 'night' : m === 'night' ? 'sepia' : 'normal')} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 text-sm ${lucentPdfNight !== 'normal' ? 'bg-indigo-50 border-indigo-300' : 'bg-slate-100 border-slate-200'}`} title="Night/Sepia">{lucentPdfNight === 'night' ? '🌙' : lucentPdfNight === 'sepia' ? '📜' : '☀️'}</button>
                       <button onClick={() => setLucentImmersive(v => !v)} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentImmersive ? 'bg-indigo-50 border-indigo-300 text-indigo-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Focus">{lucentImmersive ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
@@ -22679,7 +23037,7 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                     key={`lucent-reader-${entry.id}-${safeIndex}-${autoSyncOn ? 'auto' : 'manual'}-chunk`}
                     onBack={closeLucentViewer}
                     triggerControlsRef={lucentControlsRef}
-                    onOpenGroupStudy={() => handleOpenGroupStudyForContext({
+                    onOpenGroupStudy={isCreateStudyRoomHidden ? undefined : () => handleOpenGroupStudyForContext({
                       contentType: 'READING_NOTES',
                       title: `${entry.lessonTitle || 'Lucent'} · Pg ${currentPage?.pageNo || safeIndex + 1}`,
                       subject: entry.subject || 'Lucent Samanya Gyan',
@@ -23396,10 +23754,8 @@ RULES:
                                     userAnswers: _userAnswers,
                                     createdAt: new Date().toISOString(),
                                   };
-                                  if (onUpdateUser) {
-                                    const updatedHistory = [newMcqResult, ...(user.mcqHistory || [])];
-                                    onUpdateUser({ ...user, mcqHistory: updatedHistory });
-                                  }
+                                  const updatedHistory = [newMcqResult, ...(user.mcqHistory || [])];
+                                  handleUserUpdate({ ...user, mcqHistory: updatedHistory });
                                 } catch {}
                                 setLucentMcqShowReview(prev => ({ ...prev, [pageKey]: true }));
                               }}
@@ -25274,21 +25630,23 @@ RULES:
                 </button>
               )}
               {/* Live Class Option in Projector / Lesson bar */}
-              <button
-                style={{ minWidth: 72, padding: '0 12px' }}
-                className="flex items-center justify-center gap-1.5 text-pink-300 hover:text-pink-100 bg-pink-950/50 hover:bg-pink-900/60 border-l border-pink-500/30 text-xs font-black shrink-0 transition"
-                onClick={() => handleOpenGroupStudyForContext({
-                  contentType: 'MCQ',
-                  title: flashcardMcqs?.title || 'Live Projector MCQs',
-                  subject: flashcardMcqs?.subject || 'Live Class',
-                  chapterTitle: flashcardMcqs?.title,
-                  totalQuestions: flashcardMcqs?.items?.length,
-                })}
-                title="Live Study Room"
-              >
-                <Radio size={13} className="animate-pulse text-pink-400" />
-                <span>LIVE</span>
-              </button>
+              {!isCreateStudyRoomHidden && (
+                <button
+                  style={{ minWidth: 72, padding: '0 12px' }}
+                  className="flex items-center justify-center gap-1.5 text-pink-300 hover:text-pink-100 bg-pink-950/50 hover:bg-pink-900/60 border-l border-pink-500/30 text-xs font-black shrink-0 transition"
+                  onClick={() => handleOpenGroupStudyForContext({
+                    contentType: 'MCQ',
+                    title: flashcardMcqs?.title || 'Live Projector MCQs',
+                    subject: flashcardMcqs?.subject || 'Live Class',
+                    chapterTitle: flashcardMcqs?.title,
+                    totalQuestions: flashcardMcqs?.items?.length,
+                  })}
+                  title="Live Study Room"
+                >
+                  <Radio size={13} className="animate-pulse text-pink-400" />
+                  <span>LIVE</span>
+                </button>
+              )}
             </div>
           </div>
         ) : undefined;
@@ -25323,7 +25681,7 @@ RULES:
               subtitle={flashcardMcqs.subtitle}
               subject={flashcardMcqs.subject}
               onBack={() => setFlashcardMcqs(null)}
-              onOpenGroupStudy={() => handleOpenGroupStudyForContext({
+              onOpenGroupStudy={isCreateStudyRoomHidden ? undefined : () => handleOpenGroupStudyForContext({
                 contentType: 'FLASHCARD',
                 title: flashcardMcqs.title,
                 subject: flashcardMcqs.subject,
@@ -25435,20 +25793,22 @@ RULES:
                 <p className="text-sm font-black text-white truncate leading-tight">{compMcqSession.title}</p>
                 <p className="text-[10px] font-bold text-white/70 leading-tight">{compMcqSession.subtitle}</p>
               </div>
-              <button
-                onClick={() => handleOpenGroupStudyForContext({
-                  contentType: 'PREMIUM_MCQ',
-                  title: compMcqSession.title,
-                  subject: 'Competition',
-                  chapterTitle: compMcqSession.title,
-                  totalQuestions: totalQ,
-                })}
-                className="px-2.5 py-1.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 flex items-center gap-1 active:scale-95 transition shrink-0"
-                title="Live Battle Room"
-              >
-                <Users size={14} className="text-emerald-300" />
-                <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
-              </button>
+              {!isCreateStudyRoomHidden && (
+                <button
+                  onClick={() => handleOpenGroupStudyForContext({
+                    contentType: 'PREMIUM_MCQ',
+                    title: compMcqSession.title,
+                    subject: 'Competition',
+                    chapterTitle: compMcqSession.title,
+                    totalQuestions: totalQ,
+                  })}
+                  className="px-2.5 py-1.5 rounded-full bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-300 flex items-center gap-1 active:scale-95 transition shrink-0"
+                  title="Live Battle Room"
+                >
+                  <Users size={14} className="text-emerald-300" />
+                  <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
+                </button>
+              )}
               {attempted > 0 && !compMcqShowReview && (
                 <span className="text-[11px] font-black text-white/80 shrink-0">{attempted}/{totalQ}</span>
               )}
@@ -27398,6 +27758,9 @@ RULES:
           ] : []),
         ];
 
+        const activeVidCost = getCreditCost('defaultVideoCost', 10, planKey as any, settings);
+        const activePdfCost = getCreditCost('defaultPdfCost', 5, planKey as any, settings);
+
         const creditsRows: LimitRow[] = [
           mkRow('💎',`Write Mode (Credits) · ${wmCost} CR/unlock`, wmMax, isOwnPlan ? paidWriteCount : 0, false, true,
             `${wmMax}/day · ${wmCost} CR now`,
@@ -27405,11 +27768,11 @@ RULES:
             'text-sky-600', '#0ea5e9', false),
           mkRow('🎬','Video Lectures', null, 0, false, true,
             vpVidFree > 0 ? `${vpVidFree} free/day` : 'Coins needed',
-            vpVidFree > 0 ? `${vpVidFree} free, phir ${settings?.defaultVideoCost ?? 10} CR` : `${settings?.defaultVideoCost ?? 10} CR each`,
+            vpVidFree > 0 ? `${vpVidFree} free, phir ${activeVidCost} CR` : `${activeVidCost} CR each`,
             vpVidFree > 0 ? 'text-emerald-600' : 'text-sky-600', vpVidFree > 0 ? '#10b981' : '#0ea5e9', false),
           mkRow('📄','PDF / Notes Access', null, 0, false, true,
             vpPdfFree > 0 ? `${vpPdfFree} free/day` : 'Coins needed',
-            vpPdfFree > 0 ? `${vpPdfFree} free, phir ${settings?.defaultPdfCost ?? 5} CR` : `${settings?.defaultPdfCost ?? 5} CR each`,
+            vpPdfFree > 0 ? `${vpPdfFree} free, phir ${activePdfCost} CR` : `${activePdfCost} CR each`,
             vpPdfFree > 0 ? 'text-emerald-600' : 'text-sky-600', vpPdfFree > 0 ? '#10b981' : '#0ea5e9', false),
         ];
 
@@ -27459,7 +27822,7 @@ RULES:
               </div>
 
               {/* Level Bonus Banner */}
-              {_lvlBonusModal.mcqBonus > 0 && (
+              {_lvlBonus.mcqBonus > 0 && (
                 <div className="mx-5 mt-3 px-3 py-2 rounded-xl flex items-center gap-2" style={{ background: 'linear-gradient(90deg, #06b6d410, #8b5cf610)', border: '1.5px solid #06b6d440' }}>
                   <span className="text-base">{_userLevelInfo.emoji}</span>
                   <div className="flex-1 min-w-0">
@@ -27467,11 +27830,11 @@ RULES:
                       Level {_userLevel} Bonus Active
                     </p>
                     <p className="text-[9px] text-slate-500 leading-tight">
-                      +{_lvlBonusModal.mcqBonus} MCQ · +{_lvlBonusModal.writeFreeBonus} Write · +{_lvlBonusModal.dlBonus} DL · +{_lvlBonusModal.videoFreeBonus} Video/PDF — already added to your limits
+                      +{_lvlBonus.mcqBonus} MCQ · +{_lvlBonus.writeFreeBonus} Write · +{_lvlBonus.dlBonus} DL · +{_lvlBonus.videoFreeBonus} Video/PDF — already added to your limits
                     </p>
                   </div>
-                  {_lvlBonusModal.bonusLoginCredits > 0 && (
-                    <span className="shrink-0 text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">+{_lvlBonusModal.bonusLoginCredits} CR/Sunday</span>
+                  {_lvlBonus.bonusLoginCredits > 0 && (
+                    <span className="shrink-0 text-[9px] font-black px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">+{_lvlBonus.bonusLoginCredits} CR/Sunday</span>
                   )}
                 </div>
               )}
@@ -27610,6 +27973,11 @@ RULES:
             </div>
           </div>
           {/* Content */}
+          {(() => {
+            const freeMcq = getEffectiveDailyLimit('mcq', _userLevel, 'FREE', settings);
+            const basicMcq = getEffectiveDailyLimit('mcq', _userLevel, 'BASIC', settings);
+            const ultraMcq = getEffectiveDailyLimit('mcq', _userLevel, 'ULTRA', settings);
+            return (
           <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-[72px]">
 
             {/* TIER HEADER */}
@@ -27757,13 +28125,12 @@ RULES:
                   const lc = settings?.loginBonusConfig;
                   const f = lc?.freeBonus ?? 2, b = lc?.basicBonus ?? 5, u = lc?.ultraBonus ?? 10;
                   const lvlBonusCr = _lvlBonus.bonusLoginCredits;
-                  if (f === 0 && b === 0 && u === 0) return null;
+                  if (f === 0 && b === 0 && u === 0 && lvlBonusCr === 0) return null;
                   return (
                     <div className="flex items-center justify-between bg-green-50 rounded-xl px-3 py-2">
                       <p className="text-xs font-bold text-slate-700">🌅 Daily Login Bonus</p>
                       <span className="text-xs font-black text-green-700">
-                        Free +{f} / Basic +{b} / Ultra +{u}
-                        {lvlBonusCr > 0 && <span className="text-cyan-700"> +{lvlBonusCr} (L{_userLevel})</span>}
+                        {f === 0 && b === 0 && u === 0 ? `Level Bonus (+${lvlBonusCr} CR L${_userLevel})` : `Free +${f} / Basic +${b} / Ultra +${u}${lvlBonusCr > 0 ? ` +${lvlBonusCr} (L${_userLevel})` : ''}`}
                       </span>
                     </div>
                   );
@@ -27789,6 +28156,8 @@ RULES:
               🚀 Upgrade Plan — Visit Store
             </button>
           </div>
+            );
+          })()}
         </div>
       )}
 
@@ -28079,7 +28448,11 @@ RULES:
       {coinGate && (() => {
         const balance = getTotalCredits(user);
         const { cost, originalCost, discountPct, reason, action, onCancel, selectedBulk, bulkOption, pageInfo } = coinGate;
-        const isFree = cost === 0;
+        const isPermanentlyUnlocked = !!(
+          (user.unlockedContent || []).includes(reason) ||
+          (pageInfo?.pageLabel && (user.unlockedContent || []).includes(pageInfo.pageLabel))
+        );
+        const isFree = cost === 0 || isPermanentlyUnlocked;
         const hasPageInfo = !!pageInfo;
         const isDisc50 = discountPct === 50;
         const isDisc25 = discountPct === 25;
@@ -28102,21 +28475,36 @@ RULES:
               ? () => { _lockableModes.forEach(m => { if (m.unlockAction) m.unlockAction(); }); action(); }
               : action)
           : (selectedBulk && bulkOption ? bulkOption.action : action);
-        const canAfford = balance >= activeCost;
 
         const dismissGate = () => { setCoinGate(null); onCancel?.(); };
         const confirmGate = () => {
           if (!isFree) {
             const _freshU = (window as any).__dashUserRef?.current ?? user;
-            const _updated = applyDeduction(_freshU, activeCost);
-            if (_updated) {
-              handleUserUpdate(_updated);
-              try { recordCreditTx(_freshU.id, activeCost, 'SPEND', reason + (selectedBulk ? ' (Bulk)' : ''), _updated.credits ?? 0); } catch {}
+            const _isAdm = _freshU.role === 'ADMIN' || _freshU.role === 'SUB_ADMIN';
+            
+            if (!_isAdm) {
+              const _primary = (_freshU as any).primaryCurrency || 'CREDITS';
+              if (_primary === 'DIAMONDS') {
+                const diaCost = Math.ceil(activeCost / 10);
+                const _updated = { ..._freshU, diamonds: (_freshU.diamonds || 0) - diaCost };
+                handleUserUpdate(_updated);
+              } else {
+                const _updated = applyDeduction(_freshU, activeCost);
+                if (_updated) {
+                  handleUserUpdate(_updated);
+                  try { recordCreditTx(_freshU.id, activeCost, 'SPEND', reason + (selectedBulk ? ' (Bulk)' : ''), _updated.credits ?? 0); } catch {}
+                }
+              }
             }
           }
           setCoinGate(null);
           activeAction();
         };
+
+        const _primary = (user as any).primaryCurrency || 'CREDITS';
+        const displayCost = _primary === 'DIAMONDS' ? Math.ceil(activeCost / 10) : activeCost;
+        const displayCoin = _primary === 'DIAMONDS' ? '💎' : '🪙';
+        const canAfford = _primary === 'DIAMONDS' ? ((user.diamonds || 0) >= displayCost) : (balance >= displayCost);
 
         const emojiMap: Record<string, string> = {
           'Reading Mode': '📖', 'Writing Mode': '✍️', 'MCQ Session': '🧠',
@@ -28190,9 +28578,9 @@ RULES:
                     <p className="text-[11px] font-black leading-tight mb-1 line-clamp-2" style={{ color: 'var(--nst-color-brand)' }}>{reason}</p>
                     <div className="mt-auto">
                       <div className="flex items-baseline gap-1">
-                        <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{cost}</span>
-                        <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>CR</span>
-                        {(isDisc50 || isDisc25) && <span className="text-[10px] text-slate-400 line-through">{originalCost}</span>}
+                        <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{_primary === 'DIAMONDS' ? Math.ceil(cost/10) : cost}</span>
+                        <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>{displayCoin}</span>
+                        {(isDisc50 || isDisc25) && <span className="text-[10px] text-slate-400 line-through">{_primary === 'DIAMONDS' ? Math.ceil(originalCost/10) : originalCost}</span>}
                       </div>
                       {isDisc50 && <p className="text-[8px] font-black text-emerald-600">🎉 50% off</p>}
                       {isDisc25 && <p className="text-[8px] font-black text-amber-600">⚡ 25% off</p>}
@@ -28239,7 +28627,7 @@ RULES:
                               ) : m.cost === 0 ? (
                                 <span className="text-[9px] font-black text-blue-400 shrink-0">Sub ✓</span>
                               ) : (
-                                <span className="text-[9px] font-black text-slate-400 shrink-0">{Math.max(1, Math.floor(m.cost * discMult))} CR</span>
+                                <span className="text-[9px] font-black text-slate-400 shrink-0">{_primary === 'DIAMONDS' ? Math.ceil(Math.floor(m.cost * discMult) / 10) : Math.floor(m.cost * discMult)} {displayCoin}</span>
                               )}
                             </div>
                           );
@@ -28248,9 +28636,9 @@ RULES:
                       {/* Total — 20% discounted */}
                       <div className="border-t border-slate-200/70 pt-1.5 mt-auto">
                         <div className="flex items-baseline gap-1">
-                          <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{_bulkModeCostDiscounted}</span>
-                          <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>CR</span>
-                          <span className="text-[10px] text-slate-400 line-through">{_bulkModeCost}</span>
+                          <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{_primary === 'DIAMONDS' ? Math.ceil(_bulkModeCostDiscounted/10) : _bulkModeCostDiscounted}</span>
+                          <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>{displayCoin}</span>
+                          <span className="text-[10px] text-slate-400 line-through">{_primary === 'DIAMONDS' ? Math.ceil(_bulkModeCost/10) : _bulkModeCost}</span>
                         </div>
                         <p className="text-[9px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>🔓 Sab modes unlock — 20% off</p>
                       </div>
@@ -28265,9 +28653,9 @@ RULES:
                   <div>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.12em] mb-1">Coins Lagenge</p>
                     <div className="flex items-baseline gap-2">
-                      <span className="text-[34px] font-black text-indigo-700 leading-none">{cost}</span>
-                      <span className="text-sm font-bold text-indigo-400">CR</span>
-                      {(isDisc50 || isDisc25) && <span className="text-xs text-slate-400 line-through font-bold">{originalCost}</span>}
+                      <span className="text-[34px] font-black text-indigo-700 leading-none">{_primary === 'DIAMONDS' ? Math.ceil(cost/10) : cost}</span>
+                      <span className="text-sm font-bold text-indigo-400">{displayCoin}</span>
+                      {(isDisc50 || isDisc25) && <span className="text-xs text-slate-400 line-through font-bold">{_primary === 'DIAMONDS' ? Math.ceil(originalCost/10) : originalCost}</span>}
                     </div>
                     {isDisc50 && <span className="inline-block mt-1 text-[9px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">🎉 50% Routine Discount</span>}
                     {isDisc25 && <span className="inline-block mt-1 text-[9px] font-black bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">⚡ 25% Routine Discount</span>}
@@ -28340,41 +28728,90 @@ RULES:
                 </div>
               )}
 
-              {/* Balance row */}
+              {/* Balance row (Credits & Diamonds) */}
               {!isFree && (
-                <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border border-slate-100 rounded-xl mb-3">
-                  <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Balance</span>
-                  <span className={`text-sm font-black ${canAfford ? 'text-emerald-600' : 'text-red-500'}`}>
-                    {balance.toLocaleString('en-IN')} CR {canAfford ? '✓' : '✗'}
-                  </span>
+                <div className="space-y-1.5 mb-3">
+                  <div className="flex items-center justify-between px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl">
+                    <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">Credits</span>
+                    <span className={`text-xs font-black ${canAfford ? 'text-emerald-600' : 'text-red-500'}`}>
+                      🪙 {balance.toLocaleString('en-IN')} CR {canAfford ? '✓' : '✗'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-2 bg-sky-50/70 border border-sky-100 rounded-xl">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-black text-sky-600 uppercase tracking-wider">Diamonds</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-100 text-sky-700 font-bold">Lifetime</span>
+                    </div>
+                    <span className="text-xs font-black text-sky-700">
+                      💎 {(user.diamonds ?? 0).toLocaleString('en-IN')}
+                    </span>
+                  </div>
                 </div>
               )}
 
               {/* Unlock note */}
               <p className="text-center text-[10px] text-slate-400 font-semibold mb-4">
-                ✅ Ek baar unlock — dobara coins nahi lagenge
+                ✅ Ek baar unlock — dobara coins ya diamonds nahi lagenge
               </p>
 
-              {/* Buttons */}
-              <div className="flex gap-2.5">
-                {!isFree && (
-                  <button onClick={dismissGate}
-                    className="flex-1 py-4 rounded-2xl font-black text-sm text-slate-500 border-2 border-slate-200 bg-white active:scale-95 transition-all"
+              {/* Buttons: Credits vs Diamonds */}
+              <div className="space-y-2">
+                <div className="flex gap-2.5">
+                  {!isFree && (
+                    <button onClick={dismissGate}
+                      className="flex-1 py-3.5 rounded-2xl font-black text-sm text-slate-500 border-2 border-slate-200 bg-white active:scale-95 transition-all"
+                    >
+                      Nahi
+                    </button>
+                  )}
+                  <button onClick={confirmGate}
+                    disabled={!isFree && !canAfford}
+                    className={`cg-shimmer py-3.5 rounded-2xl font-black text-sm text-white active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${isFree ? 'flex-1' : 'flex-[2]'}`}
+                    style={{
+                      background: !isFree && !canAfford ? '#94a3b8' : isFree ? 'linear-gradient(135deg,#10b981,#0891b2)' : 'linear-gradient(135deg, var(--nst-btn-start, #4f46e5), var(--nst-btn-end, #7c3aed))',
+                      boxShadow: (isFree || canAfford) ? '0 10px 28px -6px var(--nst-color-brand-20, rgba(99,102,241,0.6))' : 'none',
+                    }}
                   >
-                    Nahi
+                    <span className="relative z-10">{isPermanentlyUnlocked ? '💎' : isFree ? '🎁' : '🪙'}</span>
+                    <span className="relative z-10">{isPermanentlyUnlocked ? '💎 Permanently Unlocked (Free Access)' : isFree ? 'Free mein Kholo!' : `${displayCost} CR (Coins)`}</span>
+                  </button>
+                </div>
+
+                {/* Diamond Permanent Unlock Button */}
+                {!isFree && !isPermanentlyUnlocked && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const diamondCost = Math.max(1, Math.ceil(activeCost / 20));
+                      const userDiamonds = user.diamonds ?? 0;
+                      if (userDiamonds < diamondCost) {
+                        setCoinGate(null);
+                        onOpenStore?.();
+                        return;
+                      }
+                      const freshU = (window as any).__dashUserRef?.current ?? user;
+                      const contentKey = pageInfo?.pageLabel || reason;
+                      const updatedUnlocked = Array.from(new Set([...(freshU.unlockedContent || []), contentKey]));
+                      const updatedU = {
+                        ...freshU,
+                        diamonds: Math.max(0, (freshU.diamonds ?? 0) - diamondCost),
+                        unlockedContent: updatedUnlocked,
+                      };
+                      handleUserUpdate(updatedU);
+                      saveUserToLive(updatedU);
+                      setCoinGate(null);
+                      activeAction();
+                    }}
+                    className="w-full py-2.5 rounded-2xl font-black text-xs text-sky-950 bg-gradient-to-r from-sky-300 via-sky-200 to-cyan-200 border border-sky-400/40 active:scale-95 transition-all flex items-center justify-center gap-1.5 shadow-sm hover:opacity-95"
+                  >
+                    <span>💎</span>
+                    <span>
+                      {(user.diamonds ?? 0) >= Math.max(1, Math.ceil(activeCost / 20))
+                        ? `💎 ${Math.max(1, Math.ceil(activeCost / 20))} Diamonds Se Permanent Unlock`
+                        : `💎 Store se Diamonds Lein (Need ${Math.max(1, Math.ceil(activeCost / 20))} 💎)`}
+                    </span>
                   </button>
                 )}
-                <button onClick={confirmGate}
-                  disabled={!isFree && !canAfford}
-                  className={`cg-shimmer py-4 rounded-2xl font-black text-sm text-white active:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${isFree ? 'flex-1' : 'flex-[2]'}`}
-                  style={{
-                    background: !isFree && !canAfford ? '#94a3b8' : isFree ? 'linear-gradient(135deg,#10b981,#0891b2)' : 'linear-gradient(135deg, var(--nst-btn-start, #4f46e5), var(--nst-btn-end, #7c3aed))',
-                    boxShadow: (isFree || canAfford) ? '0 10px 28px -6px var(--nst-color-brand-20, rgba(99,102,241,0.6))' : 'none',
-                  }}
-                >
-                  <span className="relative z-10">{isFree ? '🎁' : '🪙'}</span>
-                  <span className="relative z-10">{isFree ? 'Free mein Kholo!' : `${activeCost} CR — Unlock!`}</span>
-                </button>
               </div>
             </div>
           </div>
@@ -29602,7 +30039,12 @@ Explanation: Yahan explanation...`}</p>
         <WhatsAppChatModal
           user={user}
           onClose={() => setShowWhatsAppChatModal(false)}
-          onOpenGroupStudy={() => {
+          onOpenStore={() => {
+            setShowWhatsAppChatModal(false);
+            setStoreInitialTier('SUBSCRIPTION');
+            onTabChange('STORE');
+          }}
+          onOpenGroupStudy={isGroupStudyHidden ? undefined : () => {
             setShowWhatsAppChatModal(false);
             setShowGroupStudyModal(true);
           }}

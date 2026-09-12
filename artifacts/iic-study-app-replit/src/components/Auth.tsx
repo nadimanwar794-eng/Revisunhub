@@ -295,6 +295,8 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
           redeemedCodes: [],
           subscriptionTier: 'FREE',
           isPremium: false,
+          hideDeductionPopups: true,
+          primaryCurrency: 'CREDIT',
           inbox: [
             {
               id: `welcome-bonus-${Date.now()}`,
@@ -517,6 +519,8 @@ export const Auth: React.FC<Props> = ({ onLogin, logActivity, appSettings }) => 
         redeemedCodes: [],
         subscriptionTier: 'FREE',
         isPremium: false,
+        hideDeductionPopups: true,
+        primaryCurrency: 'CREDIT',
         inbox: [
           {
             id: `welcome-bonus-${Date.now()}`,

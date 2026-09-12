@@ -65,29 +65,6 @@ export const ALL_FEATURES: Feature[] = [
         description: 'Track your progress and performance.'
     },
     {
-        id: 'WEAK_TOPICS',
-        label: 'Weak Topics',
-        group: 'CORE',
-        surfaceLevel: 1,
-        requiredSubscription: 'BASIC',
-        adminVisible: true,
-        path: 'REVISION',
-        icon: 'AlertCircle',
-        description: 'Focus instantly on your weakest areas.',
-        isDummy: true // Integrated in Revision Hub
-    },
-    {
-        id: 'CONTINUE_LAST',
-        label: 'Continue Last',
-        group: 'CORE',
-        surfaceLevel: 1,
-        adminVisible: true,
-        path: 'CONTINUE',
-        icon: 'PlayCircle',
-        description: 'Resume exactly where you left off.',
-        isDummy: true // Not implemented
-    },
-    {
         id: 'GROUP_STUDY',
         label: 'Group Study & Live Class',
         group: 'TOOLS',
@@ -211,17 +188,6 @@ export const ALL_FEATURES: Feature[] = [
 
     // --- SECONDARY (Layer 2: Tools & Exploration) ---
     {
-        id: 'TOOLS',
-        label: 'Tools',
-        group: 'TOOLS',
-        surfaceLevel: 2,
-        adminVisible: true,
-        path: 'TOOLS',
-        icon: 'Wrench',
-        description: 'Calculators, converters, and more.',
-        isDummy: true
-    },
-    {
         id: 'GAMES',
         label: 'Game Zone',
         group: 'GAME',
@@ -282,16 +248,6 @@ export const ALL_FEATURES: Feature[] = [
         path: 'REDEEM',
         icon: 'Gift'
     },
-    {
-        id: 'LOGS_DEBUG',
-        label: 'Logs & Debug',
-        group: 'ADVANCED',
-        surfaceLevel: 3,
-        adminVisible: true,
-        path: 'LOGS',
-        icon: 'Terminal',
-        isDummy: true
-    },
 
     // --- REVISION SUB-FEATURES ---
     {
@@ -302,25 +258,6 @@ export const ALL_FEATURES: Feature[] = [
         adminTab: 'REVISION_MCQ_MANAGER',
         icon: 'BookOpenCheck',
         description: 'Revision Hub ke liye class-wise MCQ add karein (6–12 + Competition).'
-    },
-    {
-        id: 'REVISION_AI_PLAN',
-        label: 'AI Study Plan',
-        group: 'REVISION',
-        surfaceLevel: 2,
-        requiredSubscription: 'ULTRA',
-        adminVisible: true,
-        description: 'Generate AI-based study plans.',
-        isDummy: true
-    },
-    {
-        id: 'REVISION_MISTAKES',
-        label: 'Mistakes Review',
-        group: 'REVISION',
-        surfaceLevel: 2,
-        adminVisible: true,
-        description: 'Review your past mistakes.',
-        isDummy: true
     },
 
     // --- AI SUB-FEATURES ---
@@ -694,7 +631,7 @@ export const ALL_FEATURES: Feature[] = [
         label: 'Engagement Rewards',
         group: 'GAME',
         surfaceLevel: 3,
-        adminVisible: true,
+        adminVisible: false,
         adminTab: 'CONFIG_REWARDS',
         requiredPermission: 'MANAGE_SETTINGS',
         icon: 'Gift',
@@ -705,7 +642,7 @@ export const ALL_FEATURES: Feature[] = [
         label: 'Prize Settings',
         group: 'GAME',
         surfaceLevel: 3,
-        adminVisible: true,
+        adminVisible: false,
         adminTab: 'CONFIG_PRIZES',
         requiredPermission: 'MANAGE_SETTINGS',
         icon: 'Trophy',
@@ -716,7 +653,7 @@ export const ALL_FEATURES: Feature[] = [
         label: 'Theme',
         group: 'GAME',
         surfaceLevel: 3,
-        adminVisible: true,
+        adminVisible: false,
         adminTab: 'CONFIG_CHALLENGE',
         requiredPermission: 'MANAGE_SETTINGS',
         icon: 'Trophy',
@@ -727,7 +664,7 @@ export const ALL_FEATURES: Feature[] = [
         label: 'Challenge 2.0',
         group: 'GAME',
         surfaceLevel: 3,
-        adminVisible: true,
+        adminVisible: false,
         adminTab: 'CHALLENGE_CREATOR_20',
         requiredPermission: 'MANAGE_SETTINGS',
         icon: 'Rocket',
@@ -751,7 +688,7 @@ export const ALL_FEATURES: Feature[] = [
         label: 'Animations',
         group: 'GAME',
         surfaceLevel: 3,
-        adminVisible: true,
+        adminVisible: false,
         adminTab: 'CONFIG_EFFECTS',
         requiresSuperAdmin: true,
         icon: 'Sparkles',
@@ -792,7 +729,7 @@ export const ALL_FEATURES: Feature[] = [
     },
     {
         id: 'ADMIN_POWER',
-        label: 'Advanced Settings',
+        label: 'Power Manager (UI Controls)',
         group: 'ADVANCED',
         surfaceLevel: 3,
         adminVisible: true,
@@ -806,7 +743,7 @@ export const ALL_FEATURES: Feature[] = [
         label: 'Blogger Hub',
         group: 'ADVANCED',
         surfaceLevel: 3,
-        adminVisible: true,
+        adminVisible: false,
         adminTab: 'BLOGGER_HUB',
         requiresSuperAdmin: true,
         icon: 'PenTool',
@@ -828,7 +765,7 @@ export const ALL_FEATURES: Feature[] = [
         label: 'External Apps',
         group: 'ADVANCED',
         surfaceLevel: 3,
-        adminVisible: true,
+        adminVisible: false,
         adminTab: 'CONFIG_EXTERNAL_APPS',
         requiredPermission: 'MANAGE_SETTINGS',
         icon: 'Globe',
@@ -872,7 +809,7 @@ export const ALL_FEATURES: Feature[] = [
         label: 'NSTA Control',
         group: 'GAME',
         surfaceLevel: 3,
-        adminVisible: true,
+        adminVisible: false,
         adminTab: 'NSTA_CONTROL',
         requiredPermission: 'MANAGE_SETTINGS',
         icon: 'Sliders',
@@ -912,27 +849,6 @@ export const ALL_FEATURES: Feature[] = [
         color: 'indigo',
         description: 'Admin dashboard ke saare buttons aur sections ki full guide.'
     },
-
-    // --- ANALYSIS DUMMIES (Not switchable individually) ---
-    { id: 'ACCURACY_STAT', label: 'Accuracy Stat', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'SPEED_STAT', label: 'Speed Stat', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'PERF_TREND', label: 'Performance Trend', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'STRONG_AREA', label: 'Strong Areas', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'AREA_IMPROVING', label: 'Area Improving', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'FOCUS_NEEDED', label: 'Focus Needed', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'OFFICIAL_MARKSHEET', label: 'Official Marksheet', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'OMR_SHEET', label: 'OMR Sheet', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'PROGRESS_DELTA', label: 'Progress Delta', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'MISTAKE_PATTERN', label: 'Mistake Pattern', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'TOPIC_BREAKDOWN', label: 'Topic Breakdown', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'TOPIC_DIST', label: 'Topic Distribution', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'DOWNLOAD_ANALYSIS', label: 'Download Analysis', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'AI_INSIGHT_MAP', label: 'AI Insight Map', group: 'AI', surfaceLevel: 2, adminVisible: false, isDummy: true },
-    { id: 'PREMIUM_ANALYSIS', label: 'Premium Analysis', group: 'ANALYSIS', surfaceLevel: 2, adminVisible: true },
-    { id: 'TEACHER_STRATEGY', label: 'Teacher Strategy', group: 'CONTENT', surfaceLevel: 2, adminVisible: true, description: 'Access to teacher strategy notes.' },
-    { id: 'UNIVERSAL_VIDEO', label: 'Universal Video', group: 'CONTENT', surfaceLevel: 2, adminVisible: true, description: 'Access to universal videos.' },
-    { id: 'PREMIUM_AUDIO', label: 'Premium Audio', group: 'CONTENT', surfaceLevel: 2, adminVisible: true, description: 'Access to premium audio content.' },
-    { id: 'AI_TUTOR', label: 'AI Tutor', group: 'AI', surfaceLevel: 2, adminVisible: true, description: 'Access to AI Tutor.' },
 
     // --- RECOVERY & SECURITY CONTROLS (Updated) ---
     {

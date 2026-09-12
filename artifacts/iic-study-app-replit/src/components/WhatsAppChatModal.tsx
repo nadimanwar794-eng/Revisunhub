@@ -43,6 +43,7 @@ import {
   Loader2,
   Crown,
   Zap,
+  ShoppingBag,
 } from 'lucide-react';
 import { User } from '../types';
 import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
@@ -98,6 +99,13 @@ import {
   isMessageDeletedForUser,
   updateGroupPrivacy,
   joinPrivateGroupByPassword,
+  isUserAllowedInGroup,
+  getMaxFriendsLimit,
+  getNstaDailyMessageLimit,
+  getNstaDailyMessageCount,
+  incrementNstaDailyMessageCount,
+  canUserSendNstaMessage,
+  DEFAULT_STUDY_GROUPS,
 } from '../services/whatsappChatService';
 
 // Block limit tiers: Free user -> 10, Basic -> 20, Ultra -> 30
@@ -150,6 +158,7 @@ interface Props {
   user: User;
   onClose: () => void;
   onOpenGroupStudy?: () => void;
+  onOpenStore?: (targetTier?: 'SUBSCRIPTION' | 'CREDITS' | 'DIAMONDS' | 'BASIC' | 'ULTRA') => void;
   targetPeer?: ChatContact;
   initialGroupId?: string;
   initialTab?: 'CHATS' | 'REQUESTS' | 'GROUPS' | 'BLOCKED';
@@ -161,6 +170,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   user,
   onClose,
   onOpenGroupStudy,
+  onOpenStore,
   targetPeer,
   initialGroupId,
   initialTab,
@@ -254,6 +264,27 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   // Free User Group Creation Restriction Modal
   const [showFreeGroupBlockModal, setShowFreeGroupBlockModal] = useState(false);
+
+  // Group Subscription Lock Prompt State
+  const [lockedGroupPrompt, setLockedGroupPrompt] = useState<{
+    group: ChatGroup;
+    reason: string;
+    requiredPlanName: string;
+    storeTarget?: 'BASIC' | 'ULTRA' | 'DIAMONDS' | 'CREDITS';
+  } | null>(null);
+
+  // Daily Message Limit Reached Modal State
+  const [showMsgLimitModal, setShowMsgLimitModal] = useState(false);
+
+  // Max Friend Limit Reached Modal State
+  const [showFriendLimitModal, setShowFriendLimitModal] = useState(false);
+
+  // NSTA Messenger Daily Message Quota State
+  const [msgQuota, setMsgQuota] = useState(() => canUserSendNstaMessage(user));
+
+  useEffect(() => {
+    setMsgQuota(canUserSendNstaMessage(user));
+  }, [user]);
 
   // Private Group Direct Password Join Modal State
   const [joinPrivateGroupTarget, setJoinPrivateGroupTarget] = useState<ChatGroup | null>(null);
@@ -528,8 +559,18 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     }
   };
 
-  // Open Group chat with PIN check
+  // Open Group chat with Subscription & PIN check
   const handleOpenGroupChat = (group: ChatGroup) => {
+    const access = isUserAllowedInGroup(group, user);
+    if (!access.allowed) {
+      setLockedGroupPrompt({
+        group,
+        reason: access.reason || 'Yeh group sirf active subscribers ke liye hai.',
+        requiredPlanName: access.requiredPlanName || 'VIP Subscription',
+        storeTarget: access.storeTarget || 'BASIC',
+      });
+      return;
+    }
     if (isChatLocked(group.id)) {
       setPendingUnlockContext({ group, contextId: group.id });
       setPinInput('');
@@ -746,9 +787,17 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     }
   };
 
-  // Handle Send Friend Request
+  // Handle Send Friend Request with tier limits (Free: 10, Basic: 25, Ultra: 50, Level 10+: +10/level)
   const handleSendFriendRequest = async (targetStudent: ChatContact) => {
     if (!targetStudent || targetStudent.id === user.id || sendingReqIds.has(targetStudent.id)) return;
+
+    const friendLimits = getMaxFriendsLimit(user);
+    if (friends.length >= friendLimits.total) {
+      setShowFriendLimitModal(true);
+      showToast(`⚠️ Friend limit poori ho chuki hai (${friends.length}/${friendLimits.total} friends)!`);
+      return;
+    }
+
     setSendingReqIds((prev) => new Set(prev).add(targetStudent.id));
     try {
       const newReq = await sendFriendRequest(
@@ -787,8 +836,14 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     showToast(`Request to ${toName} cancelled.`);
   };
 
-  // Handle Accept Friend Request
+  // Handle Accept Friend Request with friend limit check
   const handleAcceptRequest = async (req: FriendRequest) => {
+    const friendLimits = getMaxFriendsLimit(user);
+    if (friends.length >= friendLimits.total) {
+      showToast(`⚠️ Aapki friend list full hai (${friends.length}/${friendLimits.total})! Free: 10, Basic: 25, Ultra: 50. Level 10+ par har level par 10 friends badhenge.`);
+      return;
+    }
+
     await acceptFriendRequest(
       {
         id: user.id,
@@ -824,6 +879,27 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   // Handle Send Text Message (Optimistic update with reply support)
   const handleSendMessage = async () => {
     if (!inputText.trim()) return;
+
+    // Check Daily Message Quota (Free: 20, Basic: 50, Ultra: 100/day)
+    const quotaCheck = canUserSendNstaMessage(user);
+    if (!quotaCheck.allowed) {
+      setShowMsgLimitModal(true);
+      showToast(`⚠️ Aaj ka daily message quota (${quotaCheck.limit}/${quotaCheck.limit}) poora ho gaya hai!`);
+      return;
+    }
+
+    if (selectedGroup) {
+      const access = isUserAllowedInGroup(selectedGroup, user);
+      if (!access.allowed) {
+        setLockedGroupPrompt({
+          group: selectedGroup,
+          reason: access.reason || 'Yeh group sirf active subscribers ke liye hai.',
+          requiredPlanName: access.requiredPlanName || 'VIP Subscription',
+        });
+        return;
+      }
+    }
+
     const textToSend = inputText;
     const currentReply = replyingTo
       ? {
@@ -875,6 +951,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         'TEXT',
         currentReply ? { replyTo: currentReply } : undefined
       );
+      incrementNstaDailyMessageCount(user.id);
+      setMsgQuota(canUserSendNstaMessage(user));
     } else if (selectedGroup) {
       const optimisticMsg: ChatMessage = {
         id: `local_grp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -903,11 +981,32 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         'TEXT',
         currentReply ? { replyTo: currentReply } : undefined
       );
+      incrementNstaDailyMessageCount(user.id);
+      setMsgQuota(canUserSendNstaMessage(user));
     }
   };
 
   // Handle Voice Note Simulation
   const handleToggleVoiceRecord = () => {
+    const quotaCheck = canUserSendNstaMessage(user);
+    if (!quotaCheck.allowed) {
+      setShowMsgLimitModal(true);
+      showToast(`⚠️ Aaj ka daily message quota (${quotaCheck.limit}/${quotaCheck.limit}) poora ho gaya hai!`);
+      return;
+    }
+
+    if (selectedGroup) {
+      const access = isUserAllowedInGroup(selectedGroup, user);
+      if (!access.allowed) {
+        setLockedGroupPrompt({
+          group: selectedGroup,
+          reason: access.reason || 'Yeh group sirf active subscribers ke liye hai.',
+          requiredPlanName: access.requiredPlanName || 'VIP Subscription',
+        });
+        return;
+      }
+    }
+
     const userPhoto = user.photoURL || (user as any).avatarUrl;
     if (isRecordingVoice) {
       clearInterval(recordingTimerRef.current);
@@ -926,6 +1025,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           'VOICE',
           { voiceDuration: duration }
         );
+        incrementNstaDailyMessageCount(user.id);
+        setMsgQuota(canUserSendNstaMessage(user));
       } else if (selectedGroup) {
         sendGroupMessage(
           selectedGroup.id,
@@ -936,6 +1037,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           'VOICE',
           { voiceDuration: duration }
         );
+        incrementNstaDailyMessageCount(user.id);
+        setMsgQuota(canUserSendNstaMessage(user));
       }
     } else {
       setIsRecordingVoice(true);
@@ -948,6 +1051,25 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   // Handle Quick Attachment
   const handleSendQuickAttachment = (type: 'DOUBT' | 'NOTE' | 'MCQ', content: string) => {
+    const quotaCheck = canUserSendNstaMessage(user);
+    if (!quotaCheck.allowed) {
+      setShowMsgLimitModal(true);
+      showToast(`⚠️ Aaj ka daily message quota (${quotaCheck.limit}/${quotaCheck.limit}) poora ho gaya hai!`);
+      return;
+    }
+
+    if (selectedGroup) {
+      const access = isUserAllowedInGroup(selectedGroup, user);
+      if (!access.allowed) {
+        setLockedGroupPrompt({
+          group: selectedGroup,
+          reason: access.reason || 'Yeh group sirf active subscribers ke liye hai.',
+          requiredPlanName: access.requiredPlanName || 'VIP Subscription',
+        });
+        return;
+      }
+    }
+
     setShowAttachmentMenu(false);
     const userPhoto = user.photoURL || (user as any).avatarUrl;
     if (selectedContact) {
@@ -959,6 +1081,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         content,
         'DOUBT'
       );
+      incrementNstaDailyMessageCount(user.id);
+      setMsgQuota(canUserSendNstaMessage(user));
     } else if (selectedGroup) {
       sendGroupMessage(
         selectedGroup.id,
@@ -968,6 +1092,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         content,
         'DOUBT'
       );
+      incrementNstaDailyMessageCount(user.id);
+      setMsgQuota(canUserSendNstaMessage(user));
     }
   };
 
@@ -1609,7 +1735,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   <Search size={18} />
                 </button>
                 <button
-                  onClick={() => setShowNewGroupModal(true)}
+                  onClick={handleOpenNewGroupModal}
                   className="p-2 rounded-full hover:bg-white/10 text-white/90 transition-colors"
                   title="New Study Group"
                 >
@@ -1638,7 +1764,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                       <button
                         onClick={() => {
                           setShowMainMenu(false);
-                          setShowNewGroupModal(true);
+                          handleOpenNewGroupModal();
                         }}
                         className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
                       >
@@ -2175,6 +2301,29 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     </button>
                   </div>
                 )}
+
+                {/* Friends Quota Status Bar (Free: 10, Basic: 25, Ultra: 50, Level 10+: +10/lvl) */}
+                {(() => {
+                  const friendLimits = getMaxFriendsLimit(user);
+                  return (
+                    <div className="mx-4 mt-2 px-3 py-1.5 bg-purple-500/10 border border-purple-500/20 rounded-xl flex items-center justify-between text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <Users size={13} className="text-purple-500" />
+                        <span className="font-semibold text-slate-700 dark:text-slate-300">Friends:</span>
+                        <strong className="text-purple-600 dark:text-purple-400 font-black">
+                          {friends.length} / {friendLimits.total}
+                        </strong>
+                        <span className="text-[10px] text-slate-400 hidden sm:inline">
+                          (Base: {friendLimits.base}{friendLimits.levelBonus > 0 ? ` + Lvl ${friendLimits.userLevel}: +${friendLimits.levelBonus}` : ''})
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-black uppercase text-purple-600 dark:text-purple-300 bg-purple-500/15 px-1.5 py-0.2 rounded">
+                        {friendLimits.tierName} PLAN
+                      </span>
+                    </div>
+                  );
+                })()}
+
                 {/* Friends Chat List */}
                 {filteredFriends.length === 0 ? (
                   <div className="text-center py-12 px-4 space-y-3">
@@ -4452,6 +4601,101 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   className="w-full py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-xs font-bold"
                 >
                   Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── MODAL 5: FREE USER GROUP CREATION RESTRICTION ─────── */}
+        {showFreeGroupBlockModal && (
+          <div className="fixed inset-0 z-[380] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-6 text-center shadow-2xl border border-rose-500/30 animate-in zoom-in-95 space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-3xl mx-auto text-rose-500">
+                🔒
+              </div>
+              <div>
+                <div className="inline-block px-2.5 py-0.5 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-400 font-black text-[10px] uppercase tracking-wider mb-2">
+                  Basic / Ultra VIP Only
+                </div>
+                <h3 className="font-black text-base text-slate-900 dark:text-white mb-1">
+                  Free Users Group Nahi Bana Sakte
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-300 leading-relaxed">
+                  Free plan users naya study group nahi bana sakte. Naya group create karne ke liye <strong>Basic VIP</strong> ya <strong>Ultra Elite</strong> plan upgrade karein!
+                </p>
+              </div>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFreeGroupBlockModal(false);
+                    if (onOpenStore) {
+                      onOpenStore();
+                    } else {
+                      window.dispatchEvent(new CustomEvent('open-store'));
+                    }
+                  }}
+                  className="w-full py-3 bg-gradient-to-r from-purple-600 via-indigo-600 to-sky-600 hover:opacity-95 text-white rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+                >
+                  <ShoppingBag size={15} />
+                  <span>Store Me VIP Upgrade Karein</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowFreeGroupBlockModal(false)}
+                  className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                >
+                  Band Karein
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── MODAL 6: SUBSCRIPTION LOCKED GROUP PROMPT ─────── */}
+        {lockedGroupPrompt && (
+          <div className="fixed inset-0 z-[380] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-6 text-center shadow-2xl border border-amber-500/30 animate-in zoom-in-95 space-y-4">
+              <div className="w-16 h-16 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-3xl mx-auto text-amber-500">
+                🔒
+              </div>
+              <div>
+                <div className="inline-block px-2.5 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-400 font-black text-[10px] uppercase tracking-wider mb-2">
+                  Subscription Locked
+                </div>
+                <h3 className="font-black text-base text-slate-900 dark:text-white mb-1">
+                  {lockedGroupPrompt.group.name}
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-300 leading-relaxed mb-2">
+                  {lockedGroupPrompt.reason}
+                </p>
+                <div className="p-3 rounded-xl bg-slate-800/80 border border-white/5 text-[11px] text-amber-300 font-medium">
+                  Ye group sirf active <strong>{lockedGroupPrompt.requiredPlanName}</strong> members ke liye open hai. Subscription khatam hone par access lock ho jata hai.
+                </div>
+              </div>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLockedGroupPrompt(null);
+                    if (onOpenStore) {
+                      onOpenStore();
+                    } else {
+                      window.dispatchEvent(new CustomEvent('open-store'));
+                    }
+                  }}
+                  className="w-full py-3 bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:opacity-95 text-white rounded-xl text-xs font-black shadow-lg flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
+                >
+                  <ShoppingBag size={15} />
+                  <span>Store Kholein (Active Plan Lein)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLockedGroupPrompt(null)}
+                  className="w-full py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                >
+                  Theek Hai
                 </button>
               </div>
             </div>
