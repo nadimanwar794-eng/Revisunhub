@@ -5,7 +5,7 @@ import {
   Sparkles, Check, MessageSquare, Lock, Ticket, ShieldCheck, Star,
   ChevronRight, ChevronDown, Flame, BadgeCheck, History, TrendingDown,
   Calendar, Clock, Crown, DollarSign, ArrowLeft, Zap, Gift, Coins,
-  Package, Wallet, X, ArrowLeftRight
+  Package, Wallet, X, ArrowLeftRight, HelpCircle
 } from 'lucide-react';
 import { saveUserToLive } from '../firebase';
 import { getLevelInfo, getScoreDiscountFromScore, getNextLevelInfo, getLevelProgress, getLevelDailyLimitsWithOverride, UNLIMITED } from '../utils/levelSystem';
@@ -395,6 +395,24 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   useEffect(() => {
     if (initialTier) setTierType(initialTier);
   }, [initialTier]);
+
+  /* Free Plan Ad/Comparison Modal State */
+  const [showFreeAdModal, setShowFreeAdModal] = useState(false);
+
+  // Check 1st time user visit for Free Plan Ad
+  useEffect(() => {
+    const key = `free_plan_ad_seen_${user.id}`;
+    const alreadySeen = localStorage.getItem(key);
+    if (!alreadySeen) {
+      setShowFreeAdModal(true);
+    }
+  }, [user.id]);
+
+  const handleDismissFreeAd = () => {
+    const key = `free_plan_ad_seen_${user.id}`;
+    localStorage.setItem(key, 'true');
+    setShowFreeAdModal(false);
+  };
 
   /* Diamond State */
   const [diamondSubTab, setDiamondSubTab] = useState<'PACKS' | 'SUBSCRIPTION'>('SUBSCRIPTION');
@@ -896,6 +914,148 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   return (
     <div className="min-h-[100dvh] pb-32 animate-in fade-in duration-300" style={{ background: pageTheme.bg, backgroundImage: pageTheme.bgGrad }}>
 
+      {/* ── 1ST TIME POPUP / AD BANNER: FREE VS BASIC & ULTRA MODAL ── */}
+      {showFreeAdModal && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-in fade-in duration-300">
+          <div
+            className="w-full max-w-lg max-h-[90dvh] flex flex-col rounded-3xl overflow-hidden border shadow-2xl relative"
+            style={{
+              background: '#090b14',
+              borderColor: 'rgba(255,255,255,0.18)',
+              boxShadow: '0 0 50px rgba(56,189,248,0.2)'
+            }}
+          >
+            {/* Header with Close (X) */}
+            <div className="px-5 py-4 flex items-center justify-between border-b border-white/10 bg-slate-900/80 backdrop-blur-sm shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📢</span>
+                <div>
+                  <h3 className="font-black text-sm text-white">Compare Plans & Unlocks</h3>
+                  <p className="text-[10px] text-slate-400">Free vs Basic (Sky) & Free vs Ultra (Purple)</p>
+                </div>
+              </div>
+              <button
+                onClick={handleDismissFreeAd}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-300 hover:text-white transition active:scale-90"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Scrollable Content Body */}
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 scrollbar-thin">
+              {/* SECTION 1: FREE VS BASIC (SKY BLUE) */}
+              <div
+                className="rounded-2xl p-4 border relative overflow-hidden shadow-lg"
+                style={{
+                  background: 'linear-gradient(145deg, rgba(8,30,52,0.7) 0%, rgba(3,15,28,0.95) 100%)',
+                  borderColor: 'rgba(56,189,248,0.4)',
+                }}
+              >
+                <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">⭐</span>
+                    <h4 className="font-black text-sm text-white">Free vs Basic (Pro)</h4>
+                  </div>
+                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/35">
+                    PRO SKY UPGRADE
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  {[
+                    ...(!isGroupStudyHidden ? [{ title: 'Group Study: Join Live Rooms & Battles', isNew: true }] : []),
+                    { title: 'Daily XP Limit: +66% (2,500 pts vs 1,500 pts)', isNew: true },
+                    { title: 'Credit Off Anywhere: 20% Permanent Discount', isNew: true },
+                    { title: 'Projector & PDF Mode Unlocked', isNew: true },
+                    { title: 'Text Color & Fonts Custom Styling', isNew: true },
+                    { title: 'Offline Download Available', isNew: true },
+                    { title: 'Community MCQ Submission Access', isNew: true },
+                    { title: 'Daily Claim: 50 Credits / Day (1,500 CR/Month)', isNew: true },
+                    { title: 'XP Multiplier: 1.5X Boost', isNew: true },
+                    { title: 'Store Discount: +5% on all subscriptions', isNew: true },
+                    { title: 'Writing & Correction Mode', isNew: true },
+                    { title: 'All Basic Themes Free Unlocked', isNew: true },
+                    { title: 'Detailed Score History & Analytics', isNew: true },
+                  ].map((feat, i) => (
+                    <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-sky-400/15">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sky-400 text-xs shrink-0">✓</span>
+                        <span className="text-[11px] font-bold text-sky-200 truncate">{feat.title}</span>
+                      </div>
+                      <span className="text-[8px] font-black text-sky-300 bg-sky-500/15 px-1.5 py-0.5 rounded border border-sky-400/30 shrink-0">
+                        BASIC
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* SECTION 2: FREE VS ULTRA (PURPLE) */}
+              <div
+                className="rounded-2xl p-4 border relative overflow-hidden shadow-lg"
+                style={{
+                  background: 'linear-gradient(145deg, rgba(46,16,101,0.65) 0%, rgba(15,5,32,0.95) 100%)',
+                  borderColor: 'rgba(192,132,252,0.4)',
+                }}
+              >
+                <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/10">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">👑</span>
+                    <h4 className="font-black text-sm text-white">Free vs Ultra (Max Elite)</h4>
+                  </div>
+                  <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-400/35">
+                    ULTRA PURPLE UPGRADE
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  {[
+                    ...(!isGroupStudyHidden ? [{ title: 'Group Study Pro: Host Live Classroom & Battles', isNew: true }] : []),
+                    { title: 'Daily Claim: 100 Credits / Day (3,000 CR/Month)', isNew: true },
+                    { title: 'All Basic Features Included', isNew: true },
+                    { title: 'Ultra Mode (Reading Notes & Premium)', isNew: true },
+                    { title: 'Store Discount: +10% (Pro & Max)', isNew: true },
+                    { title: 'Daily XP Limit: +133% (3,500 pts)', isNew: true },
+                    { title: 'XP Multiplier: 2.0X Super Boost (Double XP)', isNew: true },
+                    { title: 'Global Student Chat Access', isNew: true },
+                    { title: 'Priority Content Requests', isNew: true },
+                    { title: 'Full Concept Video Mode Unlocked', isNew: true },
+                    { title: 'VIP Golden Crown & Glow Profile', isNew: true },
+                    { title: 'Credit Off Anywhere: 40% Maximum Discount', isNew: true },
+                    { title: 'All Ultra Themes Free permanently', isNew: true },
+                    { title: 'Flashcard Memory Revision Mode', isNew: true },
+                    { title: 'Huge 3,000 MCQ / Day Limit', isNew: true },
+                  ].map((feat, i) => (
+                    <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-purple-400/15">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-purple-400 text-xs shrink-0">✓</span>
+                        <span className="text-[11px] font-bold text-purple-200 truncate">{feat.title}</span>
+                      </div>
+                      <span className="text-[8px] font-black text-purple-300 bg-purple-500/15 px-1.5 py-0.5 rounded border border-purple-400/30 shrink-0">
+                        ULTRA
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Sticky Action Button */}
+            <div className="p-4 border-t border-white/10 bg-slate-900/90 backdrop-blur-sm shrink-0">
+              <button
+                type="button"
+                onClick={handleDismissFreeAd}
+                className="w-full py-3.5 rounded-xl font-black text-xs sm:text-sm text-slate-950 bg-gradient-to-r from-sky-400 via-cyan-300 to-purple-400 hover:opacity-95 active:scale-[0.99] transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+              >
+                <span>Continue to Store</span>
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── SUPPORT / WHATSAPP CHECKOUT MODAL ── */}
       {showSupportModal && (
         <>
@@ -1134,6 +1294,22 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
               <h1 className="text-xl font-black leading-none" style={{ color: C.text }}>{pageTheme.heroTitle}</h1>
               <p className="text-[11px] mt-0.5 font-medium" style={{ color: C.textMuted }}>{pageTheme.heroSub}</p>
             </div>
+
+            {/* Persistent Button to Re-open Free vs VIP Comparison */}
+            <button
+              onClick={() => setShowFreeAdModal(true)}
+              className="flex items-center gap-1 px-2.5 rounded-2xl shrink-0 active:scale-95 transition-all"
+              style={{
+                height: 34,
+                background: 'rgba(56,189,248,0.12)',
+                border: '1.5px solid rgba(56,189,248,0.35)',
+              }}
+              title="Free Plan vs VIP Unlocks Dekhein"
+            >
+              <span className="text-xs">🎯</span>
+              <span className="font-black text-[10.5px] text-sky-400">Free vs VIP</span>
+            </button>
+
             <button
               id="store-header-diamonds-btn"
               onClick={() => setTierType('DIAMONDS')}
@@ -1200,7 +1376,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
         {/* ── 1. HISTORY TAB ── */}
         {tierType === 'HISTORY' && <SubHistory user={user} onBack={() => setTierType('SUBSCRIPTION')} />}
 
-        {/* ── 2. VIP SUBSCRIPTIONS (FREE CARD + PRO & MAX CARDS) ── */}
+        {/* ── 2. VIP SUBSCRIPTIONS (CONSOLIDATED PRO & MAX CARDS) ── */}
         {tierType === 'SUBSCRIPTION' && (
           <div className="space-y-4">
             {user.isPremium && !isSubscriptionFromCoins(user) && (
@@ -1212,135 +1388,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 onUpdateUser={onUserUpdate}
               />
             )}
-
-            {/* ── UNIFIED ALL-IN-ONE FREE COMPARISON CARD ── */}
-            {(() => {
-              const allTierMixFeatures = [
-                // 1. Free Starter Tier Features
-                { tier: 'FREE', text: 'Standard Daily MCQs Practice', icon: '❓' },
-                { tier: 'FREE', text: 'Standard Reading Mode Notes', icon: '📖' },
-                { tier: 'FREE', text: 'Daily Free Coin Claim', icon: '🪙' },
-                { tier: 'FREE', text: 'Login Streak & XP Tracker', icon: '🔥' },
-                { tier: 'FREE', text: 'Public Leaderboard View', icon: '🏆' },
-                { tier: 'FREE', text: 'Normal Speed Audio Reader', icon: '🎧' },
-
-                // 2. Basic (Pro) Features (Sky Color)
-                ...(!isGroupStudyHidden ? [{ tier: 'BASIC', text: 'Group Study: Join Live Rooms & Battles', icon: '👥' }] : []),
-                { tier: 'BASIC', text: 'Daily XP Limit: +66%', icon: '🚀' },
-                { tier: 'BASIC', text: 'Credit Off Anywhere: 20%', icon: '🏷️' },
-                { tier: 'BASIC', text: 'Projector & PDF Mode', icon: '📽️' },
-                { tier: 'BASIC', text: 'Text Color & Fonts Custom', icon: '🎨' },
-                { tier: 'BASIC', text: 'Offline Download Available', icon: '📥' },
-                { tier: 'BASIC', text: 'Community MCQ Submission', icon: '💬' },
-                { tier: 'BASIC', text: 'Daily Claim: 50 Credits / Day', icon: '🪙' },
-                { tier: 'BASIC', text: 'XP Multiplier: 1.5X Boost', icon: '⚡' },
-                { tier: 'BASIC', text: 'Store Discount: +5%', icon: '💎' },
-                { tier: 'BASIC', text: 'Writing & Correction Mode', icon: '✍️' },
-                { tier: 'BASIC', text: 'All Basic Themes Free', icon: '🎭' },
-                { tier: 'BASIC', text: 'Detailed Score History', icon: '📊' },
-
-                // 3. Ultra (Max) Features (Purple Color)
-                ...(!isGroupStudyHidden ? [{ tier: 'ULTRA', text: 'Group Study Pro: Host Live Classroom & Battles', icon: '🎓' }] : []),
-                { tier: 'ULTRA', text: 'Daily Claim: 100 Credits / Day', icon: '🪙' },
-                { tier: 'ULTRA', text: 'All Basic Features Included', icon: '✨' },
-                { tier: 'ULTRA', text: 'Ultra Mode (Reading Notes)', icon: '⚡' },
-                { tier: 'ULTRA', text: 'Store Discount: +10% (Pro & Max)', icon: '💎' },
-                { tier: 'ULTRA', text: 'Daily XP Limit: +133%', icon: '🚀' },
-                { tier: 'ULTRA', text: 'XP Multiplier: 2.0X Super Boost', icon: '🔥' },
-                { tier: 'ULTRA', text: 'Global Student Chat', icon: '🌐' },
-                { tier: 'ULTRA', text: 'Priority Content Requests', icon: '💡' },
-                { tier: 'ULTRA', text: 'Concept Video Mode', icon: '🎬' },
-                { tier: 'ULTRA', text: 'VIP Golden Crown & Glow', icon: '👑' },
-                { tier: 'ULTRA', text: 'Credit Off Anywhere: 40%', icon: '🏷️' },
-                { tier: 'ULTRA', text: 'All Ultra Themes Free', icon: '🎭' },
-                { tier: 'ULTRA', text: 'Flashcard Memory Mode', icon: '🗂️' },
-                { tier: 'ULTRA', text: '3,000 MCQ / Day Limit', icon: '🎯' },
-              ];
-
-              return (
-                <div
-                  className="rounded-2xl p-4 border relative overflow-hidden shadow-xl"
-                  style={{
-                    background: 'linear-gradient(145deg, rgba(15,23,42,0.85) 0%, rgba(8,12,22,0.98) 100%)',
-                    borderColor: 'rgba(148,163,184,0.35)',
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-2 mb-2 pb-2 border-b border-white/10">
-                    <div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-base">🎯</span>
-                        <h2 className="text-base font-black text-white">Free Starter Tier</h2>
-                        {(!user.isPremium || user.subscriptionLevel === 'FREE') && (
-                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/40">
-                            ACTIVE PLAN
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        Free starter perks aur Basic (Sky) & Ultra (Purple) unlocks ka complete mix overview
-                      </p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span className="text-2xl font-black text-slate-200">₹0</span>
-                      <span className="text-[9px] text-slate-400 block font-bold uppercase">Forever Free</span>
-                    </div>
-                  </div>
-
-                  {/* Badges Indicator */}
-                  <div className="flex items-center gap-1.5 my-2.5 overflow-x-auto pb-1 scrollbar-hide text-[9.5px] font-black">
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 shrink-0">
-                      ● Free Features
-                    </span>
-                    <span className="px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-400 border border-sky-400/30 shrink-0">
-                      ● Basic (Sky) Unlocks
-                    </span>
-                    <span className="px-2 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-400/30 shrink-0">
-                      ● Ultra (Purple) Unlocks
-                    </span>
-                  </div>
-
-                  {/* Unified Features Grid with Individual Tier Colors */}
-                  <div className="p-2.5 rounded-xl bg-black/40 border border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                    {allTierMixFeatures.map((item, idx) => {
-                      const isFree = item.tier === 'FREE';
-                      const isBasic = item.tier === 'BASIC';
-                      const isUltra = item.tier === 'ULTRA';
-
-                      const textColor = isFree
-                        ? 'text-slate-300'
-                        : isBasic
-                        ? 'text-sky-300'
-                        : 'text-purple-300';
-
-                      const badgeStyle = isFree
-                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                        : isBasic
-                        ? 'bg-sky-500/20 text-sky-300 border-sky-400/35'
-                        : 'bg-purple-500/20 text-purple-300 border-purple-400/35';
-
-                      const badgeText = isFree ? 'FREE' : isBasic ? 'BASIC' : 'ULTRA';
-
-                      return (
-                        <div
-                          key={idx}
-                          className="flex items-center justify-between gap-1.5 p-2 rounded-lg bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] transition-colors"
-                        >
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-xs shrink-0">{item.icon}</span>
-                            <span className={`text-[11px] font-bold truncate ${textColor}`}>
-                              {item.text}
-                            </span>
-                          </div>
-                          <span className={`text-[8px] font-black px-1.5 py-0.2 rounded border shrink-0 leading-tight ${badgeStyle}`}>
-                            {badgeText}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
 
             {(() => {
               const renderVipCard = (tierTarget: 'BASIC' | 'ULTRA') => {
@@ -1433,7 +1480,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                           setSelectedTierForPurchase(isProTier ? 'BASIC' : 'ULTRA');
                           setShowPaymentChooser(true);
                         }}
-                        className="w-full py-3 rounded-xl font-black text-sm text-white flex items-center justify-center gap-2 shadow-lg"
+                        className="w-full py-3 rounded-xl font-black text-sm text-white flex items-center justify-center gap-2 shadow-lg cursor-pointer"
                         style={{
                           background: isProTier ? 'linear-gradient(135deg, #06b6d4, #0891b2)' : 'linear-gradient(135deg, #a855f7, #7c3aed)'
                         }}>
@@ -1452,7 +1499,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                             }
                             setShowCreditConfirm(true);
                           }}
-                          className="w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border text-amber-400 bg-amber-400/10 border-amber-400/30">
+                          className="w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 border text-amber-400 bg-amber-400/10 border-amber-400/30 cursor-pointer">
                           🪙 {creditCost.toLocaleString('en-IN')} Credits Se Kharido
                         </button>
                       )}
@@ -2073,7 +2120,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                           totalDiamonds: totalDiamonds,
                           ratePerDiamond: currentDur.ratePerDiamond
                         })}
-                        className="w-full py-3 rounded-xl font-black text-xs text-slate-950 bg-gradient-to-r from-sky-400 to-cyan-300 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 shadow-md mt-3"
+                        className="w-full py-3 rounded-xl font-black text-xs text-slate-950 bg-gradient-to-r from-sky-400 to-cyan-300 active:scale-[0.98] transition-all flex items-center justify-center gap-1.5 shadow-md mt-3 cursor-pointer"
                       >
                         <Zap size={14} /> Subscribe {template.name} ({currentDur.label}) — ₹{finalPrice.toLocaleString('en-IN')}
                       </button>
@@ -2095,7 +2142,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                     <button
                       type="button"
                       onClick={() => initiatePurchase({ ...pack, isDiamondPack: true })}
-                      className="px-4 py-2 bg-sky-400 text-slate-950 font-black rounded-xl text-xs active:scale-95 transition-all shadow-md"
+                      className="px-4 py-2 bg-sky-400 text-slate-950 font-black rounded-xl text-xs active:scale-95 transition-all shadow-md cursor-pointer"
                     >
                       ₹{pack.price}
                     </button>
@@ -2148,7 +2195,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                   <div className="flex-1 flex gap-1.5">
                     {[1, 5, 10, 25].map(cnt => (
                       <button key={cnt} type="button" onClick={() => setExchangeDiamondsCount(cnt)}
-                        className="flex-1 py-2 rounded-lg bg-white/5 text-xs font-black text-slate-300 border border-white/5 active:scale-95">
+                        className="flex-1 py-2 rounded-lg bg-white/5 text-xs font-black text-slate-300 border border-white/5 active:scale-95 cursor-pointer">
                         {cnt}💎
                       </button>
                     ))}
@@ -2177,7 +2224,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                   }
                 }}
                 disabled={(user.diamonds ?? 0) < exchangeDiamondsCount}
-                className="w-full py-3.5 rounded-xl font-black text-sm text-slate-950 bg-gradient-to-r from-emerald-500 to-emerald-400 active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-40">
+                className="w-full py-3.5 rounded-xl font-black text-sm text-slate-950 bg-gradient-to-r from-emerald-500 to-emerald-400 active:scale-95 transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-40 cursor-pointer">
                 <Coins size={16} />
                 <span>Exchange Karein ({exchangeDiamondsCount * CREDITS_PER_DIAMOND} 🪙)</span>
               </button>
@@ -2231,6 +2278,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 </div>
               </div>
 
+              
               <button
                 type="button"
                 onClick={() => setShowAllTiersModal(false)}
