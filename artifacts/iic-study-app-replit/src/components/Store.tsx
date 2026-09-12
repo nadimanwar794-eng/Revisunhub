@@ -25,7 +25,7 @@ import {
   canClaimCreditSubToday,
   getCreditSubDaysRemaining,
   claimDailyCreditSub,
-  CREDIT_SUB_DURATIONS,
+  CREDIT_SUB_DURATIONS as BASE_CREDIT_SUB_DURATIONS,
   type CreditSubDurationId,
   calculateCreditSubPrice,
   getCreditSubPlanMultiplier,
@@ -91,6 +91,15 @@ const C = {
   diamondBorder:'rgba(56,189,248,0.35)',
   diamondGlow:  'rgba(56,189,248,0.25)',
 };
+
+/* ─── Extended Credit Sub Durations with Weekly (1W) ─── */
+const CREDIT_SUB_DURATIONS_LIST = [
+  { id: '7_DAYS',  label: '1W', durationDays: 7,   months: 0.233 },
+  { id: '1_MONTH', label: '1M', durationDays: 30,  months: 1 },
+  { id: '3_MONTH', label: '3M', durationDays: 90,  months: 3 },
+  { id: '6_MONTH', label: '6M', durationDays: 180, months: 6 },
+  { id: '1_YEAR',  label: '1Y', durationDays: 365, months: 12 },
+];
 
 /* ─── Unified Diamond Constants ─── */
 const DIAMOND_SUB_DURATIONS_LIST = [
@@ -425,7 +434,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   const subscriptionPlans = settings?.subscriptionPlans || [];
   const isCreditSubAllowed = settings?.allowCreditSubscription !== false;
   const [creditSubTab, setCreditSubTab] = useState<'PASS' | 'PACKAGES'>('PASS');
-  const [planDurations, setPlanDurations] = useState<Record<string, CreditSubDurationId>>({});
+  const [planDurations, setPlanDurations] = useState<Record<string, string>>({});
   const [showAllTiersModal, setShowAllTiersModal] = useState(false);
   const [claimingStorePass, setClaimingStorePass] = useState(false);
   const [passClaimSuccessMsg, setPassClaimSuccessMsg] = useState<string | null>(null);
@@ -666,7 +675,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     return true;
   })();
 
-  const getCreditSubDurationDiscount = (durationId: CreditSubDurationId): number => {
+  const getCreditSubDurationDiscount = (durationId: string): number => {
     if (!isValidityDiscountActive) return 0;
     const monthlyPct = validityEvent?.monthlyPercent ?? 5;
     const threeMonthlyPct = validityEvent?.threeMonthlyPercent ?? 10;
@@ -1632,9 +1641,61 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
           </div>
         )}
 
-        {/* ── 3. CREDITS TAB (PASS & PACKS) ── */}
+        {/* ── 3. CREDITS TAB (PASS WITH 1W WEEKLY OPTION & PACKAGES) ── */}
         {tierType === 'CREDITS' && (() => {
-          const creditSubPlans = getCreditSubPlans(settings).filter(p => p.isActive !== false);
+          // Base plans fallback with explicit weekly prices requested by user
+          const rawCreditSubPlans = getCreditSubPlans(settings).filter(p => p.isActive !== false);
+          
+          const creditSubPlans = rawCreditSubPlans.length > 0 ? rawCreditSubPlans : [
+            { id: 'starter_credit_pass', name: 'Starter Credit Pass', badge: 'STARTER PASS', dailyCredits: 50,  scoreMultiplier: 1.1, weeklyPrice: 40,  price: 150 },
+            { id: 'smart_credit_pass',   name: 'Smart Credit Pass',   badge: 'POPULAR PASS', dailyCredits: 100, scoreMultiplier: 1.2, weeklyPrice: 70,  price: 260 },
+            { id: 'super_credit_pass',   name: 'Super Credit Pass',   badge: 'VALUE PASS',   dailyCredits: 150, scoreMultiplier: 1.3, weeklyPrice: 100, price: 380 },
+            { id: 'mega_credit_pass',    name: 'Mega Credit Pass',    badge: 'MEGA PACK',    dailyCredits: 250, scoreMultiplier: 1.5, weeklyPrice: 150, price: 550 },
+          ];
+
+          // Dynamic Weekly-Aware Calculation Helper
+          const calculateCustomCreditPrice = (plan: any, durOpt: any, durDisc: number) => {
+            let basePrice = 0;
+            const pId = (plan.id || '').toLowerCase();
+            const pName = (plan.name || '').toLowerCase();
+
+            if (durOpt.id === '7_DAYS') {
+              if (plan.weeklyPrice && typeof plan.weeklyPrice === 'number') {
+                basePrice = plan.weeklyPrice;
+              } else if (pId.includes('starter') || pName.includes('starter')) {
+                basePrice = 40;
+              } else if (pId.includes('smart') || pName.includes('smart')) {
+                basePrice = 70;
+              } else if (pId.includes('super') || pName.includes('super')) {
+                basePrice = 100;
+              } else if (pId.includes('mega') || pName.includes('mega')) {
+                basePrice = 150;
+              } else {
+                basePrice = Math.round((plan.price || 150) * 0.28);
+              }
+            } else {
+              try {
+                const res = calculateCreditSubPrice(plan, durOpt, false, durDisc);
+                if (res && res.finalPrice) return res;
+              } catch (e) {}
+              basePrice = Math.round((plan.price || 150) * (durOpt.months || 1));
+            }
+
+            const finalPrice = durDisc > 0 ? Math.max(0, Math.round(basePrice * (1 - durDisc / 100))) : basePrice;
+            const totalCredits = (plan.dailyCredits || 50) * durOpt.durationDays;
+            const perDayCost = (finalPrice / durOpt.durationDays).toFixed(1);
+            const perCreditCost = totalCredits > 0 ? (finalPrice / totalCredits).toFixed(2) : '0';
+
+            return {
+              basePrice,
+              finalPrice,
+              totalCredits,
+              perDayCost,
+              perCreditCost,
+              totalDiscountPercent: durDisc,
+              durationDiscountPercent: durDisc
+            };
+          };
 
           const renderCreditPassContent = () => {
             if (creditSubPlans.length === 0) {
@@ -1657,11 +1718,12 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                 </div>
 
                 {creditSubPlans.map(plan => {
-                  const selectedDurationId = planDurations[plan.id] || '1_MONTH';
-                  const selectedDurationOpt = CREDIT_SUB_DURATIONS.find(d => d.id === selectedDurationId) || CREDIT_SUB_DURATIONS[0];
+                  const selectedDurationId = planDurations[plan.id] || '7_DAYS'; // Defaults to Weekly
+                  const selectedDurationOpt = CREDIT_SUB_DURATIONS_LIST.find(d => d.id === selectedDurationId) || CREDIT_SUB_DURATIONS_LIST[0];
                   const durDisc = getCreditSubDurationDiscount(selectedDurationOpt.id);
-                  const pricing = calculateCreditSubPrice(plan, selectedDurationOpt, false, durDisc);
-                  const planMult = plan.scoreMultiplier || getCreditSubPlanMultiplier(plan);
+                  const pricing = calculateCustomCreditPrice(plan, selectedDurationOpt, durDisc);
+                  
+                  const planMult = plan.scoreMultiplier || (typeof getCreditSubPlanMultiplier === 'function' ? getCreditSubPlanMultiplier(plan) : 1.1);
                   const userTier = user.isPremium ? (user.subscriptionLevel || 'FREE') : 'FREE';
                   const baseMult = userTier === 'ULTRA' ? 2.0 : userTier === 'BASIC' ? 1.5 : 1.0;
                   const effectiveCombinedMult = Math.round((baseMult + (planMult - 1.0)) * 10) / 10;
@@ -1733,7 +1795,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                         </div>
                       </div>
 
-                      {/* Validity Selector in 1-line Grid */}
+                      {/* 5 Durations Validity Selector (1W, 1M, 3M, 6M, 1Y) */}
                       <div className="p-2 rounded-xl bg-black/40 border border-white/10 my-2">
                         <div className="flex items-center justify-between mb-1 px-0.5">
                           <span className="text-[10px] font-black uppercase tracking-wider text-amber-300 flex items-center gap-1">
@@ -1743,35 +1805,32 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                             Total <strong className="text-amber-300">{pricing.totalCredits.toLocaleString('en-IN')} 🪙</strong>
                           </span>
                         </div>
-                        <div className="grid grid-cols-4 gap-1 sm:gap-1.5">
-                          {CREDIT_SUB_DURATIONS.map(dur => {
+                        <div className="grid grid-cols-5 gap-1 sm:gap-1.5">
+                          {CREDIT_SUB_DURATIONS_LIST.map(dur => {
                             const isSelected = selectedDurationId === dur.id;
+                            const durPillDisc = getCreditSubDurationDiscount(dur.id);
                             return (
                               <button
                                 key={dur.id}
                                 type="button"
                                 onClick={() => setPlanDurations(prev => ({ ...prev, [plan.id]: dur.id }))}
-                                className={`py-1.5 px-1 rounded-lg text-center transition-all border relative flex flex-col items-center justify-center cursor-pointer ${
+                                className={`py-1.5 px-0.5 rounded-lg text-center transition-all border relative flex flex-col items-center justify-center cursor-pointer ${
                                   isSelected
                                     ? 'bg-amber-400 text-slate-950 border-amber-300 font-black shadow-[0_0_10px_rgba(251,191,36,0.3)]'
                                     : 'bg-white/5 hover:bg-white/10 text-slate-300 border-white/10'
                                 }`}
                               >
-                                {(() => {
-                                  const durPillDisc = getCreditSubDurationDiscount(dur.id);
-                                  if (durPillDisc <= 0) return null;
-                                  return (
-                                    <span className={`text-[8px] font-black px-1 rounded leading-tight -mt-0.5 mb-0.5 ${
-                                      isSelected ? 'bg-slate-950 text-amber-300' : 'bg-emerald-500 text-slate-950'
-                                    }`}>
-                                      {durPillDisc}% OFF
-                                    </span>
-                                  );
-                                })()}
+                                {durPillDisc > 0 && (
+                                  <span className={`text-[7.5px] font-black px-1 rounded leading-tight -mt-0.5 mb-0.5 ${
+                                    isSelected ? 'bg-slate-950 text-amber-300' : 'bg-emerald-500 text-slate-950'
+                                  }`}>
+                                    {durPillDisc}% OFF
+                                  </span>
+                                )}
                                 <span className="text-[10px] sm:text-[11px] font-black leading-tight">
                                   {dur.label}
                                 </span>
-                                <span className={`text-[8px] sm:text-[9px] leading-tight ${isSelected ? 'text-slate-800 font-semibold' : 'text-slate-400'}`}>
+                                <span className={`text-[8px] sm:text-[8.5px] leading-tight ${isSelected ? 'text-slate-800 font-semibold' : 'text-slate-400'}`}>
                                   {dur.durationDays}D
                                 </span>
                               </button>
@@ -1828,7 +1887,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                           price: pricing.finalPrice,
                           finalPrice: pricing.finalPrice,
                           basePrice: pricing.basePrice,
-                          dummyPrice: pricing.dummyPrice,
                           dailyCredits: plan.dailyCredits,
                           durationDays: selectedDurationOpt.durationDays,
                           durationMonths: selectedDurationOpt.months,
