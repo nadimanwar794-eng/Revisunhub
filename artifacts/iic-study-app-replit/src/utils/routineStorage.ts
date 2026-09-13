@@ -396,7 +396,7 @@ export function isRevisionLessonUnlocked(data: RoutineData, lessonId: string): b
 
 // ── Daily Subscription Coin Claim ──────────────────────────────────────────
 export const DAILY_CLAIM_PRO     = 50;  // BASIC tier (Pro plan) -> 50 Credits/day
-export const DAILY_CLAIM_MAX_PRO = 100; // ULTRA tier (Max Pro plan) -> 100 Credits/day
+export const DAILY_CLAIM_MAX_PRO = 5;   // ULTRA tier (Max Pro plan) -> 5 Diamonds/day
 
 export type UserSubTier = 'NONE' | 'PRO' | 'MAX_PRO';
 

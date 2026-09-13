@@ -101,7 +101,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   onNavigateToContent,
 }) => {
   // ── Plan & Tier Permissions ───────────────────────────────────────────────
-  const userTier = (user?.subscriptionLevel || 'FREE').toUpperCase();
+  const userTier = (user?.subscriptionLevel || 'FREE')?.toUpperCase();
   const isAdmin = user?.role === 'ADMIN' || user?.isAdmin;
   const config = settings?.groupStudyConfig || {};
   const isCreateRoomGloballyHidden =
@@ -480,7 +480,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
   const handleJoinByCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    const code = joinCodeInput.trim().toUpperCase();
+    const code = joinCodeInput.trim()?.toUpperCase();
     if (!code) return;
 
     setJoinCodeError('');
@@ -850,7 +850,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
                         <div className="flex items-center gap-2 mb-4">
                           <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center text-[10px] font-bold text-slate-300">
-                            {room.hostName.charAt(0).toUpperCase()}
+                            {room.hostName.charAt(0)?.toUpperCase()}
                           </div>
                           <span className="text-xs text-slate-400">Host: {room.hostName}</span>
                           {room.isPrivate && (
@@ -1635,7 +1635,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
                       >
                         <div className="flex items-center gap-2.5">
                           <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center font-bold text-xs text-white">
-                            {m.name.charAt(0).toUpperCase()}
+                            {m.name.charAt(0)?.toUpperCase()}
                           </div>
                           <div>
                             <div className="flex items-center gap-1.5">

@@ -64,25 +64,12 @@ export const getTotalCredits = (user: CreditUser): number => {
  * Returns null if total credits are insufficient.
  * Admins always succeed with no deduction.
  */
-export const applyDeduction = <T extends CreditUser & { primaryCurrency?: 'CREDIT'|'DIAMOND', diamonds?: number }>(
+export const applyDeduction = <T extends CreditUser>(
   user: T,
   amount: number,
   chargeStaff = false,
 ): T | null => {
   if (!chargeStaff && (user.role === 'ADMIN' || user.role === 'SUB_ADMIN')) return user;
-
-  const isDiamondPrimary = user.primaryCurrency === 'DIAMOND';
-  const diamondsNeeded = Math.ceil(amount / 10);
-  const userDiamonds = user.diamonds ?? 0;
-
-  if (isDiamondPrimary) {
-    if (userDiamonds >= diamondsNeeded) {
-      return {
-        ...user,
-        diamonds: userDiamonds - diamondsNeeded
-      };
-    }
-  }
 
   // Fold legacy bonusCredits into permanent
   const permanent = (user.credits ?? 0) + (user.bonusCredits ?? 0);
@@ -95,16 +82,6 @@ export const applyDeduction = <T extends CreditUser & { primaryCurrency?: 'CREDI
       : 0;
 
   const totalAvailable = permanent + giftedActive;
-  
-  if (!isDiamondPrimary && totalAvailable < amount) {
-    if (userDiamonds >= diamondsNeeded) {
-      return {
-        ...user,
-        diamonds: userDiamonds - diamondsNeeded
-      };
-    }
-  }
-
   if (totalAvailable < amount) return null;
 
   const level = getLevelInfo(user.totalScore ?? 0).level;
@@ -132,6 +109,47 @@ export const applyDeduction = <T extends CreditUser & { primaryCurrency?: 'CREDI
     bonusCredits: 0,
     giftedCredits: newGiftedCredits,
   };
+
+  // Referral Royalty Cashback: Level 1 (0.01%) to Level 15 (0.15%)
+  try {
+    const referrerId = (user as any).referrerId;
+    if (referrerId && amount > 0 && typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem('nst_users');
+      if (stored) {
+        const allUsers: any[] = JSON.parse(stored);
+        const refIndex = allUsers.findIndex(
+          (u) => u.id === referrerId || (u.displayId && u.displayId.toUpperCase() === String(referrerId).toUpperCase())
+        );
+        if (refIndex >= 0) {
+          const referrer = allUsers[refIndex];
+          const effLevel = Math.min(15, Math.max(1, referrer.level || 1));
+          const ratePercent = effLevel * 0.01; // e.g. 0.01% - 0.15%
+          const cashback = parseFloat(((amount * ratePercent) / 100).toFixed(4));
+          if (cashback > 0) {
+            const newBal = parseFloat(((referrer.referralCommissionBalance || 0) + cashback).toFixed(4));
+            const newLog = {
+              id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+              friendId: (user as any).id || 'student',
+              friendName: (user as any).name || 'Friend',
+              creditsSpent: amount,
+              ratePercent,
+              earnedCredits: cashback,
+              date: new Date().toISOString(),
+            };
+            const updatedLogs = [newLog, ...(referrer.referralCommissionLogs || [])].slice(0, 50);
+            allUsers[refIndex] = {
+              ...referrer,
+              credits: (referrer.credits || 0) + (cashback >= 1 ? Math.floor(cashback) : 0),
+              referralCommissionBalance: newBal,
+              referralCommissionLogs: updatedLogs,
+            };
+            localStorage.setItem('nst_users', JSON.stringify(allUsers));
+          }
+        }
+      }
+    }
+  } catch {}
+
   return result;
 };
 

@@ -548,7 +548,7 @@ const App: React.FC = () => {
         recordCreditTx(
           user.id,
           sess.coinsEarned || 0,
-          `EARN_SESSION_${(sess.activityType || sess.type || 'MCQ').toUpperCase()}`,
+          `EARN_SESSION_${(sess.activityType || sess.type || 'MCQ')?.toUpperCase()}`,
           [actLabel, sess.chapter].filter(Boolean).join(' · ') || 'Study Session',
           user.credits,
           sess.sessionScore,
@@ -1633,7 +1633,74 @@ const App: React.FC = () => {
                     });
                 }
 
-                if (next % 10 === 0) updateUserStatus(state.user!.id, next, 'Studying'); 
+                if (next % 10 === 0) {
+                  updateUserStatus(state.user!.id, next, 'Studying');
+
+                  // Referral 1-Hour Study Unlock Check
+                  if (state.user && state.user.redeemedReferralCode) {
+                    const currentSec = (state.user.referralStudySeconds || 0) + 10;
+                    state.user.referralStudySeconds = currentSec;
+
+                    // Sync active status and progress to referrer's referredUsersList
+                    try {
+                      const stored = localStorage.getItem('nst_users');
+                      if (stored) {
+                        const allUsers = JSON.parse(stored);
+                        const referrerId = state.user.referrerId;
+                        const refIdx = allUsers.findIndex(
+                          (u: any) =>
+                            u.id === referrerId ||
+                            (u.displayId && u.displayId?.toUpperCase() === String(referrerId)?.toUpperCase())
+                        );
+                        if (refIdx >= 0) {
+                          const referrer = allUsers[refIdx];
+                          const rList = referrer.referredUsersList || [];
+                          const itemIdx = rList.findIndex((r: any) => r.userId === state.user!.id);
+                          const activeMins = Math.floor(currentSec / 60);
+                          const isNowCompleted = activeMins >= 60;
+                          if (itemIdx >= 0) {
+                            rList[itemIdx].activeMinutes = activeMins;
+                            rList[itemIdx].lastActiveAt = new Date().toISOString();
+                            rList[itemIdx].isDead = false;
+                            if (isNowCompleted) rList[itemIdx].isCompleted = true;
+                          } else {
+                            rList.unshift({
+                              userId: state.user!.id,
+                              userName: state.user!.name || 'Student',
+                              userPhoto: state.user!.photoURL,
+                              joinedAt: new Date().toISOString(),
+                              activeMinutes: activeMins,
+                              isCompleted: isNowCompleted,
+                              lastActiveAt: new Date().toISOString(),
+                              isDead: false,
+                            });
+                          }
+                          referrer.referredUsersList = rList;
+                          referrer.referralCount = rList.filter((r: any) => r.isCompleted).length;
+                          allUsers[refIdx] = referrer;
+                          localStorage.setItem('nst_users', JSON.stringify(allUsers));
+                        }
+                      }
+                    } catch {}
+
+                    // Check if 1-Hour completed (3600 seconds) and welcome gift not yet claimed
+                    if (currentSec >= 3600 && !state.user.referralRewardClaimed) {
+                      state.user.referralRewardClaimed = true;
+                      state.user.credits = (state.user.credits || 0) + 100;
+                      setActiveReward({
+                        id: `ref_welcome_${Date.now()}`,
+                        type: 'CREDITS',
+                        amount: 100,
+                        label: 'Referral Welcome Gift (1 Hour Study Bonus! 🎁)',
+                        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                      } as any);
+                      try {
+                        localStorage.setItem('nst_current_user', JSON.stringify(state.user));
+                      } catch {}
+                      saveUserToLive(state.user).catch(() => {});
+                    }
+                  }
+                } 
                 return next;
             });
         }, 1000);
@@ -2284,7 +2351,7 @@ const App: React.FC = () => {
     if (specificContent) {
         let cost = 0;
         const econKey = type === 'VIDEO_LECTURE' ? 'defaultVideoCost' : 'defaultPdfCost';
-        const userTier = (state.user?.subscriptionLevel || state.user?.subscriptionTier || 'FREE').toUpperCase();
+        const userTier = (state.user?.subscriptionLevel || state.user?.subscriptionTier || 'FREE')?.toUpperCase();
 
         // Check required tier first
         const reqTier = getRequiredTier(econKey, 'FREE', state.settings);

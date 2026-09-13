@@ -63,160 +63,35 @@ export const DIAMOND_PACKS: DiamondPack[] = [
 
 /**
  * Diamond Subscriptions:
- * 4 Types of Daily Diamonds (Weekly 7 Days & Monthly 30 Days):
- * Rate is strictly Rs 2 per Diamond (1 Diamond = Rs 2):
- *
- * 1. 10 Diamonds/day:
- *    - Weekly (7 days): 70 💎 -> ₹140
- *    - Monthly (30 days): 300 💎 -> ₹600
- * 2. 25 Diamonds/day:
- *    - Weekly (7 days): 175 💎 -> ₹350
- *    - Monthly (30 days): 750 💎 -> ₹1,500
- * 3. 50 Diamonds/day:
- *    - Weekly (7 days): 350 💎 -> ₹700
- *    - Monthly (30 days): 1500 💎 -> ₹3,000
- * 4. 100 Diamonds/day:
- *    - Weekly (7 days): 700 💎 -> ₹1,400
- *    - Monthly (30 days): 3000 💎 -> ₹6,000
+ * 100 rs -> daily 10 diamonds for 7 days (Total 70 diamonds)
+ * 1000 rs -> daily 25 diamonds for 30 days (Total 750 diamonds)
  */
-export const PRESET_DIAMOND_SUB_TEMPLATES = [
-  {
-    id: '10_DIA_BASE',
-    name: 'Starter Diamond Pass',
-    dailyDiamonds: 10,
-    ratePerDiamond: 2,
-    badge: '10 💎 / DAY',
-    description: 'Basic unlock pass (10 Diamonds / Day)',
-  },
-  {
-    id: '25_DIA_BASE',
-    name: 'Popular Diamond Pass',
-    dailyDiamonds: 25,
-    ratePerDiamond: 2,
-    badge: '25 💎 / DAY',
-    description: 'Perfect for regular users (25 Diamonds / Day)',
-  },
-  {
-    id: '50_DIA_BASE',
-    name: 'Pro Diamond Pass',
-    dailyDiamonds: 50,
-    ratePerDiamond: 2,
-    badge: '50 💎 / DAY',
-    description: 'For power users (50 Diamonds / Day)',
-  },
-  {
-    id: '100_DIA_BASE',
-    name: 'Ultra Mega Pass',
-    dailyDiamonds: 100,
-    ratePerDiamond: 2,
-    badge: '100 💎 / DAY',
-    description: 'Maximum unlocks (100 Diamonds / Day)',
-  },
-];
-
 export const DIAMOND_SUBSCRIPTION_PLANS: DiamondSubscriptionPlan[] = [
-  // ── 10 DIAMONDS / DAY ─────────────────────────────────────────
   {
-    id: '10_DIAMONDS_WEEKLY',
-    name: 'Starter Weekly Pass (10/Day)',
-    price: 140, // 70 diamonds * ₹2
+    id: '7_DAYS_PASS',
+    name: 'Weekly Diamond Pass',
+    price: 100,
     dailyDiamonds: 10,
     durationDays: 7,
     totalDiamonds: 70,
-    badge: '10 💎 / DAY · WEEKLY',
-    planType: 'WEEKLY',
-    ratePerDiamond: 2,
+    badge: 'Popular Pass',
   },
   {
-    id: '10_DIAMONDS_DAILY', // alias for monthly 10/day
-    name: 'Starter Monthly Pass (10/Day)',
-    price: 600, // 300 diamonds * ₹2
-    dailyDiamonds: 10,
-    durationDays: 30,
-    totalDiamonds: 300,
-    badge: '10 💎 / DAY · MONTHLY',
-    planType: 'MONTHLY',
-    ratePerDiamond: 2,
-  },
-
-  // ── 25 DIAMONDS / DAY ─────────────────────────────────────────
-  {
-    id: '25_DIAMONDS_WEEKLY',
-    name: 'Popular Weekly Pass (25/Day)',
-    price: 350, // 175 diamonds * ₹2
-    dailyDiamonds: 25,
-    durationDays: 7,
-    totalDiamonds: 175,
-    badge: '25 💎 / DAY · POPULAR WEEKLY',
-    planType: 'WEEKLY',
-    ratePerDiamond: 2,
-  },
-  {
-    id: '25_DIAMONDS_DAILY', // alias for monthly 25/day
-    name: 'Popular Monthly Pass (25/Day)',
-    price: 1500, // 750 diamonds * ₹2
+    id: '30_DAYS_PASS',
+    name: 'Monthly Diamond Pass',
+    price: 1000,
     dailyDiamonds: 25,
     durationDays: 30,
     totalDiamonds: 750,
-    badge: '25 💎 / DAY · POPULAR MONTHLY',
-    planType: 'MONTHLY',
-    ratePerDiamond: 2,
-  },
-
-  // ── 50 DIAMONDS / DAY ─────────────────────────────────────────
-  {
-    id: '50_DIAMONDS_WEEKLY',
-    name: 'Pro Weekly Pass (50/Day)',
-    price: 700, // 350 diamonds * ₹2
-    dailyDiamonds: 50,
-    durationDays: 7,
-    totalDiamonds: 350,
-    badge: '50 💎 / DAY · BEST VALUE WEEKLY',
-    planType: 'WEEKLY',
-    ratePerDiamond: 2,
-  },
-  {
-    id: '50_DIAMONDS_DAILY', // alias for monthly 50/day
-    name: 'Pro Monthly Pass (50/Day)',
-    price: 3000, // 1500 diamonds * ₹2
-    dailyDiamonds: 50,
-    durationDays: 30,
-    totalDiamonds: 1500,
-    badge: '50 💎 / DAY · BEST VALUE MONTHLY',
-    planType: 'MONTHLY',
-    ratePerDiamond: 2,
-  },
-
-  // ── 100 DIAMONDS / DAY ────────────────────────────────────────
-  {
-    id: '100_DIAMONDS_WEEKLY',
-    name: 'Ultra Mega Weekly Pass (100/Day)',
-    price: 1400, // 700 diamonds * ₹2
-    dailyDiamonds: 100,
-    durationDays: 7,
-    totalDiamonds: 700,
-    badge: '100 💎 / DAY · VIP MEGA WEEKLY',
-    planType: 'WEEKLY',
-    ratePerDiamond: 2,
-  },
-  {
-    id: '100_DIAMONDS_DAILY', // alias for monthly 100/day
-    name: 'Ultra Mega Monthly Pass (100/Day)',
-    price: 6000, // 3000 diamonds * ₹2
-    dailyDiamonds: 100,
-    durationDays: 30,
-    totalDiamonds: 3000,
-    badge: '100 💎 / DAY · VIP MEGA MONTHLY',
-    planType: 'MONTHLY',
-    ratePerDiamond: 2,
+    badge: 'Mega Value Pass (750 💎)',
   },
 ];
 
 /**
- * Exchange Rate: 1 Diamond = 20 Credits (20 CR = 1 💎)
+ * Exchange Rate: 1 Diamond = 20 Credits
  */
 export const DIAMOND_TO_CREDIT_RATE = 20;
-export const CREDITS_PER_DIAMOND = 10;
+export const CREDITS_PER_DIAMOND = 20;
 
 /**
  * Safely get user's diamonds count
@@ -260,24 +135,6 @@ export function exchangeDiamondsForCredits(
     updatedUser,
     creditsAdded: creditsToAdd,
     creditsEarned: creditsToAdd,
-  };
-}
-
-/**
- * Convert Credits to Diamonds:
- * CRITICAL RULE: Credits to Diamonds conversion is strictly NOT allowed ("cradit se dimond kabhi na hoga").
- * Only Diamonds -> Credits is supported.
- */
-export function exchangeCreditsForDiamonds(
-  user: User,
-  _numDiamonds: number
-): { success: boolean; updatedUser: User; creditsDeducted: number; diamondsAdded: number; error?: string } {
-  return {
-    success: false,
-    updatedUser: user,
-    creditsDeducted: 0,
-    diamondsAdded: 0,
-    error: 'Credits se Diamonds exchange nahi kiya ja sakta. Diamonds sirf purchase ya rewards se mil sakte hain.',
   };
 }
 

@@ -205,7 +205,6 @@ import {
   Search,
   Users,
   Target,
-  Store as StoreIcon,
   History as HistoryIcon,
   GitCompare,
   MoreVertical,
@@ -270,6 +269,7 @@ import { MyRoutine } from "./MyRoutine"; // My Routine full-screen
 import { DailyEventPage } from "./DailyEventPage"; // Daily Hub: Routine + Revision + Mistakes + Tracker
 import { CustomBloggerPage } from "./CustomBloggerPage";
 import { ReferralPopup } from "./ReferralPopup";
+import { getReferralStats } from "../utils/referralEngine";
 import { SpeakButton } from "./SpeakButton";
 import { McqSpeakButtons } from "./McqSpeakButtons";
 import { FlashcardMcqView } from "./FlashcardMcqView";
@@ -288,6 +288,7 @@ import { recordNoteStar, recordNoteUnstar, subscribeToTopNoteStars, hashTopic, N
 import { PerformanceGraph } from "./PerformanceGraph";
 import { StudentSidebar } from "./StudentSidebar";
 import { StudyGoalTimer } from "./StudyGoalTimer";
+import { ExplorePage } from "./ExplorePage";
 import { StudentHistoryModal } from "./StudentHistoryModal";
 import { AdminWhiteBoard } from "./AdminWhiteBoard";
 import { generateDailyRoutine } from "../utils/routineGenerator";
@@ -639,54 +640,6 @@ const MeniscusNavIndicator = ({ activeIndex, totalTabs, activeColor, ActiveIcon 
   );
 };
 // ────────────────────────────────────────────────────────────────────────
-
-const TopBarCycler = ({ user, onTabChange, setStoreInitialTier }: any) => {
-  const [index, setIndex] = useState(0);
-
-  const cycle = [
-    { id: 'CREDITS', icon: '🪙', value: (user.credits || 0).toLocaleString('en-IN'), color: 'text-amber-300', bg: 'rgba(251,191,36,0.1)' },
-    { id: 'DIAMONDS', icon: '💎', value: (user.diamonds || 0).toLocaleString('en-IN'), color: 'text-sky-300', bg: 'rgba(56,189,248,0.1)' },
-    { id: 'STORE', icon: <StoreIcon size={12} className="text-emerald-400" />, value: 'Store', color: 'text-emerald-300', bg: 'rgba(16,185,129,0.1)' },
-    { id: 'PRO', icon: '⭐', value: 'PRO Plan', color: 'text-cyan-300', bg: 'rgba(34,211,238,0.1)' },
-    { id: 'MAX', icon: '👑', value: 'MAX VIP', color: 'text-purple-300', bg: 'rgba(192,132,252,0.1)' },
-  ];
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setIndex(prev => (prev + 1) % cycle.length);
-    }, 3000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const current = cycle[index];
-
-  const handleClick = () => {
-    if (current.id === 'CREDITS') setStoreInitialTier('CREDITS');
-    else if (current.id === 'DIAMONDS') setStoreInitialTier('DIAMONDS');
-    else setStoreInitialTier('SUBSCRIPTION'); // Go to sub page for Store/Pro/Max
-    onTabChange('STORE');
-  };
-
-  return (
-    <button
-      onClick={handleClick}
-      className="relative flex items-center justify-center overflow-hidden rounded-xl active:scale-95 transition-all shadow-sm h-7 min-w-[70px] border border-white/10"
-      style={{ background: current.bg }}
-    >
-      <div
-        key={current.id}
-        className="animate-in slide-in-from-bottom-2 fade-in duration-300 flex items-center gap-1 px-2"
-      >
-        <span className="text-[12px] leading-none shrink-0 flex items-center justify-center">
-          {current.icon}
-        </span>
-        <span className={`font-black text-[10px] tabular-nums ${current.color}`}>
-          {current.value}
-        </span>
-      </div>
-    </button>
-  );
-};
 
 export const StudentDashboard: React.FC<Props> = ({
   user,
@@ -1224,50 +1177,13 @@ export const StudentDashboard: React.FC<Props> = ({
   ) => {
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
     if (_isAdm) { action(); return; }
-
-    const _primary = (user as any).primaryCurrency || 'CREDITS';
-    const _hidePopup = (user as any).hideCoinPopup ?? true;
-
     const { cost, discountPct } = _getCoinCost(baseCost);
-    const diaCost = Math.ceil(cost / 10); // 1 Diamond = 10 Credits
-
-    let canAfford = false;
-    let err = '';
-
-    if (_primary === 'DIAMONDS') {
-      const totalDia = user.diamonds || 0;
-      canAfford = totalDia >= diaCost;
-      err = `⚠️ Diamonds kam hain! ${diaCost} 💎 chahiye, aapke paas sirf ${totalDia} 💎 hai.`;
-    } else {
-      const total = getTotalCredits(user);
-      canAfford = total >= cost;
-      err = `⚠️ Coins kam hain! ${cost} CR chahiye, aapke paas sirf ${total} CR hai.`;
-    }
-
-    if (!canAfford) {
-      showAlert(err, 'INFO');
+    const total = getTotalCredits(user);
+    if (total < cost) {
+      showAlert(`⚠️ Coins kam hain! ${cost} CR chahiye, aapke paas sirf ${total} CR hai.`, 'INFO');
       onCancel?.();
       return;
     }
-
-    if (_hidePopup && (!bulkOpt || bulkOpt.count < 2)) {
-      // Auto-deduct
-      let updatedUser = { ...user };
-      if (_primary === 'DIAMONDS') {
-        updatedUser.diamonds = (updatedUser.diamonds || 0) - diaCost;
-      } else {
-        const afterDed = applyDeduction(user, cost);
-        if (afterDed) updatedUser = afterDed;
-      }
-      handleUserUpdate(updatedUser);
-      // Trigger effect
-      if (_primary === 'DIAMONDS') triggerRewardEffect(0, `-${diaCost} 💎`);
-      else triggerRewardEffect(0, `-${cost} 🪙`);
-      
-      action();
-      return;
-    }
-
     const _bulkOption = (bulkOpt && bulkOpt.count >= 2) ? {
       count: bulkOpt.count,
       originalTotal: bulkOpt.count * cost,
@@ -1275,7 +1191,6 @@ export const StudentDashboard: React.FC<Props> = ({
       action: bulkOpt.action,
       pages: (bulkOpt.pages || []).map(p => ({ name: p.name, cost: p.cost })),
     } : undefined;
-
     setCoinGate({ cost, originalCost: baseCost, discountPct, reason, action, onCancel, bulkOption: _bulkOption, pageInfo });
   };
 
@@ -2685,6 +2600,25 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showSidebar, setShowSidebar] = useState(false);
   const [bgTtsOn, setBgTtsOn] = useState(false);
   const [_topBarInfoPhase, _setTopBarInfoPhase] = useState(0); // 0 = tier, 1 = expiry
+
+  // TopBar 3-second animated switch: 0 = STORE button, 1 = CREDITS, 2 = DIAMONDS
+  const [topBarSwitchIdx, setTopBarSwitchIdx] = useState<0 | 1 | 2>(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTopBarSwitchIdx((prev) => ((prev + 1) % 3) as 0 | 1 | 2);
+    }, 3000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // TopBar Referral Gift Button: flips between Gift Box and User Count every 2.5s (only if count > 0)
+  const [referralGiftPhase, setReferralGiftPhase] = useState<0 | 1>(0); // 0 = Gift Icon, 1 = User Count
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setReferralGiftPhase((prev) => (prev === 0 ? 1 : 0));
+    }, 2500);
+    return () => clearInterval(timer);
+  }, []);
+
   // XP badge state + refs — useEffect is below (after showRevisionHubScreen/showMyRoutine declarations)
   const [showXpBadge, setShowXpBadge] = useState(false);
   const xpBadgeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2844,7 +2778,6 @@ export const StudentDashboard: React.FC<Props> = ({
   const [splashPurchaseDuration, setSplashPurchaseDuration] = useState<1 | 7 | 30>(7);
   const [showLevelChooser, setShowLevelChooser] = useState(false);
   const [showProfileSettings, setShowProfileSettings] = useState(false);
-  const [showProfileSubs, setShowProfileSubs] = useState(false);
   const [rewardSubTab, setRewardSubTab] = useState<'EARNED' | 'RULES' | 'HISTORY'>('EARNED');
   const [rewardHistorySeenCount, setRewardHistorySeenCount] = useState<number>(() => {
     const saved = localStorage.getItem(`nst_reward_hist_seen_${user?.id || ''}`);
@@ -3318,6 +3251,19 @@ export const StudentDashboard: React.FC<Props> = ({
       localStorage.setItem(`referral_shown_${user.id}`, "true");
     }
   }, [user.id, user.createdAt, user.redeemedReferralCode]);
+
+  useEffect(() => {
+    if ((activeTab as any) === 'REFERRAL') {
+      setShowReferralPopup(true);
+      onTabChange('HOME' as any);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handleOpenReferral = () => setShowReferralPopup(true);
+    window.addEventListener('open-referral-modal', handleOpenReferral);
+    return () => window.removeEventListener('open-referral-modal', handleOpenReferral);
+  }, []);
 
   const handleSupportEmail = () => {
     const email = SUPPORT_EMAIL;
@@ -13268,6 +13214,42 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
           </div>
 
+          {/* ── REFER & EARN (VIP) TOP BANNER (Directly visible without scrolling) ── */}
+          <div className="px-3 mb-3">
+            <button
+              onClick={() => setShowReferralPopup(true)}
+              className="w-full text-left rounded-2xl p-3.5 relative overflow-hidden transition-all active:scale-[0.98] group cursor-pointer"
+              style={{
+                background: 'linear-gradient(135deg, rgba(16,185,129,0.20), rgba(5,150,105,0.08))',
+                border: '1.5px solid rgba(16,185,129,0.45)',
+                boxShadow: '0 4px 20px rgba(16,185,129,0.18)',
+              }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md relative"
+                  style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: '1px solid rgba(255,255,255,0.2)' }}>
+                  <Gift size={20} className="text-white" />
+                  <span className="absolute -top-1 -right-1 text-[10px]">👑</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <p className={`text-xs sm:text-sm font-black ${_pTxt}`}>Refer & Earn (VIP)</p>
+                    <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500 text-white uppercase tracking-wider shadow-sm">
+                      FREE PASSES ⚡
+                    </span>
+                  </div>
+                  <p className="text-[10.5px] mt-0.5 font-medium leading-tight" style={{ color: _pTxtMutedColor }}>
+                    Doston ko invite karein aur paayein <span className="text-emerald-400 font-bold">1-Year Free Ultra VIP</span> & Royalty!
+                  </p>
+                </div>
+                <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                  style={{ background: 'rgba(16,185,129,0.2)', border: '1px solid rgba(16,185,129,0.4)' }}>
+                  <ChevronRight size={16} className="text-emerald-400 group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </div>
+            </button>
+          </div>
+
 
           {/* ── LEVEL ACHIEVEMENTS ── */}
           {(() => {
@@ -13321,12 +13303,27 @@ export const StudentDashboard: React.FC<Props> = ({
                         <p className="font-black uppercase tracking-widest" style={{ fontSize: 10, color: _pTxtColor }}>Level Progress</p>
                         <p style={{ fontSize: 9.5, color: _pTxtSubColor, marginTop: 1 }}>{_curLvl} / 15 levels unlocked</p>
                       </div>
-                      <div className="px-3 py-1.5 rounded-full font-black" style={{
-                        fontSize: 11,
-                        color: '#fff',
-                        background: `linear-gradient(135deg, ${_pLvl.color}cc, ${_pLvl.color})`,
-                        boxShadow: `0 2px 10px ${_pLvl.color}45`,
-                      }}>L{_curLvl}</div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => setShowLevelLeaderboard(true)}
+                          className="px-2 py-1 rounded-full font-bold flex items-center gap-1 text-[10px] active:scale-95 transition-transform"
+                          style={{
+                            background: 'rgba(245,158,11,0.18)',
+                            color: '#fbbf24',
+                            border: '1px solid rgba(245,158,11,0.35)',
+                          }}
+                          title="Open Level Leaderboard"
+                        >
+                          <Trophy size={11} className="text-amber-400" />
+                          <span>Leaderboard</span>
+                        </button>
+                        <div className="px-3 py-1.5 rounded-full font-black" style={{
+                          fontSize: 11,
+                          color: '#fff',
+                          background: `linear-gradient(135deg, ${_pLvl.color}cc, ${_pLvl.color})`,
+                          boxShadow: `0 2px 10px ${_pLvl.color}45`,
+                        }}>L{_curLvl}</div>
+                      </div>
                     </div>
                     {/* Segmented progress track */}
                     <div className="mt-3 flex items-center gap-0.5">
@@ -14004,116 +14001,6 @@ export const StudentDashboard: React.FC<Props> = ({
               <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
             </button>
 
-            {/* ── Active Subscriptions & History ── */}
-            <button
-              onClick={() => setShowProfileSubs(v => !v)}
-              className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-              style={{ borderBottom: _pSep }}>
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: _pIconBg, border: _pIconBdr }}>
-                <span className="text-base leading-none">👑</span>
-              </div>
-              <div className="flex-1 text-left">
-                <p className={`text-sm font-bold ${_pTxt}`}>My Subscriptions</p>
-                <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>Active plans aur billing history dekhein</p>
-              </div>
-              <ChevronRight size={15} style={{ color: _pTxtMutedColor, transform: showProfileSubs ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} className="shrink-0" />
-            </button>
-
-            {showProfileSubs && (() => {
-              const hist = user.subscriptionHistory || [];
-              const hasAny = user.isPremium || user.creditSubscription || user.diamondSubscription || hist.length > 0;
-              
-              if (!hasAny) {
-                return (
-                  <div className="px-4 py-6 text-center" style={{ borderBottom: _pSep, background: 'rgba(0,0,0,0.1)' }}>
-                    <span className="text-2xl mb-2 block">🤷</span>
-                    <p className={`text-xs font-bold ${_pTxt}`}>Koi Subscription Nahi Hai</p>
-                    <p className={`text-[10px] ${_pTxtSub} mt-1`}>Aapka account abhi Base Tier (Free) par hai.</p>
-                  </div>
-                );
-              }
-
-              return (
-                <div className="px-4 py-4" style={{ borderBottom: _pSep, background: 'rgba(0,0,0,0.15)' }}>
-                  
-                  {/* Active Plans */}
-                  <div className="mb-5">
-                    <p className={`text-[10px] font-black uppercase tracking-widest ${_pTxtSub} mb-3 flex items-center gap-1.5`}>
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      Active Plans
-                    </p>
-                    
-                    <div className="space-y-2">
-                      {user.isPremium && (
-                        <div className="p-3 rounded-xl flex items-center justify-between" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
-                          <div className="flex items-center gap-2.5">
-                            <span className="text-xl leading-none">{user.subscriptionLevel === 'ULTRA' ? '👑' : '⭐'}</span>
-                            <div>
-                              <p className={`text-sm font-black ${_pTxt}`}>{user.subscriptionLevel === 'ULTRA' ? 'MAX (Ultra)' : 'PRO (Basic)'} VIP</p>
-                              {user.activeSubscriptions && user.activeSubscriptions.length > 0 && (
-                                <p className="text-[10px] text-emerald-400 font-bold mt-0.5">Active & Valid</p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {user.creditSubscription && user.creditSubscription.status === 'ACTIVE' && (
-                        <div className="p-3 rounded-xl flex items-center justify-between" style={{ background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.2)' }}>
-                          <div className="flex items-center gap-2.5">
-                            <span className="text-xl leading-none">🪙</span>
-                            <div>
-                              <p className={`text-sm font-black ${_pTxt}`}>{user.creditSubscription.planName}</p>
-                              <p className="text-[10px] text-amber-400 font-bold mt-0.5">Roz {user.creditSubscription.dailyCredits} Credits</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {user.diamondSubscription && user.diamondSubscription.status === 'ACTIVE' && (
-                        <div className="p-3 rounded-xl flex items-center justify-between" style={{ background: 'rgba(56,189,248,0.05)', border: '1px solid rgba(56,189,248,0.2)' }}>
-                          <div className="flex items-center gap-2.5">
-                            <span className="text-xl leading-none">💎</span>
-                            <div>
-                              <p className={`text-sm font-black ${_pTxt}`}>{user.diamondSubscription.planName}</p>
-                              <p className="text-[10px] text-sky-400 font-bold mt-0.5">Roz {user.diamondSubscription.dailyDiamonds} Diamonds</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* History */}
-                  {hist.length > 0 && (
-                    <div>
-                      <p className={`text-[10px] font-black uppercase tracking-widest ${_pTxtSub} mb-3`}>Billing History</p>
-                      <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                        {hist.slice().sort((a: any, b: any) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()).map((h: any, i: number) => {
-                          const isCoin = h.grantSource === 'CREDITS';
-                          const isFree = h.isFree;
-                          return (
-                            <div key={i} className="p-2.5 rounded-lg flex justify-between items-center" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
-                              <div>
-                                <p className={`text-xs font-bold ${_pTxt}`}>{h.level === 'ULTRA' ? 'MAX (Ultra)' : h.level === 'BASIC' ? 'PRO (Basic)' : 'Subscription'}</p>
-                                <p className={`text-[9px] ${_pTxtSub} mt-0.5`}>{new Date(h.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
-                              </div>
-                              <div className="text-right">
-                                <p className="text-xs font-black text-white">
-                                  {isFree ? 'FREE' : isCoin ? `-${h.originalPrice || h.price} 🪙` : `₹${h.price}`}
-                                </p>
-                                <p className="text-[9px] text-emerald-400 font-medium mt-0.5">{(h.durationHours || 720) / 24} Din</p>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
             {/* ── Settings Button ── */}
             <button
               onClick={() => setShowProfileSettings(v => !v)}
@@ -14126,92 +14013,6 @@ export const StudentDashboard: React.FC<Props> = ({
               <ChevronRight size={15} style={{ color: _pTxtMutedColor, transform: showProfileSettings ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s' }} className="shrink-0" />
             </button>
             {showProfileSettings && (<>
-
-            {/* ── Primary Currency Setup ── */}
-            {(() => {
-              const _primary = (user as any).primaryCurrency || 'CREDITS';
-              return (
-                <button
-                  onClick={async () => {
-                    try {
-                      const newCurr = _primary === 'CREDITS' ? 'DIAMONDS' : 'CREDITS';
-                      const uRef = doc(db, 'users', user.id);
-                      await updateDoc(uRef, { primaryCurrency: newCurr });
-                      const updated = { ...user, primaryCurrency: newCurr };
-                      handleUserUpdate(updated);
-                      showAlert(`💰 Primary Currency set to ${newCurr}`, 'SUCCESS');
-                    } catch {
-                      showAlert('❌ Currency update failed', 'ERROR');
-                    }
-                  }}
-                  className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-                  style={{ borderBottom: _pSep }}>
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                    background: _primary === 'DIAMONDS' ? 'rgba(56,189,248,0.15)' : 'rgba(251,191,36,0.15)',
-                    border: `1px solid ${_primary === 'DIAMONDS' ? 'rgba(56,189,248,0.4)' : 'rgba(251,191,36,0.4)'}`,
-                  }}>
-                    <span className="text-base leading-none">{_primary === 'DIAMONDS' ? '💎' : '🪙'}</span>
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className={`text-sm font-bold ${_pTxt}`}>
-                      {_primary === 'DIAMONDS' ? 'Primary: Diamonds' : 'Primary: Credits'}
-                    </p>
-                    <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                      Deduction popups is currency se charge karenge
-                    </p>
-                  </div>
-                  <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
-                </button>
-              );
-            })()}
-
-            {/* ── Auto-Deduct / Hide Popup Toggle ── */}
-            {(() => {
-              const _hidePopup = (user as any).hideCoinPopup ?? true; // defukt on rahega new acciunt me
-              return (
-                <button
-                  onClick={async () => {
-                    try {
-                      const uRef = doc(db, 'users', user.id);
-                      await updateDoc(uRef, { hideCoinPopup: !_hidePopup });
-                      const updated = { ...user, hideCoinPopup: !_hidePopup };
-                      handleUserUpdate(updated);
-                      showAlert(_hidePopup ? '👀 Popups enabled' : '⚡ Auto-deduct active', 'SUCCESS');
-                    } catch {
-                      showAlert('❌ Setting could not be updated', 'ERROR');
-                    }
-                  }}
-                  className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
-                  style={{ borderBottom: _pSep }}>
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
-                    background: _hidePopup ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
-                    border: `1px solid ${_hidePopup ? 'rgba(16,185,129,0.40)' : 'rgba(239,68,68,0.40)'}`,
-                  }}>
-                    <span className="text-base leading-none">{_hidePopup ? '⚡' : '🛡️'}</span>
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className={`text-sm font-bold ${_pTxt}`}>
-                      {_hidePopup ? 'Auto-Deduct: ON' : 'Popups: ON'}
-                    </p>
-                    <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
-                      {_hidePopup
-                        ? 'Confirmation popups hidden (Fast mode)'
-                        : 'Credits/Diamonds spend se pehle puchega'}
-                    </p>
-                  </div>
-                  {/* Toggle pill */}
-                  <div className="shrink-0 w-10 h-5 rounded-full relative transition-all"
-                    style={{ background: _hidePopup ? 'rgba(16,185,129,0.70)' : 'rgba(255,255,255,0.12)' }}>
-                    <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
-                      style={{
-                        background: '#fff',
-                        left: _hidePopup ? '1.375rem' : '0.125rem',
-                        boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                      }} />
-                  </div>
-                </button>
-              );
-            })()}
 
             {/* ── Theme Override Toggle ── */}
             {(() => {
@@ -15531,6 +15332,77 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
+            {/* Refer & Earn (VIP) Gift Box — tap to open Refer & Earn popup */}
+            {(() => {
+              const refStats = getReferralStats(user);
+              const refCount = refStats.totalInvited || 0;
+              const hasUsers = refCount > 0;
+
+              return (
+                <button
+                  id="topbar-referral-gift-btn"
+                  onClick={() => setShowReferralPopup(true)}
+                  className="relative inline-flex items-center justify-center h-7 px-2 rounded-full active:scale-95 transition-all shrink-0 cursor-pointer overflow-hidden border select-none group"
+                  style={{
+                    background: hasUsers
+                      ? 'linear-gradient(135deg, rgba(16,185,129,0.30), rgba(5,150,105,0.18))'
+                      : 'linear-gradient(135deg, rgba(236,72,153,0.22), rgba(168,85,247,0.18))',
+                    borderColor: hasUsers ? 'rgba(16,185,129,0.45)' : 'rgba(236,72,153,0.40)',
+                    boxShadow: hasUsers
+                      ? '0 0 10px rgba(16,185,129,0.25)'
+                      : '0 0 10px rgba(236,72,153,0.22)',
+                  }}
+                  title="Refer & Earn (VIP) — Doston ko jodein aur VIP passes paayein"
+                >
+                  {!hasUsers ? (
+                    /* When no user referred yet: only show animated gift box with sparkles */
+                    <div className="flex items-center gap-1">
+                      <span className="text-[14px] leading-none animate-gift-wiggle">
+                        🎁
+                      </span>
+                      <span className="text-[10px] font-black text-pink-200 tracking-tight hidden xs:inline">
+                        VIP
+                      </span>
+                    </div>
+                  ) : (
+                    /* When users are referred: flip smoothly between gift icon and user count */
+                    <div className="relative h-full flex items-center justify-center min-w-[34px]">
+                      {/* Phase 0: Gift Box */}
+                      <div
+                        className={`flex items-center gap-1 transition-all duration-500 ease-out ${
+                          referralGiftPhase === 0
+                            ? 'opacity-100 translate-y-0 scale-100'
+                            : 'opacity-0 -translate-y-2 scale-90 pointer-events-none absolute'
+                        }`}
+                      >
+                        <span className="text-[13px] leading-none select-none animate-gift-wiggle">🎁</span>
+                        <span className="text-[10px] font-black text-emerald-300">VIP</span>
+                      </div>
+
+                      {/* Phase 1: User Count */}
+                      <div
+                        className={`flex items-center gap-0.5 transition-all duration-500 ease-out ${
+                          referralGiftPhase === 1
+                            ? 'opacity-100 translate-y-0 scale-100'
+                            : 'opacity-0 translate-y-2 scale-90 pointer-events-none absolute'
+                        }`}
+                      >
+                        <Users size={12} className="text-emerald-400 shrink-0" />
+                        <span className="font-black text-[11px] tabular-nums text-emerald-300">
+                          {refCount}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Gentle pulsing ping dot if milestone is reachable or active users present */}
+                  {hasUsers && (
+                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 animate-ping opacity-75" />
+                  )}
+                </button>
+              );
+            })()}
+
             {/* Streak — tap to see streak popup */}
             <button
               id="topbar-streak-btn"
@@ -15738,7 +15610,7 @@ export const StudentDashboard: React.FC<Props> = ({
                           {
                             label: 'Store',
                             right: '🛍️',
-                            action: () => { setStoreInitialTier('SUBSCRIPTION'); onTabChange("STORE"); setShowDotsMenu(false); },
+                            action: () => { setStoreInitialTier('FREE'); onTabChange("STORE"); setShowDotsMenu(false); },
                           },
                           {
                             label: 'Diamond Store',
@@ -15791,6 +15663,11 @@ export const StudentDashboard: React.FC<Props> = ({
                               }
                               setShowSuggestionsPanel(true); setShowDotsMenu(false);
                             },
+                          },
+                          {
+                            label: 'Leaderboard',
+                            right: '🏆',
+                            action: () => { setShowDotsMenu(false); setShowLevelLeaderboard(true); },
                           },
                           {
                             label: 'Level System',
@@ -15848,8 +15725,8 @@ export const StudentDashboard: React.FC<Props> = ({
         {/* Divider between Row 1 and Row 2 */}
         <div className="mx-3 h-px bg-white/20" />
 
-        {/* SECOND LINE: greeting | XP | credits — single clean row */}
-        <div className="relative z-10 flex items-center justify-between w-full mt-0 pt-0.5 px-3 sm:px-4 pb-1.5 gap-2">
+        {/* SECOND LINE: greeting | XP | credits — single clean row (compacted by 20%) */}
+        <div className="relative z-10 flex items-center justify-between w-full mt-0 pt-0 px-2.5 sm:px-3 pb-1 gap-1.5 min-h-[26px]">
 
           {/* Left: greeting */}
           {(() => {
@@ -15857,9 +15734,9 @@ export const StudentDashboard: React.FC<Props> = ({
             const isLong = fullName.length > 10;
             const overflowPx = isLong ? Math.min(90, (fullName.length - 10) * 7) : 0;
             return (
-              <div className="overflow-hidden shrink-0" style={isLong ? { maskImage: 'linear-gradient(to right, black 78%, transparent 100%)', maxWidth: '105px' } : {}}>
+              <div className="overflow-hidden shrink-0" style={isLong ? { maskImage: 'linear-gradient(to right, black 78%, transparent 100%)', maxWidth: '95px' } : {}}>
                 <span
-                  className={`text-[12px] sm:text-[13px] font-black text-white leading-tight whitespace-nowrap inline-block${isLong ? ' nst-name-scroll' : ''}`}
+                  className={`text-[11px] sm:text-[12px] font-black text-white leading-tight whitespace-nowrap inline-block${isLong ? ' nst-name-scroll' : ''}`}
                   style={isLong ? { '--nst-scroll': `-${overflowPx}px` } as React.CSSProperties : {}}
                 >
                   Hey, {fullName} 👋
@@ -15877,13 +15754,83 @@ export const StudentDashboard: React.FC<Props> = ({
             onOpenScorePanel={() => setShowScorePanel(true)}
           />
 
-          {/* Right: Unified Cycling Button */}
+          {/* Right: Rotating button (Store -> Credits -> Diamonds) switching every 3 seconds - background-free */}
           <div className="flex items-center shrink-0">
-            <TopBarCycler
-              user={user}
-              onTabChange={onTabChange}
-              setStoreInitialTier={setStoreInitialTier}
-            />
+            <div className="relative h-6 w-[88px] sm:w-[98px] overflow-hidden flex items-center justify-center select-none">
+              
+              {/* 1. STORE BUTTON (Index 0) - No Background */}
+              <button
+                id="topbar-row2-store-btn"
+                onClick={() => {
+                  setStoreInitialTier('FREE');
+                  onTabChange("STORE");
+                }}
+                className={`absolute inset-0 flex items-center justify-center gap-1 px-1 w-full h-full transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                  topBarSwitchIdx === 0
+                    ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                    : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                }`}
+                title="Store kholein — Subscriptions, Credits aur Offers"
+              >
+                <ShoppingBag size={12} className="text-emerald-400 group-hover:scale-110 transition-transform shrink-0" />
+                <span className="font-black text-[10.5px] sm:text-[11px] text-emerald-300 tracking-wide">
+                  Store
+                </span>
+                <span className="text-[8px] font-black px-1 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 uppercase leading-tight">
+                  VIP
+                </span>
+              </button>
+
+              {/* 2. CREDITS BUTTON (Index 1) - No Background */}
+              <button
+                id="topbar-row2-credits-btn"
+                onClick={() => {
+                  setStoreInitialTier('CREDITS');
+                  onTabChange("STORE");
+                }}
+                className={`absolute inset-0 flex items-center justify-center gap-0.5 sm:gap-1 px-1 w-full h-full transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                  topBarSwitchIdx === 1
+                    ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                    : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                }`}
+                title="Aapke Credits — Tap karke Store se aur paayein"
+              >
+                <span className="text-[11px] leading-none shrink-0 select-none">🪙</span>
+                <span className="font-black text-[10.5px] tabular-nums text-amber-300 group-hover:text-amber-200 truncate max-w-[50px]">
+                  {(user.credits || 0).toLocaleString('en-IN')}
+                </span>
+                <span className="text-amber-400 group-hover:scale-110 transition-transform shrink-0">
+                  <Plus size={9} strokeWidth={3.5} />
+                </span>
+              </button>
+
+              {/* 3. DIAMONDS BUTTON (Index 2) - No Background */}
+              <button
+                id="topbar-row2-diamonds-btn"
+                onClick={() => {
+                  setStoreInitialTier('DIAMONDS');
+                  onTabChange("STORE");
+                }}
+                className={`absolute inset-0 flex items-center justify-center gap-0.5 sm:gap-1 px-1 w-full h-full transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                  topBarSwitchIdx === 2
+                    ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                    : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                }`}
+                title="Aapke Diamonds — Tap karke Diamond Store kholein"
+              >
+                <span className="text-[11px] leading-none shrink-0 select-none">💎</span>
+                <span className="font-black text-[10.5px] tabular-nums text-sky-200 group-hover:text-sky-100 truncate max-w-[50px]">
+                  {(user.diamonds ?? 0).toLocaleString('en-IN')}
+                </span>
+                <span className="text-sky-300 group-hover:scale-110 transition-transform shrink-0">
+                  <Plus size={9} strokeWidth={3.5} />
+                </span>
+                {canClaimDiamondSubToday(user) && (
+                  <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                )}
+              </button>
+
+            </div>
           </div>
         </div>
       </div>
@@ -20913,6 +20860,11 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
         ];
 
         const premiumItems: SideBtn[] = [
+          {
+            label: 'Refer & Earn', desc: 'VIP Free Passes', icon: Users, color: 'emerald',
+            action: () => { setShowReferralPopup(true); setShowSidebar(false); },
+            locked: false,
+          },
           ...(!planAccess.isHidden ? [{
             label: 'My Plan', desc: 'Subscription info', icon: CreditCard, color: 'purple',
             action: () => { onTabChange("SUB_HISTORY" as any); setShowSidebar(false); },
@@ -28475,36 +28427,21 @@ RULES:
               ? () => { _lockableModes.forEach(m => { if (m.unlockAction) m.unlockAction(); }); action(); }
               : action)
           : (selectedBulk && bulkOption ? bulkOption.action : action);
+        const canAfford = balance >= activeCost;
 
         const dismissGate = () => { setCoinGate(null); onCancel?.(); };
         const confirmGate = () => {
           if (!isFree) {
             const _freshU = (window as any).__dashUserRef?.current ?? user;
-            const _isAdm = _freshU.role === 'ADMIN' || _freshU.role === 'SUB_ADMIN';
-            
-            if (!_isAdm) {
-              const _primary = (_freshU as any).primaryCurrency || 'CREDITS';
-              if (_primary === 'DIAMONDS') {
-                const diaCost = Math.ceil(activeCost / 10);
-                const _updated = { ..._freshU, diamonds: (_freshU.diamonds || 0) - diaCost };
-                handleUserUpdate(_updated);
-              } else {
-                const _updated = applyDeduction(_freshU, activeCost);
-                if (_updated) {
-                  handleUserUpdate(_updated);
-                  try { recordCreditTx(_freshU.id, activeCost, 'SPEND', reason + (selectedBulk ? ' (Bulk)' : ''), _updated.credits ?? 0); } catch {}
-                }
-              }
+            const _updated = applyDeduction(_freshU, activeCost);
+            if (_updated) {
+              handleUserUpdate(_updated);
+              try { recordCreditTx(_freshU.id, activeCost, 'SPEND', reason + (selectedBulk ? ' (Bulk)' : ''), _updated.credits ?? 0); } catch {}
             }
           }
           setCoinGate(null);
           activeAction();
         };
-
-        const _primary = (user as any).primaryCurrency || 'CREDITS';
-        const displayCost = _primary === 'DIAMONDS' ? Math.ceil(activeCost / 10) : activeCost;
-        const displayCoin = _primary === 'DIAMONDS' ? '💎' : '🪙';
-        const canAfford = _primary === 'DIAMONDS' ? ((user.diamonds || 0) >= displayCost) : (balance >= displayCost);
 
         const emojiMap: Record<string, string> = {
           'Reading Mode': '📖', 'Writing Mode': '✍️', 'MCQ Session': '🧠',
@@ -28578,9 +28515,9 @@ RULES:
                     <p className="text-[11px] font-black leading-tight mb-1 line-clamp-2" style={{ color: 'var(--nst-color-brand)' }}>{reason}</p>
                     <div className="mt-auto">
                       <div className="flex items-baseline gap-1">
-                        <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{_primary === 'DIAMONDS' ? Math.ceil(cost/10) : cost}</span>
-                        <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>{displayCoin}</span>
-                        {(isDisc50 || isDisc25) && <span className="text-[10px] text-slate-400 line-through">{_primary === 'DIAMONDS' ? Math.ceil(originalCost/10) : originalCost}</span>}
+                        <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{cost}</span>
+                        <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>CR</span>
+                        {(isDisc50 || isDisc25) && <span className="text-[10px] text-slate-400 line-through">{originalCost}</span>}
                       </div>
                       {isDisc50 && <p className="text-[8px] font-black text-emerald-600">🎉 50% off</p>}
                       {isDisc25 && <p className="text-[8px] font-black text-amber-600">⚡ 25% off</p>}
@@ -28627,7 +28564,7 @@ RULES:
                               ) : m.cost === 0 ? (
                                 <span className="text-[9px] font-black text-blue-400 shrink-0">Sub ✓</span>
                               ) : (
-                                <span className="text-[9px] font-black text-slate-400 shrink-0">{_primary === 'DIAMONDS' ? Math.ceil(Math.floor(m.cost * discMult) / 10) : Math.floor(m.cost * discMult)} {displayCoin}</span>
+                                <span className="text-[9px] font-black text-slate-400 shrink-0">{Math.max(1, Math.floor(m.cost * discMult))} CR</span>
                               )}
                             </div>
                           );
@@ -28636,9 +28573,9 @@ RULES:
                       {/* Total — 20% discounted */}
                       <div className="border-t border-slate-200/70 pt-1.5 mt-auto">
                         <div className="flex items-baseline gap-1">
-                          <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{_primary === 'DIAMONDS' ? Math.ceil(_bulkModeCostDiscounted/10) : _bulkModeCostDiscounted}</span>
-                          <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>{displayCoin}</span>
-                          <span className="text-[10px] text-slate-400 line-through">{_primary === 'DIAMONDS' ? Math.ceil(_bulkModeCost/10) : _bulkModeCost}</span>
+                          <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{_bulkModeCostDiscounted}</span>
+                          <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>CR</span>
+                          <span className="text-[10px] text-slate-400 line-through">{_bulkModeCost}</span>
                         </div>
                         <p className="text-[9px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>🔓 Sab modes unlock — 20% off</p>
                       </div>
@@ -28653,9 +28590,9 @@ RULES:
                   <div>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.12em] mb-1">Coins Lagenge</p>
                     <div className="flex items-baseline gap-2">
-                      <span className="text-[34px] font-black text-indigo-700 leading-none">{_primary === 'DIAMONDS' ? Math.ceil(cost/10) : cost}</span>
-                      <span className="text-sm font-bold text-indigo-400">{displayCoin}</span>
-                      {(isDisc50 || isDisc25) && <span className="text-xs text-slate-400 line-through font-bold">{_primary === 'DIAMONDS' ? Math.ceil(originalCost/10) : originalCost}</span>}
+                      <span className="text-[34px] font-black text-indigo-700 leading-none">{cost}</span>
+                      <span className="text-sm font-bold text-indigo-400">CR</span>
+                      {(isDisc50 || isDisc25) && <span className="text-xs text-slate-400 line-through font-bold">{originalCost}</span>}
                     </div>
                     {isDisc50 && <span className="inline-block mt-1 text-[9px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">🎉 50% Routine Discount</span>}
                     {isDisc25 && <span className="inline-block mt-1 text-[9px] font-black bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">⚡ 25% Routine Discount</span>}
@@ -28773,7 +28710,7 @@ RULES:
                     }}
                   >
                     <span className="relative z-10">{isPermanentlyUnlocked ? '💎' : isFree ? '🎁' : '🪙'}</span>
-                    <span className="relative z-10">{isPermanentlyUnlocked ? '💎 Permanently Unlocked (Free Access)' : isFree ? 'Free mein Kholo!' : `${displayCost} CR (Coins)`}</span>
+                    <span className="relative z-10">{isPermanentlyUnlocked ? '💎 Permanently Unlocked (Free Access)' : isFree ? 'Free mein Kholo!' : `${activeCost} CR (Coins)`}</span>
                   </button>
                 </div>
 
@@ -30039,15 +29976,19 @@ Explanation: Yahan explanation...`}</p>
         <WhatsAppChatModal
           user={user}
           onClose={() => setShowWhatsAppChatModal(false)}
-          onOpenStore={() => {
-            setShowWhatsAppChatModal(false);
-            setStoreInitialTier('SUBSCRIPTION');
-            onTabChange('STORE');
-          }}
           onOpenGroupStudy={isGroupStudyHidden ? undefined : () => {
             setShowWhatsAppChatModal(false);
             setShowGroupStudyModal(true);
           }}
+          onUpdateUser={handleUserUpdate}
+        />
+      )}
+
+      {/* Refer & Earn VIP Modal */}
+      {showReferralPopup && (
+        <ReferralPopup
+          user={user}
+          onClose={() => setShowReferralPopup(false)}
           onUpdateUser={handleUserUpdate}
         />
       )}

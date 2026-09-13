@@ -8,6 +8,7 @@ import { List, GraduationCap, LayoutDashboard, Users, Search, Trash2, Save, X, E
 import { getSubjectsList, DEFAULT_SUBJECTS, DEFAULT_APP_FEATURES, ALL_APP_FEATURES, STUDENT_APP_FEATURES, DEFAULT_CONTENT_INFO_CONFIG, ADMIN_PERMISSIONS, APP_VERSION, STATIC_SYLLABUS, LEVEL_UNLOCKABLE_FEATURES, LUCENT_SUBJECT_OPTIONS_BASE, getClassSubjectOptions, SUPPORT_PHONE } from '../constants';
 import { AdminClassMcqManager } from './AdminClassMcqManager';
 import { AdminCompetitionMcqManager } from './AdminCompetitionMcqManager';
+import { AdminTierManager } from './AdminTierManager';
 import { CoachingMcqEditor } from './CoachingMcqEditor';
 import { fetchChapters, fetchLessonContent } from '../services/groq';
 import { runAutoPilot, runCommandMode } from '../services/autoPilot';
@@ -1392,8 +1393,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
   // Helper to get correct field based on mode
   const getModeField = (baseField: string) => {
-    if (syllabusMode === 'SCHOOL') return `school${baseField.charAt(0).toUpperCase() + baseField.slice(1)}`;
-    return `competition${baseField.charAt(0).toUpperCase() + baseField.slice(1)}`;
+    if (syllabusMode === 'SCHOOL') return `school${baseField.charAt(0)?.toUpperCase() + baseField.slice(1)}`;
+    return `competition${baseField.charAt(0)?.toUpperCase() + baseField.slice(1)}`;
   };
 
   const handleModeSwitch = (newMode: 'SCHOOL' | 'COMPETITION') => {
@@ -1576,7 +1577,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       if (localSettings.subscriptionPlans) {
           const newPrices = { ...subPrices };
           localSettings.subscriptionPlans.forEach((plan: any) => {
-              const tier = plan.id.toUpperCase() as keyof typeof subPrices;
+              const tier = plan.id?.toUpperCase() as keyof typeof subPrices;
               if (newPrices[tier]) {
                   newPrices[tier].BASIC = plan.basicPrice || newPrices[tier].BASIC;
                   newPrices[tier].ULTRA = plan.ultraPrice || newPrices[tier].ULTRA;
@@ -1587,6 +1588,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   }, [localSettings.subscriptionPlans]);
 
   // --- DISCOUNT CONFIG STATE ---
+  const [discountSectionTab, setDiscountSectionTab] = useState<'VIP' | 'CREDIT' | 'DIAMOND'>('VIP');
   const [eventYears, setEventYears] = useState(localSettings.specialDiscountEvent?.duration?.years || 0);
   const [eventMonths, setEventMonths] = useState(localSettings.specialDiscountEvent?.duration?.months || 0);
   const [eventDays, setEventDays] = useState(localSettings.specialDiscountEvent?.duration?.days || 0);
@@ -1683,7 +1685,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       if (codeModal.type === 'MCQ') prefix = 'MCQ';
       if (codeModal.type === 'TOPIC_NOTE') prefix = 'N';
 
-      const randomPart = generateSecureRandomId(6).toUpperCase();
+      const randomPart = generateSecureRandomId(6)?.toUpperCase();
       const finalCode = `${prefix}-${randomPart}`;
 
       const newGiftCode: GiftCode = {
@@ -3167,7 +3169,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
               const newGiftCode: GiftCode = {
                   id: Date.now().toString() + i,
-                  code: code.toUpperCase(),
+                  code: code?.toUpperCase(),
                   type: newCodeType || 'CREDITS',
                   ...(newCodeType === 'CREDITS' ? { amount: newCodeAmount || 10 } : {}),
                   ...(newCodeType === 'DIAMONDS' ? { diamondAmount: newCodeDiamonds || 50, amount: newCodeDiamonds || 50 } : {}),
@@ -3247,12 +3249,12 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   const handleSendBroadcast = async () => {
       if (!broadcastCode.trim()) { alert("Pehle ek Redeem Code enter karein!"); return; }
       if (!broadcastMessage.trim()) { alert("Message zaroor likhein!"); return; }
-      if (!confirm(`Yeh code "${broadcastCode.toUpperCase()}" saare users ke mailbox mein bheja jayega.\n\nTarget: ${broadcastTargetTier}\n\nConfirm karein?`)) return;
+      if (!confirm(`Yeh code "${broadcastCode?.toUpperCase()}" saare users ke mailbox mein bheja jayega.\n\nTarget: ${broadcastTargetTier}\n\nConfirm karein?`)) return;
       setIsSendingBroadcast(true);
       try {
           const broadcastEntry: BroadcastRedeemCode = {
               id: `broadcast-${Date.now()}`,
-              code: broadcastCode.toUpperCase().trim(),
+              code: broadcastCode?.toUpperCase().trim(),
               type: broadcastType,
               message: broadcastMessage.trim(),
               title: broadcastTitle.trim() || `🎁 Admin ka Special Gift!`,
@@ -3349,7 +3351,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       dummyPrice: newCspDummyPrice ? Number(newCspDummyPrice) : undefined,
       dailyCredits: daily,
       durationDays: dur,
-      badge: newCspBadge ? newCspBadge.trim().toUpperCase() : undefined,
+      badge: newCspBadge ? newCspBadge.trim()?.toUpperCase() : undefined,
       description: `Roz ${daily} Credits milenge (Total ${(daily * dur).toLocaleString('en-IN')} Credits)`,
       isActive: true,
       scoreMultiplier: getCreditSubPlanMultiplier({ name: newCspName.trim(), price: Number(newCspPrice) } as any),
@@ -3816,7 +3818,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
                           let ansIdx = parseInt(ansRaw) - 1;
                           if (isNaN(ansIdx)) {
-                              const firstChar = ansRaw.charAt(0).toUpperCase();
+                              const firstChar = ansRaw.charAt(0)?.toUpperCase();
                               const map: any = { 'A': 0, 'B': 1, 'C': 2, 'D': 3 };
                               if (map[firstChar] !== undefined) ansIdx = map[firstChar];
                           }
@@ -4164,7 +4166,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           const firstCharMatch = ansRaw.match(/^[A-D]/i);
                                           if (firstCharMatch) {
                                               const map: any = { 'A': 0, 'B': 1, 'C': 2, 'D': 3 };
-                                              ansIdx = map[firstCharMatch[0].toUpperCase()];
+                                              ansIdx = map[firstCharMatch[0]?.toUpperCase()];
                                           } else {
                                                // Check if the answer matches option text
                                                const optionIndex = opts.findIndex(o => ansRaw.includes(o));
@@ -5095,7 +5097,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   <input
                                       type="text"
                                       value={localSettings.specialDiscountEvent?.couponCode || ''}
-                                      onChange={e => setLocalSettings({...localSettings, specialDiscountEvent: {...(localSettings.specialDiscountEvent || {} as any), couponCode: e.target.value.toUpperCase()}})}
+                                      onChange={e => setLocalSettings({...localSettings, specialDiscountEvent: {...(localSettings.specialDiscountEvent || {} as any), couponCode: e.target.value?.toUpperCase()}})}
                                       className="w-full p-2 border-2 border-rose-200 rounded text-sm font-mono font-bold text-rose-700 bg-rose-50"
                                       placeholder="e.g. DIWALI20"
                                   />
@@ -5937,7 +5939,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           }
                                           const type = prompt("Content Type? (MCQ / PDF / VIDEO)", "MCQ");
                                           if (!type) return;
-                                          const cleanType = type.toUpperCase().trim();
+                                          const cleanType = type?.toUpperCase().trim();
                                           if (!['MCQ', 'PDF', 'VIDEO'].includes(cleanType)) {
                                               alert("Invalid Type. Use MCQ, PDF, or VIDEO");
                                               return;
@@ -6669,6 +6671,14 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           </div>
         );
       })()}
+
+      {activeTab === 'TIER_MANAGER' && (
+        <AdminTierManager
+          settings={settings}
+          onUpdateSettings={onUpdateSettings}
+          onBack={() => setActiveTab('DASHBOARD')}
+        />
+      )}
 
       {/* --- GENERAL CONFIG TAB (With Version Control) --- */}
       {activeTab === 'CONFIG_GENERAL' && (
@@ -7877,181 +7887,724 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               <input type="checkbox" checked={localSettings.isPaymentEnabled} onChange={() => toggleSetting('isPaymentEnabled')} className="w-6 h-6 accent-emerald-600" />
                           </div>
 
-                          {/* DISCOUNT EVENT MANAGER */}
-                          <div className="bg-gradient-to-r from-pink-50 to-rose-50 p-4 rounded-xl border border-pink-200 mb-6">
-                              <h4 className="font-bold text-pink-900 mb-4 flex items-center gap-2"><Ticket size={18} /> Discount Event Manager</h4>
-
-                              <div className="flex items-center justify-between bg-white p-3 rounded-lg border border-pink-100 mb-4">
+                          {/* DISCOUNT EVENT MANAGER (VIP, CREDIT PASS & DIAMOND PASS) */}
+                          <div className="bg-gradient-to-r from-pink-50 via-purple-50 to-sky-50 p-4 sm:p-5 rounded-2xl border border-pink-200 mb-6 shadow-sm">
+                              <div className="flex items-center justify-between gap-2 mb-3">
                                   <div>
-                                      <p className="font-bold text-slate-800">Event Status</p>
-                                      <p className="text-xs text-slate-600">
-                                        {localSettings.specialDiscountEvent?.enabled 
-                                          ? (new Date(localSettings.specialDiscountEvent.startsAt || Date.now()) > new Date() 
-                                              ? `Waiting to start: ${new Date(localSettings.specialDiscountEvent.startsAt!).toLocaleString()}` 
-                                              : (localSettings.specialDiscountEvent.startsAt === localSettings.specialDiscountEvent.endsAt ? 'Active Indefinitely' : `Active until ${new Date(localSettings.specialDiscountEvent.endsAt || '').toLocaleString()}`))
-                                          : 'Inactive'}
-                                      </p>
+                                      <h4 className="font-black text-slate-900 text-base flex items-center gap-2">
+                                          <Ticket size={18} className="text-pink-600" /> Special Discount Event Manager
+                                      </h4>
+                                      <p className="text-xs text-slate-600">VIP Plans, Credit Pass aur Diamond Pass ke liye alag-alag independent discounts set aur remove karein.</p>
                                   </div>
+                              </div>
+
+                              {/* Live Overview Strip of All 3 Discounts */}
+                              <div className="grid grid-cols-3 gap-2 mb-4">
+                                  {/* VIP Plans Card */}
                                   <button
-                                      onClick={async () => {
-                                          const startsAt = calculateStartTime();
-                                          const endsAt = calculateEndTimeFromStart(startsAt);
-                                          const updated = {
-                                              ...localSettings,
-                                              specialDiscountEvent: {
-                                                  ...(localSettings.specialDiscountEvent || { eventName: 'Flash Sale', discountPercent: 20, showToFreeUsers: true, showToPremiumUsers: false }),
-                                                  enabled: !localSettings.specialDiscountEvent?.enabled,
-                                                  startsAt: !localSettings.specialDiscountEvent?.enabled ? startsAt : undefined,
-                                                  endsAt: !localSettings.specialDiscountEvent?.enabled ? endsAt : undefined,
-                                                  cooldownSettings: {
-                                                    years: cdYears, months: cdMonths, days: cdDays,
-                                                    hours: cdHours, minutes: cdMinutes, seconds: cdSeconds
-                                                  },
-                                                  duration: {
-                                                    years: eventYears, months: eventMonths, days: eventDays,
-                                                    hours: eventHours, minutes: eventMinutes, seconds: eventSeconds
-                                                  }
-                                              }
-                                          };
-                                          setLocalSettings(updated);
-                                          await saveSystemSettings(updated);
-                                          alert(`Event ${updated.specialDiscountEvent?.enabled ? 'Started' : 'Stopped'} Successfully!`);
-                                      }}
-                                      className={`px-4 py-2 rounded-lg font-bold text-xs ${localSettings.specialDiscountEvent?.enabled ? 'bg-pink-600 text-white' : 'bg-slate-200 text-slate-600'}`}
+                                      type="button"
+                                      onClick={() => setDiscountSectionTab('VIP')}
+                                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                                          discountSectionTab === 'VIP'
+                                              ? 'bg-purple-600 text-white border-purple-700 shadow-md ring-2 ring-purple-400/40'
+                                              : 'bg-white/80 text-slate-700 border-purple-200 hover:bg-purple-50'
+                                      }`}
                                   >
-                                      {localSettings.specialDiscountEvent?.enabled ? 'Stop Event' : 'Start Event'}
+                                      <div className="flex items-center justify-between">
+                                          <span className="text-xs font-black">👑 VIP Plans</span>
+                                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
+                                              localSettings.specialDiscountEvent?.enabled
+                                                  ? (discountSectionTab === 'VIP' ? 'bg-white text-purple-700' : 'bg-emerald-100 text-emerald-800')
+                                                  : (discountSectionTab === 'VIP' ? 'bg-purple-800 text-purple-200' : 'bg-slate-100 text-slate-500')
+                                          }`}>
+                                              {localSettings.specialDiscountEvent?.enabled ? `${localSettings.specialDiscountEvent.discountPercent || 0}% OFF` : 'Off'}
+                                          </span>
+                                      </div>
+                                      <p className={`text-[10px] mt-1 truncate ${discountSectionTab === 'VIP' ? 'text-purple-100' : 'text-slate-500'}`}>
+                                          {localSettings.specialDiscountEvent?.enabled ? (localSettings.specialDiscountEvent.eventName || 'Flash Sale') : 'Koi Discount Nahi'}
+                                      </p>
+                                  </button>
+
+                                  {/* Credit Pass Card */}
+                                  <button
+                                      type="button"
+                                      onClick={() => setDiscountSectionTab('CREDIT')}
+                                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                                          discountSectionTab === 'CREDIT'
+                                              ? 'bg-amber-500 text-slate-950 border-amber-600 shadow-md ring-2 ring-amber-400/40 font-bold'
+                                              : 'bg-white/80 text-slate-700 border-amber-200 hover:bg-amber-50'
+                                      }`}
+                                  >
+                                      <div className="flex items-center justify-between">
+                                          <span className="text-xs font-black">🪙 Credit Pass</span>
+                                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
+                                              localSettings.creditSubDiscountEvent?.enabled
+                                                  ? (discountSectionTab === 'CREDIT' ? 'bg-slate-950 text-amber-300' : 'bg-emerald-100 text-emerald-800')
+                                                  : (discountSectionTab === 'CREDIT' ? 'bg-amber-600/30 text-amber-950' : 'bg-slate-100 text-slate-500')
+                                          }`}>
+                                              {localSettings.creditSubDiscountEvent?.enabled ? `${localSettings.creditSubDiscountEvent.discountPercent || 0}% OFF` : 'Off'}
+                                          </span>
+                                      </div>
+                                      <p className={`text-[10px] mt-1 truncate ${discountSectionTab === 'CREDIT' ? 'text-slate-900 font-medium' : 'text-slate-500'}`}>
+                                          {localSettings.creditSubDiscountEvent?.enabled ? (localSettings.creditSubDiscountEvent.eventName || 'Credit Offer') : 'Koi Discount Nahi'}
+                                      </p>
+                                  </button>
+
+                                  {/* Diamond Pass Card */}
+                                  <button
+                                      type="button"
+                                      onClick={() => setDiscountSectionTab('DIAMOND')}
+                                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                                          discountSectionTab === 'DIAMOND'
+                                              ? 'bg-sky-600 text-white border-sky-700 shadow-md ring-2 ring-sky-400/40'
+                                              : 'bg-white/80 text-slate-700 border-sky-200 hover:bg-sky-50'
+                                      }`}
+                                  >
+                                      <div className="flex items-center justify-between">
+                                          <span className="text-xs font-black">💎 Diamond Pass</span>
+                                          <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${
+                                              localSettings.diamondSubDiscountEvent?.enabled
+                                                  ? (discountSectionTab === 'DIAMOND' ? 'bg-white text-sky-700' : 'bg-emerald-100 text-emerald-800')
+                                                  : (discountSectionTab === 'DIAMOND' ? 'bg-sky-800 text-sky-200' : 'bg-slate-100 text-slate-500')
+                                          }`}>
+                                              {localSettings.diamondSubDiscountEvent?.enabled ? `${localSettings.diamondSubDiscountEvent.discountPercent || 0}% OFF` : 'Off'}
+                                          </span>
+                                      </div>
+                                      <p className={`text-[10px] mt-1 truncate ${discountSectionTab === 'DIAMOND' ? 'text-sky-100' : 'text-slate-500'}`}>
+                                          {localSettings.diamondSubDiscountEvent?.enabled ? (localSettings.diamondSubDiscountEvent.eventName || 'Diamond Dhamaka') : 'Koi Discount Nahi'}
+                                      </p>
                                   </button>
                               </div>
 
-                              <div className="space-y-6">
-                                  {/* Cooldown Timer Setup */}
-                                  <div className="bg-white/50 p-3 rounded-lg border border-pink-100">
-                                      <label className="text-[10px] font-black text-pink-700 uppercase mb-2 block">Cool Down (Time until Start)</label>
-                                      <div className="grid grid-cols-6 gap-2">
-                                          {[
-                                            {label: 'YY', val: cdYears, set: setCdYears},
-                                            {label: 'MM', val: cdMonths, set: setCdMonths},
-                                            {label: 'DD', val: cdDays, set: setCdDays},
-                                            {label: 'HH', val: cdHours, set: setCdHours},
-                                            {label: 'MIN', val: cdMinutes, set: setCdMinutes},
-                                            {label: 'SEC', val: cdSeconds, set: setCdSeconds}
-                                          ].map(t => (
-                                            <div key={t.label}>
-                                              <input type="number" value={t.val} onChange={e => t.set(Number(e.target.value))} className="w-full p-1 text-center border rounded text-xs font-bold bg-slate-800 text-white" />
-                                              <p className="text-[8px] text-center font-bold text-slate-500 mt-1">{t.label}</p>
-                                            </div>
-                                          ))}
-                                      </div>
-                                  </div>
-
-                                  {/* Event Duration Setup */}
-                                  <div className="bg-white/50 p-3 rounded-lg border border-pink-100">
-                                      <label className="text-[10px] font-black text-pink-700 uppercase mb-2 block">Event Duration (How long it lasts)</label>
-                                      <div className="grid grid-cols-6 gap-2">
-                                          {[
-                                            {label: 'YY', val: eventYears, set: setEventYears},
-                                            {label: 'MM', val: eventMonths, set: setEventMonths},
-                                            {label: 'DD', val: eventDays, set: setEventDays},
-                                            {label: 'HH', val: eventHours, set: setEventHours},
-                                            {label: 'MIN', val: eventMinutes, set: setEventMinutes},
-                                            {label: 'SEC', val: eventSeconds, set: setEventSeconds}
-                                          ].map(t => (
-                                            <div key={t.label}>
-                                              <input type="number" value={t.val} onChange={e => t.set(Number(e.target.value))} className="w-full p-1 text-center border rounded text-xs font-bold bg-slate-800 text-white" />
-                                              <p className="text-[8px] text-center font-bold text-slate-500 mt-1">{t.label}</p>
-                                            </div>
-                                          ))}
-                                      </div>
-                                  </div>
-                              </div>
-
-                              {localSettings.specialDiscountEvent?.enabled && (
-                                  <div className="space-y-4 animate-in fade-in">
-                                      <div>
-                                          <label className="text-xs font-bold text-pink-700 uppercase">Event Name</label>
-                                          <input
-                                              type="text"
-                                              value={localSettings.specialDiscountEvent?.eventName || ''}
-                                              onChange={(e) => setLocalSettings({
-                                                  ...localSettings,
-                                                  specialDiscountEvent: { ...localSettings.specialDiscountEvent, eventName: e.target.value } as any
-                                              })}
-                                              className="w-full p-2 border border-pink-200 rounded-lg text-sm font-bold"
-                                              placeholder="e.g. Diwali Dhamaka"
-                                          />
-                                      </div>
-                                      
-                                      <div className="grid grid-cols-2 gap-3">
+                              {/* ── TAB 1: VIP PLANS DISCOUNT ── */}
+                              {discountSectionTab === 'VIP' && (
+                                  <div className="bg-white p-4 rounded-xl border border-purple-200 space-y-4 animate-in fade-in duration-200">
+                                      <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-purple-100">
                                           <div>
-                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Standard Discount %</label>
-                                              <input 
-                                                  type="number" 
-                                                  value={localSettings.specialDiscountEvent?.discountPercent || 0}
-                                                  onChange={e => setLocalSettings({...localSettings, specialDiscountEvent: { ...localSettings.specialDiscountEvent, discountPercent: Number(e.target.value) } as any})}
-                                                  className="w-full p-2 border rounded-lg text-sm font-bold"
+                                              <span className="text-xs font-black uppercase text-purple-700 tracking-wider flex items-center gap-1.5">
+                                                  👑 VIP Plans Special Discount
+                                              </span>
+                                              <p className="text-xs text-slate-500">Pro & Max VIP subscription plans par lagne wala discount.</p>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                              {/* Remove Discount Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      if (!confirm('Kya aap VIP Plans ka discount poori tarah hatana chahte hain?')) return;
+                                                      const updated = {
+                                                          ...localSettings,
+                                                          specialDiscountEvent: {
+                                                              ...(localSettings.specialDiscountEvent || {} as any),
+                                                              enabled: false,
+                                                              discountPercent: 0,
+                                                              eventName: '',
+                                                              startsAt: undefined,
+                                                              endsAt: undefined
+                                                          }
+                                                      };
+                                                      setLocalSettings(updated);
+                                                      await saveSystemSettings(updated);
+                                                      alert('✅ VIP Plans ka Special Discount safaltapoorvak hata diya gaya!');
+                                                  }}
+                                                  className="px-3 py-1.5 rounded-lg font-bold text-xs bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-all cursor-pointer flex items-center gap-1"
+                                              >
+                                                  🗑️ Discount Hatayein
+                                              </button>
+
+                                              {/* Toggle Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      const isNowEnabled = !localSettings.specialDiscountEvent?.enabled;
+                                                      const startsAt = isNowEnabled ? calculateStartTime() : undefined;
+                                                      const endsAt = isNowEnabled ? calculateEndTimeFromStart(startsAt!) : undefined;
+                                                      const updated = {
+                                                          ...localSettings,
+                                                          specialDiscountEvent: {
+                                                              ...(localSettings.specialDiscountEvent || { eventName: 'VIP Flash Sale', discountPercent: 20, showToFreeUsers: true, showToPremiumUsers: false }),
+                                                              enabled: isNowEnabled,
+                                                              startsAt: isNowEnabled ? startsAt : undefined,
+                                                              endsAt: isNowEnabled ? endsAt : undefined,
+                                                              cooldownSettings: {
+                                                                  years: cdYears, months: cdMonths, days: cdDays,
+                                                                  hours: cdHours, minutes: cdMinutes, seconds: cdSeconds
+                                                              },
+                                                              duration: {
+                                                                  years: eventYears, months: eventMonths, days: eventDays,
+                                                                  hours: eventHours, minutes: eventMinutes, seconds: eventSeconds
+                                                              }
+                                                          }
+                                                      };
+                                                      setLocalSettings(updated);
+                                                      await saveSystemSettings(updated);
+                                                      alert(`VIP Event ${isNowEnabled ? 'Started' : 'Stopped'} Successfully!`);
+                                                  }}
+                                                  className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                                                      localSettings.specialDiscountEvent?.enabled ? 'bg-purple-600 text-white' : 'bg-slate-200 text-slate-700'
+                                                  }`}
+                                              >
+                                                  {localSettings.specialDiscountEvent?.enabled ? 'Stop VIP Event' : 'Start VIP Event'}
+                                              </button>
+
+                                              {/* Save Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      await saveSystemSettings(localSettings);
+                                                      alert('✅ VIP Plans Discount settings safaltapoorvak save ho gayi!');
+                                                  }}
+                                                  className="px-3 py-1.5 rounded-lg font-bold text-xs bg-emerald-600 text-white hover:bg-emerald-700 transition-all cursor-pointer"
+                                              >
+                                                  💾 Save VIP Discount
+                                              </button>
+                                          </div>
+                                      </div>
+
+                                      {/* Status display */}
+                                      <div className="bg-purple-50 p-2.5 rounded-lg text-xs text-purple-900 flex items-center justify-between">
+                                          <span>
+                                              <strong>Status: </strong>
+                                              {localSettings.specialDiscountEvent?.enabled 
+                                                  ? (new Date(localSettings.specialDiscountEvent.startsAt || Date.now()) > new Date() 
+                                                      ? `Waiting to start: ${new Date(localSettings.specialDiscountEvent.startsAt!).toLocaleString()}` 
+                                                      : (localSettings.specialDiscountEvent.startsAt === localSettings.specialDiscountEvent.endsAt ? 'Active Indefinitely' : `Active until ${new Date(localSettings.specialDiscountEvent.endsAt || '').toLocaleString()}`))
+                                                  : 'Inactive (No Discount Active)'}
+                                          </span>
+                                          <span className="font-black text-purple-700 text-sm">
+                                              {localSettings.specialDiscountEvent?.enabled ? `${localSettings.specialDiscountEvent.discountPercent || 0}% OFF` : '0%'}
+                                          </span>
+                                      </div>
+
+                                      {/* Inputs */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                          <div className="sm:col-span-1">
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Event Name</label>
+                                              <input
+                                                  type="text"
+                                                  value={localSettings.specialDiscountEvent?.eventName || ''}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      specialDiscountEvent: { ...localSettings.specialDiscountEvent, eventName: e.target.value } as any
+                                                  })}
+                                                  className="w-full p-2 border border-purple-200 rounded-lg text-xs font-bold"
+                                                  placeholder="e.g. VIP Dhamaka"
                                               />
                                           </div>
-
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">VIP Discount %</label>
+                                              <input 
+                                                  type="number" 
+                                                  min={0}
+                                                  max={100}
+                                                  value={localSettings.specialDiscountEvent?.discountPercent || 0}
+                                                  onChange={e => setLocalSettings({...localSettings, specialDiscountEvent: { ...localSettings.specialDiscountEvent, discountPercent: Number(e.target.value) } as any})}
+                                                  className="w-full p-2 border border-purple-200 rounded-lg text-xs font-bold"
+                                              />
+                                          </div>
                                           <div>
                                               <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Renewal Extra % (Existing Users)</label>
                                               <input 
                                                   type="number" 
+                                                  min={0}
+                                                  max={100}
                                                   value={localSettings.specialDiscountEvent?.renewalDiscountPercent || 0}
                                                   onChange={e => setLocalSettings({...localSettings, specialDiscountEvent: { ...localSettings.specialDiscountEvent, renewalDiscountPercent: Number(e.target.value) } as any})}
-                                                  className="w-full p-2 border rounded-lg text-sm font-bold"
+                                                  className="w-full p-2 border border-purple-200 rounded-lg text-xs font-bold"
                                               />
                                           </div>
                                       </div>
 
-                              <div className="flex gap-4">
-                                   <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                                       <input 
-                                          type="checkbox" 
-                                          checked={localSettings.specialDiscountEvent?.showToFreeUsers || false}
-                                          onChange={(e) => setLocalSettings({
-                                              ...localSettings,
-                                              specialDiscountEvent: { ...localSettings.specialDiscountEvent, showToFreeUsers: e.target.checked } as any
-                                          })}
-                                          className="accent-pink-600"
-                                       /> Show to Free Users
-                                   </label>
-                                   <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
-                                       <input 
-                                          type="checkbox" 
-                                          checked={localSettings.specialDiscountEvent?.showToPremiumUsers || false}
-                                          onChange={(e) => setLocalSettings({
-                                              ...localSettings,
-                                              specialDiscountEvent: { ...localSettings.specialDiscountEvent, showToPremiumUsers: e.target.checked } as any
-                                          })}
-                                          className="accent-pink-600"
-                                       /> Show to Premium Users
-                                   </label>
-                              </div>
-                              <div className="mt-4 p-3 bg-blue-50 border border-blue-100 rounded-lg">
-                                <p className="text-[10px] text-blue-800 font-bold uppercase mb-1">Advanced Timer Settings</p>
-                                <p className="text-[9px] text-blue-600 mb-2">Set exactly when the discount appears and how long it lasts.</p>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <button onClick={() => {
-                                    const startsAt = calculateStartTime();
-                                    const endsAt = calculateEndTimeFromStart(startsAt);
-                                    const updated = {
-                                      ...localSettings,
-                                      specialDiscountEvent: {
-                                        ...localSettings.specialDiscountEvent,
-                                        startsAt,
-                                        endsAt
-                                      } as any
-                                    };
-                                    setLocalSettings(updated);
-                                    saveSystemSettings(updated);
-                                    alert(`Event Scheduled!\nStart: ${new Date(startsAt).toLocaleString()}\nEnd: ${new Date(endsAt).toLocaleString()}`);
-                                  }} className="p-2 bg-blue-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider">Update Timer Values</button>
-                                  <button onClick={() => {
-                                    setEventYears(0); setEventMonths(0); setEventDays(0); setEventHours(0); setEventMinutes(0); setEventSeconds(0);
-                                    setCdYears(0); setCdMonths(0); setCdDays(0); setCdHours(0); setCdMinutes(0); setCdSeconds(0);
-                                  }} className="p-2 bg-slate-200 text-slate-700 rounded-lg text-[10px] font-black uppercase tracking-wider">Reset Inputs</button>
-                                </div>
-                              </div>
+                                      {/* Audience Checkboxes */}
+                                      <div className="flex gap-4 pt-2">
+                                          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                              <input 
+                                                  type="checkbox" 
+                                                  checked={localSettings.specialDiscountEvent?.showToFreeUsers !== false}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      specialDiscountEvent: { ...localSettings.specialDiscountEvent, showToFreeUsers: e.target.checked } as any
+                                                  })}
+                                                  className="accent-purple-600"
+                                              /> Show to Free Users
+                                          </label>
+                                          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                              <input 
+                                                  type="checkbox" 
+                                                  checked={localSettings.specialDiscountEvent?.showToPremiumUsers || false}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      specialDiscountEvent: { ...localSettings.specialDiscountEvent, showToPremiumUsers: e.target.checked } as any
+                                                  })}
+                                                  className="accent-purple-600"
+                                              /> Show to Premium Users
+                                          </label>
+                                      </div>
+
+                                      {/* Timers & Schedule */}
+                                      <div className="space-y-3 pt-3 border-t border-purple-100">
+                                          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                              <label className="text-[10px] font-black text-purple-700 uppercase mb-2 block">Cool Down (Time until Start)</label>
+                                              <div className="grid grid-cols-6 gap-2">
+                                                  {[
+                                                      {label: "YY", val: cdYears, set: setCdYears},
+                                                      {label: "MM", val: cdMonths, set: setCdMonths},
+                                                      {label: "DD", val: cdDays, set: setCdDays},
+                                                      {label: "HH", val: cdHours, set: setCdHours},
+                                                      {label: "MIN", val: cdMinutes, set: setCdMinutes},
+                                                      {label: "SEC", val: cdSeconds, set: setCdSeconds}
+                                                  ].map(t => (
+                                                      <div key={t.label}>
+                                                          <input type="number" value={t.val} onChange={e => t.set(Number(e.target.value))} className="w-full p-1 text-center border rounded text-xs font-bold bg-slate-800 text-white" />
+                                                          <p className="text-[8px] text-center font-bold text-slate-500 mt-1">{t.label}</p>
+                                                      </div>
+                                                  ))}
+                                              </div>
+                                          </div>
+
+                                          <div className="bg-slate-50 p-3 rounded-lg border border-slate-200">
+                                              <label className="text-[10px] font-black text-purple-700 uppercase mb-2 block">Event Duration (How long it lasts)</label>
+                                              <div className="grid grid-cols-6 gap-2">
+                                                  {[
+                                                      {label: "YY", val: eventYears, set: setEventYears},
+                                                      {label: "MM", val: eventMonths, set: setEventMonths},
+                                                      {label: "DD", val: eventDays, set: setEventDays},
+                                                      {label: "HH", val: eventHours, set: setEventHours},
+                                                      {label: "MIN", val: eventMinutes, set: setEventMinutes},
+                                                      {label: "SEC", val: eventSeconds, set: setEventSeconds}
+                                                  ].map(t => (
+                                                      <div key={t.label}>
+                                                          <input type="number" value={t.val} onChange={e => t.set(Number(e.target.value))} className="w-full p-1 text-center border rounded text-xs font-bold bg-slate-800 text-white" />
+                                                          <p className="text-[8px] text-center font-bold text-slate-500 mt-1">{t.label}</p>
+                                                      </div>
+                                                  ))}
+                                              </div>
+                                          </div>
+
+                                          <div className="flex gap-2">
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      const startsAt = calculateStartTime();
+                                                      const endsAt = calculateEndTimeFromStart(startsAt);
+                                                      const updated = {
+                                                          ...localSettings,
+                                                          specialDiscountEvent: {
+                                                              ...localSettings.specialDiscountEvent,
+                                                              startsAt,
+                                                              endsAt
+                                                          } as any
+                                                      };
+                                                      setLocalSettings(updated);
+                                                      await saveSystemSettings(updated);
+                                                      alert(`VIP Event Scheduled!\nStart: ${new Date(startsAt).toLocaleString()}\nEnd: ${new Date(endsAt).toLocaleString()}`);
+                                                  }}
+                                                  className="p-2 bg-purple-600 text-white rounded-lg text-[10px] font-black uppercase tracking-wider flex-1 cursor-pointer"
+                                              >
+                                                  Update Timer Values
+                                              </button>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                      setEventYears(0); setEventMonths(0); setEventDays(0); setEventHours(0); setEventMinutes(0); setEventSeconds(0);
+                                                      setCdYears(0); setCdMonths(0); setCdDays(0); setCdHours(0); setCdMinutes(0); setCdSeconds(0);
+                                                  }}
+                                                  className="p-2 bg-slate-200 text-slate-700 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer"
+                                              >
+                                                  Reset Inputs
+                                              </button>
+                                          </div>
+                                      </div>
+                                  </div>
+                              )}
+
+                              {/* ── TAB 2: CREDIT PASS DISCOUNT ── */}
+                              {discountSectionTab === "CREDIT" && (
+                                  <div className="bg-white p-4 rounded-xl border border-amber-200 space-y-4 animate-in fade-in duration-200">
+                                      <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-amber-100">
+                                          <div>
+                                              <span className="text-xs font-black uppercase text-amber-700 tracking-wider flex items-center gap-1.5">
+                                                  🪙 Credit Pass Special Discount
+                                              </span>
+                                              <p className="text-xs text-slate-500">Daily Credit Pass subscriptions par lagne wala dedicated special discount.</p>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                              {/* Remove Discount Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      if (!confirm("Kya aap Credit Pass ka discount poori tarah hatana chahte hain?")) return;
+                                                      const updated = {
+                                                          ...localSettings,
+                                                          creditSubDiscountEvent: {
+                                                              enabled: false,
+                                                              discountPercent: 0,
+                                                              eventName: "",
+                                                              startsAt: undefined,
+                                                              endsAt: undefined,
+                                                              showToFreeUsers: true,
+                                                              showToPremiumUsers: true
+                                                          }
+                                                      };
+                                                      setLocalSettings(updated);
+                                                      await saveSystemSettings(updated);
+                                                      alert("✅ Credit Pass ka Special Discount safaltapoorvak hata diya gaya!");
+                                                  }}
+                                                  className="px-3 py-1.5 rounded-lg font-bold text-xs bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-all cursor-pointer flex items-center gap-1"
+                                              >
+                                                  🗑️ Discount Hatayein
+                                              </button>
+
+                                              {/* Toggle Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      const isNowEnabled = !localSettings.creditSubDiscountEvent?.enabled;
+                                                      const updated = {
+                                                          ...localSettings,
+                                                          creditSubDiscountEvent: {
+                                                              ...(localSettings.creditSubDiscountEvent || { eventName: "Credit Pass Flash Sale", discountPercent: 20, showToFreeUsers: true, showToPremiumUsers: true }),
+                                                              enabled: isNowEnabled,
+                                                              discountPercent: localSettings.creditSubDiscountEvent?.discountPercent || 20,
+                                                              eventName: localSettings.creditSubDiscountEvent?.eventName || "Credit Pass Flash Sale"
+                                                          }
+                                                      };
+                                                      setLocalSettings(updated);
+                                                      await saveSystemSettings(updated);
+                                                      alert(`Credit Pass Event ${isNowEnabled ? "Started" : "Stopped"} Successfully!`);
+                                                  }}
+                                                  className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                                                      localSettings.creditSubDiscountEvent?.enabled ? "bg-amber-500 text-slate-950 font-black" : "bg-slate-200 text-slate-700"
+                                                  }`}
+                                              >
+                                                  {localSettings.creditSubDiscountEvent?.enabled ? "Stop Credit Event" : "Start Credit Event"}
+                                              </button>
+
+                                              {/* Save Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      await saveSystemSettings(localSettings);
+                                                      alert("✅ Credit Pass Discount settings safaltapoorvak save ho gayi!");
+                                                  }}
+                                                  className="px-3 py-1.5 rounded-lg font-bold text-xs bg-emerald-600 text-white hover:bg-emerald-700 transition-all cursor-pointer"
+                                              >
+                                                  💾 Save Credit Discount
+                                              </button>
+                                          </div>
+                                      </div>
+
+                                      {/* Status display */}
+                                      <div className="bg-amber-50 p-2.5 rounded-lg text-xs text-amber-900 flex items-center justify-between">
+                                          <span>
+                                              <strong>Status: </strong>
+                                              {localSettings.creditSubDiscountEvent?.enabled 
+                                                  ? `🟢 Active (${localSettings.creditSubDiscountEvent.discountPercent || 0}% OFF on Credit Passes)`
+                                                  : "⚪ Inactive (No Special Discount on Credit Passes)"}
+                                          </span>
+                                          <span className="font-black text-amber-700 text-sm">
+                                              {localSettings.creditSubDiscountEvent?.enabled ? `${localSettings.creditSubDiscountEvent.discountPercent || 0}% OFF` : "0%"}
+                                          </span>
+                                      </div>
+
+                                      {/* Inputs */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Credit Event Name</label>
+                                              <input
+                                                  type="text"
+                                                  value={localSettings.creditSubDiscountEvent?.eventName || ""}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      creditSubDiscountEvent: {
+                                                          ...(localSettings.creditSubDiscountEvent || { enabled: false, discountPercent: 0 }),
+                                                          eventName: e.target.value
+                                                      }
+                                                  })}
+                                                  className="w-full p-2 border border-amber-200 rounded-lg text-xs font-bold"
+                                                  placeholder="e.g. Credit Dhamaka Offer"
+                                              />
+                                          </div>
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Credit Pass Discount %</label>
+                                              <input 
+                                                  type="number" 
+                                                  min={0}
+                                                  max={100}
+                                                  value={localSettings.creditSubDiscountEvent?.discountPercent || 0}
+                                                  onChange={e => setLocalSettings({
+                                                      ...localSettings,
+                                                      creditSubDiscountEvent: {
+                                                          ...(localSettings.creditSubDiscountEvent || { enabled: false, eventName: "Credit Offer" }),
+                                                          discountPercent: Number(e.target.value)
+                                                      }
+                                                  })}
+                                                  className="w-full p-2 border border-amber-200 rounded-lg text-xs font-bold"
+                                                  placeholder="20"
+                                              />
+                                          </div>
+                                      </div>
+
+                                      {/* Validity Range / Indefinite */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Starts At (Optional)</label>
+                                              <input
+                                                  type="datetime-local"
+                                                  value={localSettings.creditSubDiscountEvent?.startsAt ? new Date(localSettings.creditSubDiscountEvent.startsAt).toISOString().slice(0, 16) : ""}
+                                                  onChange={e => setLocalSettings({
+                                                      ...localSettings,
+                                                      creditSubDiscountEvent: {
+                                                          ...(localSettings.creditSubDiscountEvent || { enabled: false, discountPercent: 0, eventName: "" }),
+                                                          startsAt: e.target.value ? new Date(e.target.value).toISOString() : undefined
+                                                      }
+                                                  })}
+                                                  className="w-full p-2 border border-amber-200 rounded-lg text-xs"
+                                              />
+                                          </div>
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Ends At (Optional)</label>
+                                              <input
+                                                  type="datetime-local"
+                                                  value={localSettings.creditSubDiscountEvent?.endsAt ? new Date(localSettings.creditSubDiscountEvent.endsAt).toISOString().slice(0, 16) : ""}
+                                                  onChange={e => setLocalSettings({
+                                                      ...localSettings,
+                                                      creditSubDiscountEvent: {
+                                                          ...(localSettings.creditSubDiscountEvent || { enabled: false, discountPercent: 0, eventName: "" }),
+                                                          endsAt: e.target.value ? new Date(e.target.value).toISOString() : undefined
+                                                      }
+                                                  })}
+                                                  className="w-full p-2 border border-amber-200 rounded-lg text-xs"
+                                              />
+                                          </div>
+                                      </div>
+
+                                      {/* Audience */}
+                                      <div className="flex gap-4">
+                                          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                              <input 
+                                                  type="checkbox" 
+                                                  checked={localSettings.creditSubDiscountEvent?.showToFreeUsers !== false}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      creditSubDiscountEvent: {
+                                                          ...(localSettings.creditSubDiscountEvent || { enabled: false, discountPercent: 0, eventName: "" }),
+                                                          showToFreeUsers: e.target.checked
+                                                      }
+                                                  })}
+                                                  className="accent-amber-500"
+                                              /> Show to Free Users
+                                          </label>
+                                          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                              <input 
+                                                  type="checkbox" 
+                                                  checked={localSettings.creditSubDiscountEvent?.showToPremiumUsers !== false}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      creditSubDiscountEvent: {
+                                                          ...(localSettings.creditSubDiscountEvent || { enabled: false, discountPercent: 0, eventName: "" }),
+                                                          showToPremiumUsers: e.target.checked
+                                                      }
+                                                  })}
+                                                  className="accent-amber-500"
+                                              /> Show to Premium Users
+                                          </label>
+                                      </div>
+                                  </div>
+                              )}
+
+                              {/* ── TAB 3: DIAMOND PASS DISCOUNT ── */}
+                              {discountSectionTab === "DIAMOND" && (
+                                  <div className="bg-white p-4 rounded-xl border border-sky-200 space-y-4 animate-in fade-in duration-200">
+                                      <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-sky-100">
+                                          <div>
+                                              <span className="text-xs font-black uppercase text-sky-700 tracking-wider flex items-center gap-1.5">
+                                                  💎 Diamond Pass Special Discount
+                                              </span>
+                                              <p className="text-xs text-slate-500">Daily Diamond Pass subscriptions par lagne wala dedicated special discount (Double discount nahi hoga).</p>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                              {/* Remove Discount Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      if (!confirm("Kya aap Diamond Pass ka discount poori tarah hatana chahte hain?")) return;
+                                                      const updated = {
+                                                          ...localSettings,
+                                                          diamondSubDiscountEvent: {
+                                                              enabled: false,
+                                                              discountPercent: 0,
+                                                              eventName: "",
+                                                              startsAt: undefined,
+                                                              endsAt: undefined,
+                                                              showToFreeUsers: true,
+                                                              showToPremiumUsers: true
+                                                          }
+                                                      };
+                                                      setLocalSettings(updated);
+                                                      await saveSystemSettings(updated);
+                                                      alert("✅ Diamond Pass ka Special Discount safaltapoorvak hata diya gaya!");
+                                                  }}
+                                                  className="px-3 py-1.5 rounded-lg font-bold text-xs bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-all cursor-pointer flex items-center gap-1"
+                                              >
+                                                  🗑️ Discount Hatayein
+                                              </button>
+
+                                              {/* Toggle Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      const isNowEnabled = !localSettings.diamondSubDiscountEvent?.enabled;
+                                                      const updated = {
+                                                          ...localSettings,
+                                                          diamondSubDiscountEvent: {
+                                                              ...(localSettings.diamondSubDiscountEvent || { eventName: "Diamond Pass Flash Sale", discountPercent: 20, showToFreeUsers: true, showToPremiumUsers: true }),
+                                                              enabled: isNowEnabled,
+                                                              discountPercent: localSettings.diamondSubDiscountEvent?.discountPercent || 20,
+                                                              eventName: localSettings.diamondSubDiscountEvent?.eventName || "Diamond Pass Flash Sale"
+                                                          }
+                                                      };
+                                                      setLocalSettings(updated);
+                                                      await saveSystemSettings(updated);
+                                                      alert(`Diamond Pass Event ${isNowEnabled ? "Started" : "Stopped"} Successfully!`);
+                                                  }}
+                                                  className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                                                      localSettings.diamondSubDiscountEvent?.enabled ? "bg-sky-600 text-white font-black" : "bg-slate-200 text-slate-700"
+                                                  }`}
+                                              >
+                                                  {localSettings.diamondSubDiscountEvent?.enabled ? "Stop Diamond Event" : "Start Diamond Event"}
+                                              </button>
+
+                                              {/* Save Button */}
+                                              <button
+                                                  type="button"
+                                                  onClick={async () => {
+                                                      await saveSystemSettings(localSettings);
+                                                      alert("✅ Diamond Pass Discount settings safaltapoorvak save ho gayi!");
+                                                  }}
+                                                  className="px-3 py-1.5 rounded-lg font-bold text-xs bg-emerald-600 text-white hover:bg-emerald-700 transition-all cursor-pointer"
+                                              >
+                                                  💾 Save Diamond Discount
+                                              </button>
+                                          </div>
+                                      </div>
+
+                                      {/* Status display */}
+                                      <div className="bg-sky-50 p-2.5 rounded-lg text-xs text-sky-900 flex items-center justify-between">
+                                          <span>
+                                              <strong>Status: </strong>
+                                              {localSettings.diamondSubDiscountEvent?.enabled 
+                                                  ? `🟢 Active (${localSettings.diamondSubDiscountEvent.discountPercent || 0}% OFF on Diamond Passes)`
+                                                  : "⚪ Inactive (No Special Discount on Diamond Passes)"}
+                                          </span>
+                                          <span className="font-black text-sky-700 text-sm">
+                                              {localSettings.diamondSubDiscountEvent?.enabled ? `${localSettings.diamondSubDiscountEvent.discountPercent || 0}% OFF` : "0%"}
+                                          </span>
+                                      </div>
+
+                                      {/* Inputs */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Diamond Event Name</label>
+                                              <input
+                                                  type="text"
+                                                  value={localSettings.diamondSubDiscountEvent?.eventName || ""}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      diamondSubDiscountEvent: {
+                                                          ...(localSettings.diamondSubDiscountEvent || { enabled: false, discountPercent: 0 }),
+                                                          eventName: e.target.value
+                                                      }
+                                                  })}
+                                                  className="w-full p-2 border border-sky-200 rounded-lg text-xs font-bold"
+                                                  placeholder="e.g. Diamond Dhamaka Sale"
+                                              />
+                                          </div>
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Diamond Pass Discount %</label>
+                                              <input 
+                                                  type="number" 
+                                                  min={0}
+                                                  max={100}
+                                                  value={localSettings.diamondSubDiscountEvent?.discountPercent || 0}
+                                                  onChange={e => setLocalSettings({
+                                                      ...localSettings,
+                                                      diamondSubDiscountEvent: {
+                                                          ...(localSettings.diamondSubDiscountEvent || { enabled: false, eventName: "Diamond Offer" }),
+                                                          discountPercent: Number(e.target.value)
+                                                      }
+                                                  })}
+                                                  className="w-full p-2 border border-sky-200 rounded-lg text-xs font-bold"
+                                                  placeholder="20"
+                                              />
+                                          </div>
+                                      </div>
+
+                                      {/* Validity Range */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Starts At (Optional)</label>
+                                              <input
+                                                  type="datetime-local"
+                                                  value={localSettings.diamondSubDiscountEvent?.startsAt ? new Date(localSettings.diamondSubDiscountEvent.startsAt).toISOString().slice(0, 16) : ""}
+                                                  onChange={e => setLocalSettings({
+                                                      ...localSettings,
+                                                      diamondSubDiscountEvent: {
+                                                          ...(localSettings.diamondSubDiscountEvent || { enabled: false, discountPercent: 0, eventName: "" }),
+                                                          startsAt: e.target.value ? new Date(e.target.value).toISOString() : undefined
+                                                      }
+                                                  })}
+                                                  className="w-full p-2 border border-sky-200 rounded-lg text-xs"
+                                              />
+                                          </div>
+                                          <div>
+                                              <label className="text-[10px] font-bold text-slate-600 uppercase block mb-1">Ends At (Optional)</label>
+                                              <input
+                                                  type="datetime-local"
+                                                  value={localSettings.diamondSubDiscountEvent?.endsAt ? new Date(localSettings.diamondSubDiscountEvent.endsAt).toISOString().slice(0, 16) : ""}
+                                                  onChange={e => setLocalSettings({
+                                                      ...localSettings,
+                                                      diamondSubDiscountEvent: {
+                                                          ...(localSettings.diamondSubDiscountEvent || { enabled: false, discountPercent: 0, eventName: "" }),
+                                                          endsAt: e.target.value ? new Date(e.target.value).toISOString() : undefined
+                                                      }
+                                                  })}
+                                                  className="w-full p-2 border border-sky-200 rounded-lg text-xs"
+                                              />
+                                          </div>
+                                      </div>
+
+                                      {/* Audience */}
+                                      <div className="flex gap-4">
+                                          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                              <input 
+                                                  type="checkbox" 
+                                                  checked={localSettings.diamondSubDiscountEvent?.showToFreeUsers !== false}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      diamondSubDiscountEvent: {
+                                                          ...(localSettings.diamondSubDiscountEvent || { enabled: false, discountPercent: 0, eventName: "" }),
+                                                          showToFreeUsers: e.target.checked
+                                                      }
+                                                  })}
+                                                  className="accent-sky-600"
+                                              /> Show to Free Users
+                                          </label>
+                                          <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                                              <input 
+                                                  type="checkbox" 
+                                                  checked={localSettings.diamondSubDiscountEvent?.showToPremiumUsers !== false}
+                                                  onChange={(e) => setLocalSettings({
+                                                      ...localSettings,
+                                                      diamondSubDiscountEvent: {
+                                                          ...(localSettings.diamondSubDiscountEvent || { enabled: false, discountPercent: 0, eventName: "" }),
+                                                          showToPremiumUsers: e.target.checked
+                                                      }
+                                                  })}
+                                                  className="accent-sky-600"
+                                              /> Show to Premium Users
+                                          </label>
+                                      </div>
                                   </div>
                               )}
                           </div>
@@ -8312,7 +8865,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                       <input
                                                           type="text"
                                                           value={plan.badge || ''}
-                                                          onChange={(e) => updateCreditSubPlan(plan.id, 'badge', e.target.value.toUpperCase())}
+                                                          onChange={(e) => updateCreditSubPlan(plan.id, 'badge', e.target.value?.toUpperCase())}
                                                           className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-[11px] font-bold text-amber-300 max-w-[110px]"
                                                           placeholder="Badge (e.g. POPULAR)"
                                                       />
@@ -8723,16 +9276,16 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                 <input
                                                     type="number"
                                                     min="0"
-                                                    value={localSettings.dailyClaimMaxPro ?? 100}
+                                                    value={localSettings.dailyClaimMaxPro ?? 5}
                                                     onChange={(e) => setLocalSettings({
                                                         ...localSettings,
                                                         dailyClaimMaxPro: Number(e.target.value)
                                                     })}
                                                     className="w-full p-2 border border-purple-300 bg-white rounded-lg text-sm font-black text-purple-900 focus:ring-2 focus:ring-purple-400 focus:outline-none"
                                                 />
-                                                <span className="text-xs font-bold text-purple-700 shrink-0">CR / Day</span>
+                                                <span className="text-xs font-bold text-purple-700 shrink-0">💎 / Day</span>
                                             </div>
-                                            <p className="text-[10px] text-purple-600">Default: 100 Coins/day</p>
+                                            <p className="text-[10px] text-purple-600">Default: 5 Diamonds/day</p>
                                         </div>
                                     </div>
                                 </div>
@@ -12963,7 +13516,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   <div className="flex items-start justify-between gap-2 mb-3">
                                       <div className="flex items-center gap-2">
                                           <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-black shrink-0 ${isUrgent ? 'bg-red-100 text-red-700' : 'bg-indigo-100 text-indigo-700'}`}>
-                                              {(d.userName || d.userId || '?').charAt(0).toUpperCase()}
+                                              {(d.userName || d.userId || '?').charAt(0)?.toUpperCase()}
                                           </div>
                                           <div>
                                               <p className="font-bold text-slate-800 text-sm">{d.userName || 'Unknown User'}</p>
@@ -15558,7 +16111,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   <div className={`flex items-end gap-2 group ${isAdmin ? 'flex-row-reverse' : 'flex-row'}`}>
                       {/* Avatar */}
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-black shrink-0 ${isAdmin ? 'bg-slate-900 text-yellow-400' : 'bg-slate-200 text-slate-600'}`}>
-                          {(msg.userName || '?').charAt(0).toUpperCase()}
+                          {(msg.userName || '?').charAt(0)?.toUpperCase()}
                       </div>
                       <div className={`max-w-[75%] flex flex-col ${isAdmin ? 'items-end' : 'items-start'}`}>
                           {/* Name row */}
@@ -15705,7 +16258,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                               onClick={() => { setChatTargetUser(u || { id: thread.userId, name, role: 'STUDENT' }); setChatInput(''); }}
                                               className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 hover:border-slate-200 transition-all cursor-pointer">
                                               <div className="w-10 h-10 bg-gradient-to-br from-green-400 to-teal-500 rounded-full flex items-center justify-center text-white font-black shrink-0">
-                                                  {name.charAt(0).toUpperCase()}
+                                                  {name.charAt(0)?.toUpperCase()}
                                               </div>
                                               <div className="flex-1 min-w-0">
                                                   <p className="text-sm font-bold text-slate-800 truncate">{name}</p>
@@ -15729,7 +16282,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           <ArrowLeft size={15}/>
                                       </button>
                                       <div className="w-8 h-8 bg-gradient-to-br from-green-400 to-teal-500 rounded-full flex items-center justify-center text-white font-black text-sm shrink-0">
-                                          {(chatTargetUser.name || '?').charAt(0).toUpperCase()}
+                                          {(chatTargetUser.name || '?').charAt(0)?.toUpperCase()}
                                       </div>
                                       <div>
                                           <p className="text-sm font-black text-slate-800">{chatTargetUser.name}</p>
@@ -17017,7 +17570,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       {/* Redeem Code */}
                       <div>
                           <label className="text-[10px] font-bold text-indigo-700 uppercase block mb-1">Redeem Code (pehle generate karo)</label>
-                          <input type="text" value={broadcastCode} onChange={e => setBroadcastCode(e.target.value.toUpperCase())} placeholder="e.g. DIWALI2024" className="w-full p-2.5 rounded-xl border border-indigo-200 font-mono font-bold bg-white text-sm uppercase" />
+                          <input type="text" value={broadcastCode} onChange={e => setBroadcastCode(e.target.value?.toUpperCase())} placeholder="e.g. DIWALI2024" className="w-full p-2.5 rounded-xl border border-indigo-200 font-mono font-bold bg-white text-sm uppercase" />
                       </div>
 
                       {/* Type-specific config */}
@@ -20011,7 +20564,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       <div className="flex items-start justify-between gap-3 mb-2">
                                           <div className="flex items-center gap-2.5">
                                               <div className="w-9 h-9 rounded-xl bg-indigo-100 flex items-center justify-center text-indigo-700 font-black text-sm shrink-0">
-                                                  {(fb.userName || 'U').charAt(0).toUpperCase()}
+                                                  {(fb.userName || 'U').charAt(0)?.toUpperCase()}
                                               </div>
                                               <div>
                                                   <p className="font-black text-slate-800 text-sm">{fb.userName}</p>

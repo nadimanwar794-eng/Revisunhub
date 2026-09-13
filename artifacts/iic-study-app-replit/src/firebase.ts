@@ -7,7 +7,7 @@ import { storage } from "./utils/storage";
 // --- FIREBASE CONFIGURATION ---
 
 const firebaseConfig = {
-apiKey: "AIzaSyC7N3IOa7GRETNRBo8P-QKVFzg2bLqoEco",
+apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyC7N3IOa7GRETNRBo8P-QKVFzg2bLqoEco",
 authDomain: "students-app-deae5.firebaseapp.com",
 databaseURL: "https://students-app-deae5-default-rtdb.asia-southeast1.firebasedatabase.app",
 projectId: "students-app-deae5",
@@ -2667,6 +2667,7 @@ export const updateUserStatus = async (userId: string, time?: number, activity?:
 
         const payload: any = { lastActiveTime: nowIso };
         if (activity) payload.currentActivity = activity;
+        if (typeof time === "number") payload.dailyStudySeconds = time;
 
         // Update RTDB for real-time listeners
         update(userRef, payload).catch(() => {});

@@ -149,6 +149,13 @@ export interface User {
   redeemedCodes: string[]; // List of redeemed code IDs
   redeemedReferralCode?: string; // NEW: Code used by this user
   referralCount?: number; // NEW: Number of users referred by this user
+  referrerId?: string; // ID of the user who referred this student
+  referralStudySeconds?: number; // Cumulative study seconds towards 60-min unlock (needs 3600s)
+  referralRewardClaimed?: boolean; // True once invitee received their 100 Credits welcome gift after 1h
+  referredUsersList?: ReferredUserRecord[]; // Full list of referred students with active/dead status
+  claimedReferralMilestones?: number[]; // Milestone targets already claimed (e.g. [1, 3, 5, 10, 100, ...])
+  referralCommissionBalance?: number; // Accumulated cashback from friends spending credits
+  referralCommissionLogs?: ReferralCommissionLog[]; // History of royalty earnings
   
   // Soft Delete / Ban Logic
   isArchived?: boolean; // Acts as Soft Delete / Recycle Bin
@@ -171,9 +178,7 @@ export interface User {
   // REWARDS SYSTEM
   pendingRewards?: PendingReward[];
   isRewardsUnlocked?: boolean; // 10 Coin Gate
-  isAutoDeductEnabled?: boolean; // Skip confirmation popup for credit spending
-  hideDeductionPopups?: boolean; // If true, hides all deduction popups (default true for new accounts)
-  primaryCurrency?: 'CREDIT' | 'DIAMOND'; // Primary currency to use when auto-deducting
+  isAutoDeductEnabled?: boolean; // NEW: Skip confirmation popup for credit spending
 
   // New Fields for Student Profile
   board?: string;
@@ -194,7 +199,9 @@ export interface User {
   
   // Chat & Premium Features
   isPremium?: boolean;
-  blockLimitExpansions?: number; // Number of +10 block limit expansions purchased with coins
+  blockLimitExpansions?: number; // Number of +10 block limit expansions purchased with coins or diamonds
+  friendLimitExpansions?: number; // Number of +10 friend limit expansions purchased with coins or diamonds
+  dailyMessageLimitExpansions?: number; // Number of +10 daily message limit expansions purchased
   lastChatTime?: string; // ISO String for cooldown
   lastSpinTime?: string; // ISO String (Legacy)
   dailySpinDate?: string; // YYYY-MM-DD for resetting daily count
@@ -266,6 +273,42 @@ export interface User {
   diamondSubscription?: UserDiamondSubscription; // Daily Diamonds Subscription (💎 Pass: 7 Days / 30 Days)
 }
 
+export interface ReferredUserRecord {
+  userId: string;
+  userName: string;
+  userPhoto?: string;
+  joinedAt: string; // ISO string
+  activeMinutes: number; // study/usage minutes (needs 60 min to unlock reward)
+  isCompleted: boolean; // reached 60 minutes study time -> counted in milestones
+  lastActiveAt: string; // ISO string of last app usage
+  isDead: boolean; // inactive for > 7 days
+  totalCreditsSpent?: number; // total credits this friend spent
+  commissionEarned?: number; // royalty earned by referrer
+}
+
+export interface ReferralCommissionLog {
+  id: string;
+  friendId: string;
+  friendName: string;
+  creditsSpent: number;
+  ratePercent: number; // e.g. 0.01% - 0.15%
+  earnedCredits: number;
+  date: string;
+}
+
+export interface ReferralMilestone {
+  target: number; // 1, 3, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000
+  title: string;
+  rewardDescription: string;
+  rewardType: 'CURRENCY' | 'SUBSCRIPTION';
+  credits?: number;
+  diamonds?: number;
+  subTier?: 'WEEKLY' | 'MONTHLY' | '3_MONTHLY' | 'YEARLY' | 'CUSTOM';
+  subLevel?: 'BASIC' | 'ULTRA';
+  subDurationDays?: number;
+  badgeLabel?: string;
+}
+
 export interface ActiveSubscription {
   id: string;
   tier: 'WEEKLY' | 'MONTHLY' | '3_MONTHLY' | 'YEARLY' | 'LIFETIME' | 'CUSTOM';
@@ -279,6 +322,16 @@ export interface CreditSubDiscountEvent {
   enabled: boolean;
   eventName: string; // e.g., "Credits Mega Dhamaka", "Coin Store Flash Sale"
   discountPercent: number; // e.g. 20, 30, 50%
+  startsAt?: string; // ISO Date for countdown / auto-start
+  endsAt?: string; // ISO Date for sale duration
+  showToFreeUsers?: boolean;
+  showToPremiumUsers?: boolean;
+}
+
+export interface DiamondSubDiscountEvent {
+  enabled: boolean;
+  eventName: string; // e.g., "Diamond Pass Mega Sale", "Diamond Store Flash Sale"
+  discountPercent: number; // e.g. 10, 20, 30%
   startsAt?: string; // ISO Date for countdown / auto-start
   endsAt?: string; // ISO Date for sale duration
   showToFreeUsers?: boolean;
@@ -384,8 +437,6 @@ export interface DiamondSubscriptionPlan {
   durationDays: number;
   totalDiamonds: number;
   badge?: string;
-  planType?: 'WEEKLY' | 'MONTHLY';
-  ratePerDiamond?: number;
 }
 
 export interface SubscriptionPlan {
@@ -691,7 +742,10 @@ export interface AppNotification {
   expiresAt?: string; // ISO date — auto-hidden after this time (e.g. 7 days for content alerts)
 }
 
+import { TierFeature } from './utils/tierConfig';
+
 export interface SystemSettings {
+  tierFeatures?: TierFeature[];
   cardBorderAnimation?: boolean; // When true or undefined, rotating border animation on cards is active
   notifications?: AppNotification[];
   broadcastRedeemCodes?: BroadcastRedeemCode[];
@@ -1244,6 +1298,7 @@ export interface SystemSettings {
     showToPremiumUsers?: boolean;
   };
   creditSubDiscountEvent?: CreditSubDiscountEvent; // Discount event for credit store subscriptions
+  diamondSubDiscountEvent?: DiamondSubDiscountEvent; // Discount event for diamond pass subscriptions
   
   // NEW: App Modes (Global Control)
   appMode?: {
