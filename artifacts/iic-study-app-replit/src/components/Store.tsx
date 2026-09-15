@@ -37,7 +37,6 @@ import {
   canClaimDailyDiamonds,
 } from '../utils/diamondUtils';
 
-
 interface Props {
   user: User;
   settings?: SystemSettings;
@@ -100,7 +99,7 @@ const CREDIT_SUB_DURATIONS_LIST = [
   { id: '1_YEAR',  label: '1Y', durationDays: 365, months: 12 },
 ];
 
-const DIAMOND_SUB_DURATIONS_LIST = [
+const DEFAULT_DIAMOND_SUB_DURATIONS_LIST = [
   { id: '7_DAYS', label: '7D', days: 7, ratePerDiamond: 1.80 },
   { id: '30_DAYS', label: '1M', days: 30, ratePerDiamond: 1.50 },
   { id: '90_DAYS', label: '3M', days: 90, ratePerDiamond: 1.30 },
@@ -108,7 +107,7 @@ const DIAMOND_SUB_DURATIONS_LIST = [
   { id: '365_DAYS', label: '1Y', days: 365, ratePerDiamond: 1.00 },
 ];
 
-const diamondUnifiedTemplates = [
+const DEFAULT_diamondUnifiedTemplates = [
   {
     id: 'starter_diamond',
     name: 'Starter Diamond Pass',
@@ -379,9 +378,132 @@ function TierDailyClaimCard({
   );
 }
 
+
+
+const compareData = [
+  { category: 'Account & Limits', items: [
+    { label: 'Leaderboard Unlock', free: 'Level 2 Unlock', basic: 'Instant (Level 1)', ultra: 'Instant (Level 1)' },
+    { label: 'Daily MCQ Limit', free: '300 / day', basic: '1,500 / day', ultra: '3,000 / day' },
+    { label: 'Daily XP Cap', free: '1,500 XP', basic: '2,500 XP', ultra: '3,500 XP' },
+    { label: 'XP Multiplier', free: '1.0x', basic: '1.5x', ultra: '2.0x' },
+    { label: 'Store Discount (Credits)', free: '0%', basic: '5%', ultra: '10%' },
+    { label: 'Daily Store Rewards', free: '—', basic: '50 Credits / day', ultra: '5 Diamonds / day' },
+    { label: 'Profile Name Change', free: '100 🪙 or 20 💎', basic: '100 🪙 or 20 💎', ultra: '100 🪙 or 20 💎' },
+  ]},
+  { category: 'Study Content & Modes', items: [
+    { label: 'PDF Notes / Material', free: '5 💎', basic: '✅ Free Included', ultra: '✅ Free Included' },
+    { label: 'Flashcard & Video', free: '5 💎', basic: '5 💎', ultra: '✅ Free / Unlocked' },
+    { label: 'Study Modes (Read/Write/etc)', free: '20 🪙 or 5 💎', basic: '20 🪙 or 5 💎', ultra: '20 🪙 or 5 💎' },
+    { label: 'MCQ Full Analysis', free: '20 🪙 or 5 💎', basic: '20 🪙 or 5 💎', ultra: '20 🪙 or 5 💎' },
+    { label: 'MCQ Marksheet & Solution', free: '✅ Free', basic: '✅ Free', ultra: '✅ Free' },
+    { label: 'Editor / Study Utilities', free: '❌ Locked', basic: '✅ Enabled', ultra: '✅ Enabled' },
+    { label: 'Revision Hub', free: '100 🪙 or 20 💎', basic: '100 🪙 or 20 💎', ultra: '100 🪙 or 20 💎' },
+  ]},
+  { category: 'Routine Engine', items: [
+    { label: 'Routine Default Slots', free: '2 Slots', basic: '3 Slots', ultra: '4 Slots' },
+    { label: 'Routine Books Selection', free: 'Lucent Only', basic: 'Lucent Only', ultra: 'Multiple Books Allowed' },
+    { label: 'Routine Penalty (Inactive)', free: 'Credits Rate Reduced', basic: 'No Penalty', ultra: 'No Penalty' },
+    { label: 'Routine Progression Slots', free: '+1 (Lvl 5), +1 (Lvl 8)', basic: '+1 (Lvl 5), +1 (Lvl 8)', ultra: '+1 (Lvl 5), +1 (Lvl 8)' },
+    { label: 'Routine Paid Slot', free: '100 🪙 / slot', basic: '100 🪙 / slot', ultra: '100 🪙 / slot' },
+  ]},
+  { category: 'Community & Chat', items: [
+    { label: 'Global Chat', free: 'View & Like Only', basic: 'View & Like Only', ultra: '✅ Send Messages Allowed' },
+    { label: 'MCQ Sharing', free: 'Solve Only', basic: '✅ Post MCQs Allowed', ultra: '✅ Post MCQs Allowed' },
+    { label: 'Admin Support', free: '10 🪙 or 5 💎 / msg', basic: '✅ Free', ultra: '✅ Free' },
+    { label: 'Messenger Friend Limit', free: '10 Friends', basic: '30 Friends', ultra: '60 Friends' },
+    { label: 'Messenger Expansion', free: 'Up to 50 max', basic: 'Up to 50+', ultra: 'Unlimited' },
+    { label: 'Daily Message Limit', free: '50 / day', basic: '100 / day', ultra: '300 / day' },
+    { label: 'Message Limit Extension', free: '+50 first, +100 next', basic: '+100 per upgrade', ultra: '+100 per upgrade' },
+    { label: 'Chat Security & Actions', free: '✅ Free', basic: '✅ Free', ultra: '✅ Free' },
+  ]},
+  { category: 'Customization & Themes', items: [
+    { label: 'Theme Studio Access', free: 'Level 3 Unlock', basic: '✅ Instant Unlock', ultra: '✅ Instant Unlock' },
+    { label: 'Score History', free: 'Level 3 Unlock', basic: '✅ Instant Access', ultra: '✅ Instant Access' },
+    { label: 'Theme Library Packs', free: 'Free themes only', basic: 'Basic themes free', ultra: 'Ultra themes free' },
+    { label: 'Theme Pricing (Rental)', free: '1D: 10🪙, 7D: 50🪙, 30D: 100🪙', basic: '1D: 10🪙, 7D: 50🪙, 30D: 100🪙', ultra: '1D: 10🪙, 7D: 50🪙, 30D: 100🪙' },
+  ]}
+];
+
+const CompareMatrix = () => {
+  return (
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="rounded-3xl p-5 border border-sky-400/20 bg-sky-950/20 shadow-xl overflow-hidden relative">
+        <div className="absolute -top-10 -right-10 w-32 h-32 bg-sky-500/10 rounded-full blur-2xl pointer-events-none" />
+        
+        <div className="text-center mb-6">
+          <span className="inline-block px-3 py-1 rounded-full bg-sky-500/20 text-sky-400 text-[10px] font-black uppercase tracking-widest mb-2 border border-sky-400/20">Full Transparency</span>
+          <h2 className="text-xl font-black text-white">Feature Comparison Matrix</h2>
+          <p className="text-xs text-slate-400 mt-1">See exactly what you get across Free, Basic, and Ultra tiers</p>
+        </div>
+
+        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-sky-500/30 scrollbar-track-transparent">
+          <table className="w-full text-left min-w-[700px] border-collapse">
+            <thead>
+              <tr>
+                <th className="p-3 border-b-2 border-white/10 text-xs font-black text-slate-300 w-[28%]">Feature / Module</th>
+                <th className="p-3 border-b-2 border-slate-700 text-center w-[24%] bg-slate-900/40 rounded-tl-xl border-l border-t border-slate-700/50">
+                  <div className="text-[10px] uppercase text-slate-400 font-bold">Standard</div>
+                  <div className="text-sm font-black text-slate-200 mt-0.5">Free User</div>
+                </th>
+                <th className="p-3 border-b-2 border-sky-500/40 text-center w-[24%] bg-sky-900/20 border-l border-t border-sky-500/20">
+                  <div className="text-[10px] uppercase text-sky-400 font-bold flex justify-center gap-1"><span>⭐</span> Pro</div>
+                  <div className="text-sm font-black text-sky-300 mt-0.5">Basic User</div>
+                </th>
+                <th className="p-3 border-b-2 border-purple-500/50 text-center w-[24%] bg-purple-900/30 rounded-tr-xl border-l border-t border-r border-purple-500/30">
+                  <div className="text-[10px] uppercase text-purple-300 font-bold flex justify-center gap-1"><span>👑</span> Max</div>
+                  <div className="text-sm font-black text-purple-200 mt-0.5">Ultra User</div>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {compareData.map((group, gIdx) => (
+                <React.Fragment key={gIdx}>
+                  {/* Category Header */}
+                  <tr>
+                    <td colSpan={4} className="py-4 px-2 pt-6">
+                      <div className="flex items-center gap-2">
+                        <div className="h-px bg-slate-700 flex-1" />
+                        <span className="text-xs font-black text-slate-400 uppercase tracking-widest">{group.category}</span>
+                        <div className="h-px bg-slate-700 flex-1" />
+                      </div>
+                    </td>
+                  </tr>
+                  
+                  {/* Items */}
+                  {group.items.map((item, iIdx) => (
+                    <tr key={iIdx} className="group hover:bg-white/[0.02] transition-colors">
+                      <td className="p-3 border-b border-white/5 text-xs text-slate-300 font-medium group-hover:text-white transition-colors">{item.label}</td>
+                      
+                      {/* Free Col */}
+                      <td className="p-3 border-b border-l border-white/5 text-center text-xs text-slate-400 bg-slate-900/20">
+                        <span className={item.free.includes('❌') ? 'text-rose-400/80' : item.free.includes('✅') ? 'text-emerald-400/80 font-bold' : ''}>{item.free}</span>
+                      </td>
+                      
+                      {/* Basic Col */}
+                      <td className="p-3 border-b border-l border-sky-500/10 text-center text-xs text-sky-200/80 bg-sky-900/10 group-hover:bg-sky-900/20 transition-colors">
+                        <span className={item.basic.includes('❌') ? 'text-rose-400' : item.basic.includes('✅') ? 'text-emerald-400 font-bold' : ''}>{item.basic}</span>
+                      </td>
+                      
+                      {/* Ultra Col */}
+                      <td className="p-3 border-b border-l border-r border-purple-500/20 text-center text-xs text-purple-200/90 bg-purple-900/20 group-hover:bg-purple-900/30 transition-colors">
+                        <span className={item.ultra.includes('❌') ? 'text-rose-400' : item.ultra.includes('✅') ? 'text-emerald-400 font-bold' : item.ultra.includes('Unlimited') || item.ultra.includes('Instant') ? 'text-amber-300 font-bold' : ''}>{item.ultra}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 /* ─── Main Store Screen Component ─── */
+
 export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, initialTier }) => {
-  const [tierType, setTierType] = useState<'SUBSCRIPTION' | 'CREDITS' | 'DIAMONDS' | 'EXCHANGE' | 'HISTORY'>(() =>
+  const [tierType, setTierType] = useState<'SUBSCRIPTION' | 'COMPARE' | 'CREDITS' | 'DIAMONDS' | 'EXCHANGE' | 'HISTORY'>(() =>
     initialTier || 'SUBSCRIPTION'
   );
 
@@ -389,8 +511,18 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     if (initialTier) setTierType(initialTier);
   }, [initialTier]);
 
-  /* Feature Matrix Modal State */
-  const [showFeatureMatrix, setShowFeatureMatrix] = useState(false);
+  /* Free Plan Side-by-Side Ad Modal State */
+  
+
+  const DIAMOND_SUB_DURATIONS_LIST = settings?.diamondDurations && settings.diamondDurations.length > 0 
+    ? settings.diamondDurations 
+    : DEFAULT_DIAMOND_SUB_DURATIONS_LIST;
+
+  const diamondUnifiedTemplates = settings?.diamondTemplates && settings.diamondTemplates.length > 0 
+    ? settings.diamondTemplates 
+    : DEFAULT_diamondUnifiedTemplates;
+
+
 
   /* Diamond State */
   const [diamondSubTab, setDiamondSubTab] = useState<'PACKS' | 'SUBSCRIPTION'>('SUBSCRIPTION');
@@ -441,25 +573,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
     (user.storeDiscount && user.storeDiscount > 0 && scoreTier.level <= 4 && totalScore >= 100)
       ? user.storeDiscount : 0;
 
-  const [visitCount, setVisitCount] = useState<number>(0);
-  const visitDiscountRules = settings?.storeVisitDiscountRules || [];
-  const visitDiscountEnabled = !!(settings?.storeVisitDiscountEnabled && visitDiscountRules.length > 0);
-  const userSubTier: 'FREE' | 'BASIC' | 'ULTRA' =
-    (user as any).subscriptionLevel === 'ULTRA' ? 'ULTRA'
-    : (user as any).subscriptionLevel === 'BASIC' ? 'BASIC' : 'FREE';
-  const eligibleTiers: ('FREE' | 'BASIC' | 'ULTRA')[] = settings?.storeVisitDiscountTiers || ['FREE'];
-  const isEligibleForVisitDiscount = visitDiscountEnabled && eligibleTiers.includes(userSubTier);
-  const visitDiscount = isEligibleForVisitDiscount
-    ? (visitDiscountRules.filter(r => visitCount >= r.visits).sort((a, b) => b.discountPercent - a.discountPercent)[0]?.discountPercent || 0)
-    : 0;
-
-  useEffect(() => {
-    if (!visitDiscountEnabled) return;
-    const key = `store_visit_total_${user.id}`;
-    const prev = parseInt(localStorage.getItem(key) || '0', 10);
-    localStorage.setItem(key, String(prev + 1));
-    setVisitCount(prev + 1);
-  }, [user.id, visitDiscountEnabled]);
+  // Store visit discount removed
 
   useEffect(() => {
     if (subscriptionPlans.length > 0) {
@@ -633,6 +747,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
 
   const allTabs = [
     { id: 'SUBSCRIPTION' as const, label: 'VIP Plans',    emoji: '👑', color: '#c084fc', bg: 'rgba(192,132,252,0.16)', border: 'rgba(192,132,252,0.35)', glow: 'rgba(192,132,252,0.25)' },
+    { id: 'COMPARE'      as const, label: 'Compare',      emoji: '⚖️', color: '#38bdf8', bg: 'rgba(56,189,248,0.16)', border: 'rgba(56,189,248,0.35)', glow: 'rgba(56,189,248,0.25)' },
     { id: 'CREDITS'      as const, label: 'Credits',      emoji: '🪙', color: C.gold,   bg: C.goldBg,                  border: C.goldBorder,            glow: 'rgba(251,191,36,0.22)' },
     { id: 'DIAMONDS'     as const, label: 'Diamonds',     emoji: '💎', color: C.diamond,bg: C.diamondBg,               border: C.diamondBorder,         glow: C.diamondGlow },
     { id: 'EXCHANGE'     as const, label: 'Exchange',     emoji: '🔄', color: '#10b981',bg: 'rgba(16,185,129,0.14)', border: 'rgba(16,185,129,0.35)',glow: 'rgba(16,185,129,0.20)' },
@@ -644,7 +759,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   const subDiscount = isSubscribed ? (isUltraUser ? 10 : 5) : 0;
   const userBonusDiscount = (activeStoreDiscount > 0 ? activeStoreDiscount : 0) +
     (scoreDiscount > 0 ? scoreDiscount : 0) +
-    (visitDiscount > 0 ? visitDiscount : 0);
+    0;
   const baseAccountDiscount = subDiscount + userBonusDiscount;
   
   // 👑 VIP Plans Special Discount Event (Pro & Max)
@@ -787,31 +902,37 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   };
 
   const defaultBasicFeatures = [
-    'Daily Limit: 2500 / Day',
-    'XP Multiplier: 1.5X',
-    'Ad Discount: 10%',
-    'Store Discount: 10%',
-    'Daily Claim: 5 Diamond',
-    'Basic Theme Included',
-    'Writing & Correction Mode (Basic)',
-    'Text & Style Color',
-    'Offline Download',
-    'Full Analysis',
-    'Revision Hub: Unlock',
+    ...(!isGroupStudyHidden ? ['Group Study: Join Live Rooms & Battles'] : []),
+    'Daily Claim: 50 Credits / Day',
+    'Daily XP Limit: +66%',
+    'XP Multiplier: 1.5X Boost',
+    'Credit Off Anywhere: 10%',
+    'Store Discount: +5%',
+    'Projector & PDF Mode',
+    'Writing & Correction Mode',
+    'Text Color & Fonts Custom',
+    'All Basic Themes Free',
+    'Offline Download Available',
+    'Detailed Score History',
+    'Community MCQ Submission',
   ];
 
   const defaultUltraFeatures = [
-    'Daily Limit: 3500 / Day',
-    'XP Multiplier: 2.0X',
-    'Ad Discount: 20%',
-    'Store Discount: 10%',
-    'Daily Claim: 5 Diamond',
-    'Ultra Theme Included',
-    'Writing & Correction Mode (Ultra)',
-    'Global Message in Community',
-    'Revision multiple Books compilation',
-    'Flashcard Mode',
-    'PDF & Video Free',
+    ...(!isGroupStudyHidden ? ['👑 Group Study Pro: Host Live Classroom & Battles'] : []),
+    'Daily Claim: 5 Diamonds / Day 💎',
+    'All Basic Features Included',
+    '⚡ Ultra Mode (Reading Notes)',
+    'Store Discount: +10% (Pro & Max)',
+    'Daily XP Limit: +133%',
+    'XP Multiplier: 2.0X Super Boost',
+    'Credit Off Anywhere: 20%',
+    'Global Student Chat',
+    'All Ultra Themes Free',
+    'Priority Content Requests',
+    'Flashcard Memory Mode',
+    'Concept Video Mode',
+    '3,000 MCQ / Day Limit',
+    'VIP Golden Crown & Glow',
   ];
 
   const pageTheme = tierType === 'SUBSCRIPTION' ? {
@@ -902,7 +1023,64 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
   return (
     <div className="min-h-[100dvh] pb-32 animate-in fade-in duration-300" style={{ background: pageTheme.bg, backgroundImage: pageTheme.bgGrad }}>
 
-      {/* ── SIDE-BY-SIDE MODAL: ALL 14-15 FEATURES COMPARE ── */}
+      {/* ── SUPPORT / WHATSAPP CHECKOUT MODAL ── */}
+      {showSupportModal && (
+        <>
+          <div className="fixed inset-0 z-[200] bg-black/75 backdrop-blur-sm" onClick={() => setShowSupportModal(false)} />
+          <div className="fixed inset-0 z-[201] flex items-end justify-center p-4 pointer-events-none">
+            <div className="pointer-events-auto rounded-3xl w-full max-w-lg overflow-hidden animate-in slide-in-from-bottom-4 duration-300"
+              style={{ background: C.surface, border: `1px solid ${C.borderMed}` }}>
+              <div className="px-5 pt-5 pb-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${C.border}` }}>
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: ac.bg, border: `1px solid ${ac.border}` }}>
+                    <MessageSquare size={19} color={ac.color} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-base" style={{ color: C.text }}>Payment Channel</h3>
+                    <p className="text-[11px]" style={{ color: C.textMuted }}>Ek number select karo</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowSupportModal(false)}
+                  className="w-9 h-9 rounded-full flex items-center justify-center cursor-pointer"
+                  style={{ background: C.surfaceHigh }}>
+                  <X size={14} color={C.textMuted} />
+                </button>
+              </div>
+              <div className="px-4 py-3 space-y-2">
+                {(settings?.paymentNumbers || [{ id: 'def', name: 'Main Support', number: '8227070298', dailyClicks: 0 }]).map((num) => {
+                  const totalClicks = settings?.paymentNumbers?.reduce((acc, curr) => acc + (curr.dailyClicks || 0), 0) || 1;
+                  const traffic = Math.round(((num.dailyClicks || 0) / totalClicks) * 100);
+                  const isFast = traffic < 30;
+                  return (
+                    <button key={num.id} onClick={() => handleSupportClick(num)}
+                      className="w-full p-4 rounded-2xl flex items-center justify-between transition-all active:scale-[0.98] cursor-pointer"
+                      style={{ background: C.surfaceHigh, border: `1px solid ${C.border}` }}>
+                      <div className="flex items-center gap-3">
+                        <div className="w-11 h-11 rounded-xl flex items-center justify-center font-black text-sm"
+                          style={{ background: isFast ? C.greenBg : 'rgba(251,146,60,0.12)', color: isFast ? C.green : '#fb923c' }}>
+                          {num.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="text-left">
+                          <p className="font-bold text-sm" style={{ color: C.text }}>{num.name}</p>
+                          <p className="text-[10px]" style={{ color: C.textMuted }}>{isFast ? '✅ Fast Response' : '⚠️ High Traffic'}</p>
+                        </div>
+                      </div>
+                      <ChevronRight size={15} color={C.textDim} />
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="px-4 pb-5">
+                <button onClick={() => setShowSupportModal(false)}
+                  className="w-full py-3.5 rounded-2xl text-sm font-bold transition-colors cursor-pointer"
+                  style={{ color: C.textMuted, background: C.surfaceHigh }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── PAYMENT CHOOSER POPUP ── */}
       {showPaymentChooser && selectedPlan && (() => {
@@ -1134,21 +1312,6 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
           {/* Bottom Row: Tabs (Free vs VIP at the very beginning) */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-hide">
             
-            {/* 1. FEATURES LIST BUTTON (START MEIN) */}
-            <button
-              onClick={() => setShowFeatureMatrix(true)}
-              className="py-1 px-2.5 rounded-xl flex items-center gap-1 shrink-0 active:scale-95 transition-all cursor-pointer font-black text-xs"
-              style={{
-                background: 'linear-gradient(135deg, rgba(56,189,248,0.18), rgba(192,132,252,0.18))',
-                border: '1.5px solid rgba(56,189,248,0.45)',
-                boxShadow: '0 0 10px rgba(56,189,248,0.15)',
-              }}
-              title="Compare All Plans"
-            >
-              <span className="text-xs">🎯</span>
-              <span className="text-[10px] text-sky-300">Feature List</span>
-            </button>
-
             {/* 2. MAIN TABS (VIP Plans, Credits, Diamonds, Exchange) */}
             {allTabs.map(tab => {
               const isActive = tierType === tab.id;
@@ -1182,6 +1345,10 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
 
         {/* ── 1. HISTORY TAB ── */}
         {tierType === 'HISTORY' && <SubHistory user={user} onBack={() => setTierType('SUBSCRIPTION')} />}
+
+        
+        {/* ── COMPARE MATRIX ── */}
+        {tierType === 'COMPARE' && <CompareMatrix />}
 
         {/* ── 2. VIP SUBSCRIPTIONS (CLEAN PRO & MAX PASS CARDS) ── */}
         {tierType === 'SUBSCRIPTION' && (
@@ -1432,12 +1599,7 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
         {tierType === 'CREDITS' && (() => {
           const rawCreditSubPlans = getCreditSubPlans(settings).filter(p => p.isActive !== false);
           
-          const creditSubPlans = rawCreditSubPlans.length > 0 ? rawCreditSubPlans : [
-            { id: 'starter_credit_pass', name: 'Starter Credit Pass', badge: 'STARTER PASS', dailyCredits: 50,  scoreMultiplier: 1.1, weeklyPrice: 40,  price: 150 },
-            { id: 'smart_credit_pass',   name: 'Smart Credit Pass',   badge: 'POPULAR PASS', dailyCredits: 100, scoreMultiplier: 1.2, weeklyPrice: 70,  price: 260 },
-            { id: 'super_credit_pass',   name: 'Super Credit Pass',   badge: 'VALUE PASS',   dailyCredits: 150, scoreMultiplier: 1.3, weeklyPrice: 100, price: 380 },
-            { id: 'mega_credit_pass',    name: 'Mega Credit Pass',    badge: 'MEGA PACK',    dailyCredits: 250, scoreMultiplier: 1.5, weeklyPrice: 150, price: 550 },
-          ];
+          const creditSubPlans = rawCreditSubPlans;
 
           const calculateCustomCreditPrice = (plan: any, durOpt: any, durDisc: number) => {
             let basePrice = 0;
@@ -2205,8 +2367,16 @@ export const Store: React.FC<Props> = ({ user, settings, onUserUpdate, onBack, i
                     return;
                   }
                   const res = exchangeDiamondsForCredits(user, exchangeDiamondsCount);
-                  if (res && await saveUserToLive(res.updatedUser)) {
+                  if (res) {
                     onUserUpdate(res.updatedUser);
+                    try {
+                      localStorage.setItem("nst_current_user", JSON.stringify(res.updatedUser));
+                      if (res.updatedUser?.id) {
+                        localStorage.setItem(`nst_user_profile_${res.updatedUser.id}`, JSON.stringify(res.updatedUser));
+                        localStorage.setItem("nst_user_profile", JSON.stringify(res.updatedUser));
+                      }
+                    } catch (_) {}
+                    saveUserToLive(res.updatedUser, { immediate: true });
                     setExchangeMsg(`✅ Badhai! +${res.creditsEarned} 🪙 Credits mil gaye!`);
                     setTimeout(() => setExchangeMsg(null), 5000);
                   }

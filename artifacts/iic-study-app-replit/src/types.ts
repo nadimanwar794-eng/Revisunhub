@@ -42,6 +42,7 @@ export interface ExternalApp {
   icon?: string; // Optional icon name or url
   isLocked: boolean;
   creditCost: number;
+  diamondCost?: number; // Optional one-time unlock cost in diamonds
 }
 
 // NEW: Download App for the in-app App Store page
@@ -390,6 +391,7 @@ export interface CreditSubscriptionPlan {
   description?: string;
   isActive?: boolean;
   scoreMultiplier?: number; // XP Multiplier: Starter (1.1x), Smart (1.2x), Super (1.3x), Mega (1.5x)
+  weeklyPrice?: number; // Price for 7 days
 }
 
 export interface UserCreditSubscription {
@@ -742,10 +744,7 @@ export interface AppNotification {
   expiresAt?: string; // ISO date — auto-hidden after this time (e.g. 7 days for content alerts)
 }
 
-import { TierFeature } from './utils/tierConfig';
-
 export interface SystemSettings {
-  tierFeatures?: TierFeature[];
   cardBorderAnimation?: boolean; // When true or undefined, rotating border animation on cards is active
   notifications?: AppNotification[];
   broadcastRedeemCodes?: BroadcastRedeemCode[];
@@ -1071,6 +1070,19 @@ export interface SystemSettings {
   packages?: CreditPackage[];
   subscriptionPlans?: SubscriptionPlan[];
   creditSubscriptionPlans?: CreditSubscriptionPlan[]; // Daily Credit Subscription Plans managed by Admin
+  diamondTemplates?: {
+    id: string;
+    name: string;
+    icon: string;
+    dailyDiamonds: number;
+    features: string[];
+  }[];
+  diamondDurations?: {
+    id: string;
+    label: string;
+    days: number;
+    ratePerDiamond: number;
+  }[];
   startupAd?: StartupConfig;
   // NEW: 3-Tier Popup Control (Free vs Ultra)
   appFeatures?: AppFeature[];
