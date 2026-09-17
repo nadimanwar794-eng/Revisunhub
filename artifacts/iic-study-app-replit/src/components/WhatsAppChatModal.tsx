@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X,
   Search,
@@ -47,6 +47,8 @@ import {
   Copy,
   Bookmark,
   BookmarkCheck,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { User } from '../types';
 import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
@@ -107,10 +109,23 @@ import {
   verifyChatPin,
   setChatPin,
   getChatPin,
+  hasChatPin,
+  getDefaultChatPin,
+  setDefaultChatPin,
+  hasDefaultChatPin,
+  getSpecialChatPin,
+  setSpecialChatPin,
+  removeSpecialChatPin,
+  hasSpecialChatPin,
+  verifyChatPinForContext,
+  subscribeToAllPresence,
   isSameUser,
   isMessageDeletedForUser,
   updateGroupPrivacy,
   joinPrivateGroupByPassword,
+  getLocalSentFriendRequests,
+  getLocalFriends,
+  getLocalFriendRequests,
 } from '../services/whatsappChatService';
 
 // Block limit tiers: Free user -> 10, Basic -> 20, Ultra -> 30
@@ -224,7 +239,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     (initialTab as any) || (targetPeer ? 'CHATS' : 'CHATS')
   );
   const [requestsSubTab, setRequestsSubTab] = useState<'RECEIVED' | 'SENT' | 'FIND_FRIENDS'>('RECEIVED');
-  const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
+  const [sentRequests, setSentRequests] = useState<FriendRequest[]>(() =>
+    getLocalSentFriendRequests(user?.id || '')
+  );
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [selectedContact, setSelectedContact] = useState<ChatContact | null>(targetPeer || null);
   const [selectedGroup, setSelectedGroup] = useState<ChatGroup | null>(null);
@@ -256,6 +273,33 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       updateUserPresence(effectiveUserId, false);
     };
   }, [effectiveUserId]);
+
+  // Real-time global presence map from RTDB for accurate online status
+  const [presenceMap, setPresenceMap] = useState<Record<string, { isOnline: boolean; lastSeen: number }>>({});
+
+  useEffect(() => {
+    const unsub = subscribeToAllPresence((map) => {
+      setPresenceMap(map);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+
+  const isUserCurrentlyOnline = useCallback(
+    (contactId: string): boolean => {
+      if (!contactId) return false;
+      // Simulated/seeded directory contacts are not online in the live app
+      if (contactId.startsWith('student_') || contactId.startsWith('mock_')) return false;
+      const clean = sanitizeRtdbKey(contactId);
+      const p = presenceMap[contactId] || presenceMap[clean];
+      if (p) {
+        return !!p.isOnline && (Date.now() - (p.lastSeen || 0)) < 2 * 60 * 1000;
+      }
+      return false;
+    },
+    [presenceMap]
+  );
 
   // Real-time presence listener for the active contact (Online status & Last Seen updates)
   useEffect(() => {
@@ -346,9 +390,13 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [quickBlockSearch, setQuickBlockSearch] = useState('');
 
   // Lists
-  const [friends, setFriends] = useState<ChatContact[]>([]);
+  const [friends, setFriends] = useState<ChatContact[]>(() =>
+    getLocalFriends(user?.id || '')
+  );
   const [students, setStudents] = useState<ChatContact[]>([]);
-  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>(() =>
+    getLocalFriendRequests()
+  );
   const [groups, setGroups] = useState<ChatGroup[]>(getLocalGroups());
   const [newAcceptedFriend, setNewAcceptedFriend] = useState<ChatContact | null>(null);
 
@@ -404,6 +452,24 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   // Active chat messages & input
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  // Deduplicate repeat/consecutive system notifications (e.g., "Friend request accept ho gayi")
+  const displayMessages = React.useMemo(() => {
+    const seenSystemEvents = new Set<string>();
+    return messages.filter((msg) => {
+      if (msg.type === 'SYSTEM') {
+        const text = (msg.text || '').trim();
+        if (text.includes('Friend request accept ho gayi')) {
+          if (seenSystemEvents.has('SYSTEM_FRIEND_ACCEPTED')) return false;
+          seenSystemEvents.add('SYSTEM_FRIEND_ACCEPTED');
+        } else if (text.includes('friend request bheji hai')) {
+          if (seenSystemEvents.has('SYSTEM_FRIEND_REQUEST')) return false;
+          seenSystemEvents.add('SYSTEM_FRIEND_REQUEST');
+        }
+      }
+      return true;
+    });
+  }, [messages]);
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
@@ -497,14 +563,21 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [showPinModal, setShowPinModal] = useState<boolean>(false);
   const [pinInput, setPinInput] = useState<string>('');
   const [pinError, setPinError] = useState<string | null>(null);
+  const [showPinVisibility, setShowPinVisibility] = useState<boolean>(false);
   const [pendingUnlockContext, setPendingUnlockContext] = useState<{
     contact?: ChatContact;
     group?: ChatGroup;
     contextId: string;
   } | null>(null);
-  const [showChangePinModal, setShowChangePinModal] = useState<boolean>(false);
-  const [newPinInput, setNewPinInput] = useState<string>('');
-  const [newPinError, setNewPinError] = useState<string | null>(null);
+
+  // Settings Modal for Chat Passwords (Default & Special Password Management)
+  const [showPinSettingsModal, setShowPinSettingsModal] = useState<boolean>(false);
+  const [pinSettingsTab, setPinSettingsTab] = useState<'SPECIAL' | 'DEFAULT'>('SPECIAL');
+  const [specialPinInput, setSpecialPinInput] = useState<string>('');
+  const [specialPinError, setSpecialPinError] = useState<string | null>(null);
+  const [oldDefaultPinInput, setOldDefaultPinInput] = useState<string>('');
+  const [newDefaultPinInput, setNewDefaultPinInput] = useState<string>('');
+  const [defaultPinError, setDefaultPinError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -650,21 +723,50 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   };
 
   // Comprehensive list of all identity aliases for the current user (ID, UID, email, displayId, mobile)
-  const allMyUserIds = React.useMemo(() => {
+  const currentUid = auth?.currentUser?.uid || '';
+  const currentEmail = auth?.currentUser?.email || '';
+
+  const allMyUserIdsKey = React.useMemo(() => {
     const raw = [
       user?.id,
       (user as any)?.uid,
-      auth?.currentUser?.uid,
+      currentUid,
       user?.email,
-      auth?.currentUser?.email,
+      currentEmail,
       user?.displayId,
       (user as any)?.displayId,
       user?.mobile,
       (user as any)?.phone,
       effectiveUserId,
     ];
-    return Array.from(new Set(raw.filter(Boolean).map(String)));
-  }, [user, effectiveUserId]);
+    return Array.from(new Set(raw.filter(Boolean).map(String))).sort().join(',');
+  }, [
+    user?.id,
+    (user as any)?.uid,
+    currentUid,
+    user?.email,
+    currentEmail,
+    user?.displayId,
+    (user as any)?.displayId,
+    user?.mobile,
+    (user as any)?.phone,
+    effectiveUserId,
+  ]);
+
+  const allMyUserIds = React.useMemo(() => {
+    return allMyUserIdsKey ? allMyUserIdsKey.split(',') : [];
+  }, [allMyUserIdsKey]);
+
+  // Check if a message was authored by the current user across all user aliases
+  const isMsgSentByMe = (msg?: ChatMessage | null): boolean => {
+    if (!msg || !msg.senderId) return false;
+    // In 1-on-1 direct chat, if senderId matches the contact, it is strictly NOT sent by me!
+    if (selectedContact && isSameUser(msg.senderId, selectedContact.id)) {
+      return false;
+    }
+    if (isSameUser(msg.senderId, effectiveUserId) || isSameUser(msg.senderId, user?.id)) return true;
+    return allMyUserIds.some((id) => isSameUser(msg.senderId, id));
+  };
 
   // 1. Subscribe to confirmed friends
   useEffect(() => {
@@ -672,7 +774,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setFriends(list);
     }, allMyUserIds);
     return () => unsub();
-  }, [user.id, effectiveUserId, allMyUserIds]);
+  }, [user?.id, effectiveUserId, allMyUserIdsKey]);
 
   // 1b. Subscribe to blocked users
   useEffect(() => {
@@ -680,7 +782,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setBlockedUsers(list);
     });
     return () => unsub();
-  }, [user.id, effectiveUserId]);
+  }, [user?.id, effectiveUserId]);
 
   // 2. Subscribe to incoming friend requests (Zero-latency real-time sync across all aliases)
   useEffect(() => {
@@ -688,7 +790,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setFriendRequests(reqs);
     }, allMyUserIds);
     return () => unsub();
-  }, [user.id, effectiveUserId, allMyUserIds]);
+  }, [user?.id, effectiveUserId, allMyUserIdsKey]);
 
   // Subscribe to outgoing sent requests
   useEffect(() => {
@@ -696,7 +798,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setSentRequests(sent);
     }, allMyUserIds);
     return () => unsub();
-  }, [user.id, effectiveUserId, allMyUserIds]);
+  }, [user?.id, effectiveUserId, allMyUserIdsKey]);
+
+  // Redundant detection tracking refs
+  const prevFriendIdsRef = useRef<Set<string>>(new Set());
+  const isFriendsFirstMountRef = useRef<boolean>(true);
+  const notifiedFriendAcceptedIdsRef = useRef<Set<string>>(new Set());
 
   // Subscribe to Friend Request Accepted events (Real-time alert for the sender!)
   useEffect(() => {
@@ -705,6 +812,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       (event) => {
         if (!event?.friend) return;
         const acceptedFriend = event.friend;
+        if (notifiedFriendAcceptedIdsRef.current.has(acceptedFriend.id)) return;
+        notifiedFriendAcceptedIdsRef.current.add(acceptedFriend.id);
 
         // 1. Immediately update friends list in React state
         setFriends((prev) => {
@@ -729,12 +838,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       allMyUserIds
     );
     return () => unsub();
-  }, [user.id, effectiveUserId, allMyUserIds]);
+  }, [user?.id, effectiveUserId, allMyUserIdsKey]);
 
-  // Redundant detection: If a student we sent a request to is now in our friends list, notify immediately
-  const prevFriendIdsRef = useRef<Set<string>>(new Set());
-  const isFriendsFirstMountRef = useRef<boolean>(true);
-
+  // Redundant detection: If a student we sent a request to is now in our friends list, notify once
   useEffect(() => {
     if (friends.length === 0) return;
     const currentFriendIds = new Set(friends.map((f) => f.id));
@@ -746,7 +852,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     }
 
     friends.forEach((f) => {
-      if (!prevFriendIdsRef.current.has(f.id)) {
+      if (!prevFriendIdsRef.current.has(f.id) && !notifiedFriendAcceptedIdsRef.current.has(f.id)) {
+        notifiedFriendAcceptedIdsRef.current.add(f.id);
         const wasInSent = sentRequests.some((r) => isSameUser(r.toId, f.id));
         if (wasInSent) {
           setNewAcceptedFriend(f);
@@ -757,7 +864,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     });
 
     prevFriendIdsRef.current = currentFriendIds;
-  }, [friends, sentRequests]);
+  }, [friends]);
 
   // 3. Fetch all registered students from Firebase & seeds
   useEffect(() => {
@@ -894,11 +1001,37 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     }
   };
 
-  // Verify PIN / Password to unlock chat
+  // ── First time default password set handler ──
+  const handleSetInitialDefaultPin = () => {
+    const targetPin = pinInput.trim();
+    if (!targetPin) {
+      setPinError('Kripya apna default password ya PIN darj karein');
+      return;
+    }
+    setDefaultChatPin(targetPin, effectiveUserId || user.id);
+    if (pendingUnlockContext?.contextId) {
+      unlockChatInSession(pendingUnlockContext.contextId);
+      if (pendingUnlockContext.contact) {
+        setSelectedContact(pendingUnlockContext.contact);
+        setSelectedGroup(null);
+      } else if (pendingUnlockContext.group) {
+        setSelectedGroup(pendingUnlockContext.group);
+        setSelectedContact(null);
+      }
+      setPendingUnlockContext(null);
+    }
+    setShowPinModal(false);
+    setPinInput('');
+    setPinError(null);
+    showToast('🔒 Default Chat Password set ho gaya aur chat unlock ho gayi!');
+  };
+
+  // ── Verify PIN / Password to unlock chat ──
   const handleVerifyPin = () => {
-    if (verifyChatPin(pinInput)) {
-      if (pendingUnlockContext?.contextId) {
-        unlockChatInSession(pendingUnlockContext.contextId);
+    const contextId = pendingUnlockContext?.contextId || '';
+    if (verifyChatPinForContext(pinInput, contextId, effectiveUserId || user.id)) {
+      if (contextId) {
+        unlockChatInSession(contextId);
       }
       setShowPinModal(false);
       if (pendingUnlockContext?.contact) {
@@ -912,36 +1045,74 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setPinInput('');
       setPinError(null);
     } else {
-      setPinError('Galat Password! Sahi Password/PIN darj karein (Default: 1234)');
+      setPinError('Galat Password! Kripya sahi password darj karein.');
     }
   };
 
-  // Change Password/PIN handler - allows any name, numbers (1234), or mix
-  const handleChangePin = () => {
-    const trimmed = newPinInput.trim();
+  // ── Special chat password management (inside active chat) ──
+  const handleSaveSpecialPin = () => {
+    if (!activeChatContextId) return;
+    const trimmed = specialPinInput.trim();
     if (!trimmed) {
-      setNewPinError('Kripya naya password ya PIN darj karein');
+      setSpecialPinError('Kripya special password darj karein');
       return;
     }
-    setChatPin(trimmed);
-    setShowChangePinModal(false);
-    setNewPinInput('');
-    setNewPinError(null);
-    showToast('🔒 Chat Lock Password update ho gaya!');
+    setSpecialChatPin(activeChatContextId, trimmed, effectiveUserId || user.id);
+    setSpecialPinInput('');
+    setSpecialPinError(null);
+    setShowPinSettingsModal(false);
+    showToast('🔒 Is chat ke liye special password set ho gaya!');
   };
 
-  // Handle message deletion
+  const handleResetToDefaultPin = () => {
+    if (!activeChatContextId) return;
+    removeSpecialChatPin(activeChatContextId, effectiveUserId || user.id);
+    setSpecialPinInput('');
+    setSpecialPinError(null);
+    setShowPinSettingsModal(false);
+    showToast('🔄 Special password hata diya gaya. Ab yeh chat default password use karegi.');
+  };
+
+  const handleChangeDefaultPin = () => {
+    const oldTrimmed = oldDefaultPinInput.trim();
+    const newTrimmed = newDefaultPinInput.trim();
+    const currentDefault = getDefaultChatPin(effectiveUserId || user.id);
+
+    if (currentDefault && oldTrimmed !== currentDefault) {
+      setDefaultPinError('Purana (current) default password galat hai!');
+      return;
+    }
+    if (!newTrimmed) {
+      setDefaultPinError('Kripya naya default password darj karein');
+      return;
+    }
+    setDefaultChatPin(newTrimmed, effectiveUserId || user.id);
+    setOldDefaultPinInput('');
+    setNewDefaultPinInput('');
+    setDefaultPinError(null);
+    setShowPinSettingsModal(false);
+    showToast('🔒 Sabhi chats ke liye Default Password update ho gaya!');
+  };
+
+  // ── Handle single message deletion (Strict sender-only delete for everyone) ──
   const handleDeleteMessage = async (mode: 'FOR_ME' | 'FOR_EVERYONE') => {
     if (!deletingMessage || !activeChatContextId) return;
 
     const targetMsgId = deletingMessage.id;
+    const canDeleteEveryone =
+      isMsgSentByMe(deletingMessage) ||
+      (selectedGroup && isSameUser(selectedGroup.creatorId, effectiveUserId || user.id));
+
+    // Enforce: Only the author of the message (or group creator) can delete for everyone!
+    const effectiveMode = mode === 'FOR_EVERYONE' && !canDeleteEveryone ? 'FOR_ME' : mode;
+
     // 1. Immediately close the delete popup modal so it never lingers
     setDeletingMessage(null);
 
     // 2. Instantly remove message from UI state so it completely vanishes from screen
     setMessages((prev) => prev.filter((m) => m.id !== targetMsgId));
 
-    if (mode === 'FOR_ME') {
+    if (effectiveMode === 'FOR_ME') {
       showToast('🗑️ Message deleted for you');
     } else {
       showToast('🗑️ Message deleted for everyone');
@@ -952,15 +1123,25 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       !!selectedGroup,
       activeChatContextId,
       targetMsgId,
-      user.id,
-      mode
+      effectiveUserId || user.id,
+      effectiveMode,
+      deletingMessage.senderId
     );
   };
 
-  // Handle batch deletion of selected messages (Multi-select)
+  // ── Handle batch deletion of selected messages (Strict sender-only delete for everyone) ──
   const handleBatchDelete = async (mode: 'FOR_ME' | 'FOR_EVERYONE') => {
     if (selectedMsgIds.size === 0 || !activeChatContextId) return;
     const idsToDelete = Array.from(selectedMsgIds);
+    const selectedList = displayMessages.filter((m) => selectedMsgIds.has(m.id));
+
+    const isGroupCreator =
+      !!selectedGroup && isSameUser(selectedGroup.creatorId, effectiveUserId || user.id);
+    const allSentByMe = selectedList.length > 0 && selectedList.every((m) => isMsgSentByMe(m));
+    const canBatchDeleteEveryone = isGroupCreator || allSentByMe;
+
+    const effectiveBatchMode =
+      mode === 'FOR_EVERYONE' && !canBatchDeleteEveryone ? 'FOR_ME' : mode;
 
     // 1. Immediately close dialog & exit multi-select mode
     setShowBatchDeleteDialog(false);
@@ -970,23 +1151,27 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     // 2. Instantly remove selected messages from screen so they vanish
     setMessages((prev) => prev.filter((m) => !idsToDelete.includes(m.id)));
 
-    if (mode === 'FOR_ME') {
+    if (effectiveBatchMode === 'FOR_ME') {
       showToast(`🗑️ ${idsToDelete.length} message${idsToDelete.length > 1 ? 's' : ''} deleted for you`);
     } else {
       showToast(`🗑️ ${idsToDelete.length} message${idsToDelete.length > 1 ? 's' : ''} deleted for everyone`);
     }
 
     const promises = idsToDelete.map(async (msgId) => {
-      const targetMsg = messages.find((m) => m.id === msgId);
+      const targetMsg =
+        selectedList.find((m) => m.id === msgId) || messages.find((m) => m.id === msgId);
       if (!targetMsg) return;
-      if (mode === 'FOR_EVERYONE') {
-        const canDeleteEveryone =
-          isSameUser(targetMsg.senderId, effectiveUserId) || selectedGroup?.creatorId === user.id;
-        if (!canDeleteEveryone) {
-          return deleteChatMessage(!!selectedGroup, activeChatContextId, msgId, user.id, 'FOR_ME');
-        }
-      }
-      return deleteChatMessage(!!selectedGroup, activeChatContextId, msgId, user.id, mode);
+      const targetCanDeleteEveryone = isMsgSentByMe(targetMsg) || isGroupCreator;
+      const singleMode =
+        effectiveBatchMode === 'FOR_EVERYONE' && targetCanDeleteEveryone ? 'FOR_EVERYONE' : 'FOR_ME';
+      return deleteChatMessage(
+        !!selectedGroup,
+        activeChatContextId,
+        msgId,
+        effectiveUserId || user.id,
+        singleMode,
+        targetMsg.senderId
+      );
     });
 
     await Promise.all(promises);
@@ -1450,6 +1635,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       return [newFriendContact, ...prev];
     });
     setFriendRequests((prev) => prev.filter((r) => r.id !== req.id && !isSameUser(r.fromId, req.fromId)));
+    setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, req.fromId)));
 
     // 2. Instantly open chat with new friend
     handleOpenContactChat(newFriendContact);
@@ -1908,9 +2094,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       }
       if (findFriendClassFilter !== 'ALL') {
         if (findFriendClassFilter === 'ONLINE') {
-          if (!st.isOnline) return false;
+          if (!isUserCurrentlyOnline(st.id)) return false;
         } else if (findFriendClassFilter === 'OFFLINE') {
-          if (st.isOnline) return false;
+          if (isUserCurrentlyOnline(st.id)) return false;
         } else {
           const cl = (st.classLevel || '').toLowerCase();
           if (!cl.includes(findFriendClassFilter.toLowerCase())) {
@@ -1921,8 +2107,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       return true;
     });
 
-    const onlineCount = students.filter((s) => s.id !== user.id && s.isOnline).length;
-    const offlineCount = students.filter((s) => s.id !== user.id && !s.isOnline).length;
+    const onlineCount = students.filter((s) => !isSameUser(s.id, user.id) && !isSameUser(s.id, effectiveUserId) && isUserCurrentlyOnline(s.id)).length;
+    const offlineCount = students.filter((s) => !isSameUser(s.id, user.id) && !isSameUser(s.id, effectiveUserId) && !isUserCurrentlyOnline(s.id)).length;
     const ultraCount = students.filter((s) => s.id !== user.id && getStudentSubscriptionTier(s) === 'ULTRA').length;
     const basicCount = students.filter((s) => s.id !== user.id && getStudentSubscriptionTier(s) === 'BASIC').length;
     const freeCount = students.filter((s) => s.id !== user.id && getStudentSubscriptionTier(s) === 'FREE').length;
@@ -2089,7 +2275,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         </div>
                       </div>
                       {isUserFriend(student.id) ? (
-                        student.isOnline ? (
+                        isUserCurrentlyOnline(student.id) ? (
                           <div
                             className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full"
                             title="Online"
@@ -2143,7 +2329,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
                       <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                         {isUserFriend(student.id) ? (
-                          student.isOnline ? (
+                          isUserCurrentlyOnline(student.id) ? (
                             <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
                               <span>Online</span>
@@ -2339,12 +2525,16 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                       <button
                         onClick={() => {
                           setShowMainMenu(false);
-                          setShowChangePinModal(true);
+                          setPinSettingsTab('DEFAULT');
+                          setOldDefaultPinInput('');
+                          setNewDefaultPinInput('');
+                          setDefaultPinError(null);
+                          setShowPinSettingsModal(true);
                         }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 border-t border-slate-100 dark:border-slate-800"
+                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 border-t border-slate-100 dark:border-slate-800 cursor-pointer"
                       >
                         <Lock size={15} className="text-amber-500" />
-                        <span>Chat PIN Lock</span>
+                        <span>Default Chat Password</span>
                       </button>
                     </div>
                   )}
@@ -2477,17 +2667,17 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (selectedMsgIds.size === messages.length) {
+                  if (selectedMsgIds.size === displayMessages.length) {
                     setSelectedMsgIds(new Set());
                   } else {
-                    setSelectedMsgIds(new Set(messages.map((m) => m.id)));
+                    setSelectedMsgIds(new Set(displayMessages.map((m) => m.id)));
                   }
                 }}
                 className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
                 title="Select or Deselect All"
               >
                 <CheckCheck size={14} />
-                <span className="hidden sm:inline">{selectedMsgIds.size === messages.length ? 'Deselect All' : 'Select All'}</span>
+                <span className="hidden sm:inline">{selectedMsgIds.size === displayMessages.length ? 'Deselect All' : 'Select All'}</span>
               </button>
 
               {/* Copy Selected Messages */}
@@ -2590,7 +2780,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     {selectedGroup?.emoji || '👥'}
                   </div>
                 )}
-                {(selectedContact && isUserFriend(selectedContact.id) && selectedContact.isOnline) && (
+                {(selectedContact && isUserFriend(selectedContact.id) && isUserCurrentlyOnline(selectedContact.id)) && (
                   <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-slate-950" />
                 )}
               </div>
@@ -2629,7 +2819,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 </h3>
                 <p className="text-[11px] text-purple-200/80 truncate">
                   {selectedContact ? (
-                    selectedContact.isOnline ? (
+                    isUserCurrentlyOnline(selectedContact.id) ? (
                       <span className="text-emerald-400 font-semibold flex items-center gap-1">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
                         <span>Online</span>
@@ -2713,12 +2903,24 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                       <button
                         onClick={() => {
                           setShowContactMenu(false);
-                          setShowChangePinModal(true);
+                          setSpecialPinInput('');
+                          setSpecialPinError(null);
+                          setOldDefaultPinInput('');
+                          setNewDefaultPinInput('');
+                          setDefaultPinError(null);
+                          setShowPinSettingsModal(true);
                         }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
                       >
-                        <KeyRound size={14} className="text-slate-400" />
-                        <span>Set / Change Chat PIN</span>
+                        <div className="flex items-center gap-2">
+                          <KeyRound size={14} className="text-purple-500" />
+                          <span>Chat Password Settings</span>
+                        </div>
+                        {hasSpecialChatPin(selectedGroup.id, effectiveUserId || user.id) ? (
+                          <span className="text-[10px] bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 font-bold px-1.5 py-0.5 rounded">Special 🔒</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">Default 🔒</span>
+                        )}
                       </button>
                       <button
                         onClick={() => {
@@ -2801,12 +3003,24 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                       <button
                         onClick={() => {
                           setShowContactMenu(false);
-                          setShowChangePinModal(true);
+                          setSpecialPinInput('');
+                          setSpecialPinError(null);
+                          setOldDefaultPinInput('');
+                          setNewDefaultPinInput('');
+                          setDefaultPinError(null);
+                          setShowPinSettingsModal(true);
                         }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
+                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-between"
                       >
-                        <KeyRound size={14} className="text-slate-400" />
-                        <span>Set / Change Chat PIN</span>
+                        <div className="flex items-center gap-2">
+                          <KeyRound size={14} className="text-purple-500" />
+                          <span>Chat Password Settings</span>
+                        </div>
+                        {hasSpecialChatPin(getDirectConversationId(effectiveUserId || user.id, selectedContact.id), effectiveUserId || user.id) ? (
+                          <span className="text-[10px] bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 font-bold px-1.5 py-0.5 rounded">Special 🔒</span>
+                        ) : (
+                          <span className="text-[10px] text-slate-400">Default 🔒</span>
+                        )}
                       </button>
 
                       {/* Clear Chat */}
@@ -3044,7 +3258,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                                 )}
                               </div>
                             </div>
-                            {contact.isOnline && (
+                            {isUserCurrentlyOnline(contact.id) && (
                               <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-500 rounded-full border-2 border-white dark:border-slate-900" />
                             )}
                           </div>
@@ -3068,7 +3282,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                                 </span>
                               </h4>
                               <span className="text-[10px] text-slate-400 font-medium">
-                                {contact.isOnline ? (
+                                {isUserCurrentlyOnline(contact.id) ? (
                                   <span className="text-emerald-500 dark:text-emerald-400 font-semibold flex items-center gap-1">
                                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />
                                     Online
@@ -3958,8 +4172,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               </div>
 
               {/* Message List */}
-              {messages.map((msg) => {
-                const isMe = isSameUser(msg.senderId, effectiveUserId);
+              {displayMessages.map((msg) => {
+                const isMe = isMsgSentByMe(msg);
                 const isSelected = selectedMsgIds.has(msg.id);
                 const isSwipingThis = activeSwipeMsgId === msg.id;
                 const currentSwipe = isSwipingThis ? activeSwipeOffset : 0;
@@ -4151,6 +4365,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                           {msg.text?.includes('friend request bheji hai') &&
                             selectedContact &&
                             !isUserFriend(selectedContact.id) &&
+                            !messages.some((m) => (m.text || '').includes('Friend request accept ho gayi')) &&
                             !messages.some((m) => !isSameUser(m.senderId, effectiveUserId) && m.type !== 'SYSTEM') && (
                               <div className="mt-2 inline-flex flex-col items-center p-2.5 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 rounded-xl max-w-xs shadow-xs">
                                 <span className="text-[11px] font-semibold text-purple-900 dark:text-purple-200">
@@ -5533,15 +5748,19 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               </div>
 
               <div className="space-y-2 pt-1">
-                {/* Delete for everyone (Allowed if sender is current user or group creator) */}
-                {(isSameUser(deletingMessage.senderId, effectiveUserId) || selectedGroup?.creatorId === user.id) && (
+                {/* Delete for everyone (Allowed ONLY if sender is current user or group creator) */}
+                {(isMsgSentByMe(deletingMessage) || (selectedGroup && isSameUser(selectedGroup.creatorId, effectiveUserId || user.id))) ? (
                   <button
                     onClick={() => handleDeleteMessage('FOR_EVERYONE')}
-                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-2"
+                    className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Ban size={15} />
                     <span>Delete for Everyone (Sabke liye delete karein)</span>
                   </button>
+                ) : (
+                  <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900/60 text-[11px] text-amber-800 dark:text-amber-300 text-center leading-tight font-medium">
+                    🔒 Friend ka bheja hua message sirf aapke chat se delete ho sakta hai (Delete for Me). Delete for Everyone sirf bhejne wale ke paas hota hai.
+                  </div>
                 )}
 
                 {/* Delete for me */}
@@ -5580,44 +5799,46 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 </p>
               </div>
 
-              <div className="space-y-2 pt-1">
-                {/* Delete for everyone */}
-                <button
-                  onClick={() => handleBatchDelete('FOR_EVERYONE')}
-                  className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Ban size={15} />
-                  <span>Delete for Everyone</span>
-                </button>
+              {(() => {
+                const selectedBatchMessages = displayMessages.filter((m) => selectedMsgIds.has(m.id));
+                const isGroupCreator = !!selectedGroup && isSameUser(selectedGroup.creatorId, effectiveUserId || user.id);
+                const canBatchDeleteEveryone = isGroupCreator || (selectedBatchMessages.length > 0 && selectedBatchMessages.every((m) => isMsgSentByMe(m)));
 
-                {/* Delete for me */}
-                <button
-                  onClick={() => handleBatchDelete('FOR_ME')}
-                  className="w-full py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Trash2 size={15} />
-                  <span>Delete for Me ({selectedMsgIds.size})</span>
-                </button>
+                return (
+                  <div className="space-y-2 pt-1">
+                    {/* Delete for everyone */}
+                    {canBatchDeleteEveryone ? (
+                      <button
+                        onClick={() => handleBatchDelete('FOR_EVERYONE')}
+                        className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <Ban size={15} />
+                        <span>Delete for Everyone ({selectedMsgIds.size})</span>
+                      </button>
+                    ) : (
+                      <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-900/60 text-[11px] text-amber-800 dark:text-amber-300 text-center leading-tight font-medium">
+                        🔒 Selected messages me friend ke messages shamil hain. Aap unhe sirf apne liye delete kar sakte hain (Delete for Me).
+                      </div>
+                    )}
 
-                {/* Copy Selected Messages */}
-                <button
-                  onClick={() => {
-                    setShowBatchDeleteDialog(false);
-                    handleCopySelectedMessages();
-                  }}
-                  className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Copy size={15} />
-                  <span>Copy {selectedMsgIds.size} Selected Message{selectedMsgIds.size > 1 ? 's' : ''}</span>
-                </button>
+                    {/* Delete for me */}
+                    <button
+                      onClick={() => handleBatchDelete('FOR_ME')}
+                      className="w-full py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Trash2 size={15} />
+                      <span>Delete for Me ({selectedMsgIds.size})</span>
+                    </button>
 
-                <button
-                  onClick={() => setShowBatchDeleteDialog(false)}
-                  className="w-full py-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-xs font-semibold cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
+                    <button
+                      onClick={() => setShowBatchDeleteDialog(false)}
+                      className="w-full py-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-xs font-semibold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -5709,7 +5930,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           </div>
         )}
 
-        {/* ─── MODAL 3: CHAT LOCK PIN PROMPT (SNAPCHAT STYLE LOCKING) ─────── */}
+        {/* ─── MODAL 3: CHAT LOCK PIN PROMPT (1st-time Set or Unlock) ──────────── */}
         {showPinModal && (
           <div className="fixed inset-0 z-[380] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
             <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 text-center space-y-4 animate-in fade-in zoom-in-95">
@@ -5717,12 +5938,13 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 <Lock size={30} />
               </div>
               <div>
-                <h3 className="font-bold text-lg text-slate-900 dark:text-white">Chat Locked 🔒</h3>
+                <h3 className="font-bold text-lg text-slate-900 dark:text-white">
+                  {!hasDefaultChatPin(effectiveUserId || user.id) ? 'Naya Password Set Karein 🔒' : 'Chat Locked 🔒'}
+                </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Yeh chat password se protected hai. Kholne ke liye password darj karein:
-                </p>
-                <p className="text-[11px] text-purple-600 font-semibold mt-0.5">
-                  (Default: 1234)
+                  {!hasDefaultChatPin(effectiveUserId || user.id)
+                    ? 'Pehli baar chat khol rahe hain. Sabhi chats ko protect karne ke liye apna default password set karein:'
+                    : 'Yeh chat password se protected hai. Kholne ke liye password darj karein:'}
                 </p>
               </div>
 
@@ -5735,10 +5957,16 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     setPinError(null);
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleVerifyPin();
+                    if (e.key === 'Enter') {
+                      if (!hasDefaultChatPin(effectiveUserId || user.id)) {
+                        handleSetInitialDefaultPin();
+                      } else {
+                        handleVerifyPin();
+                      }
+                    }
                   }}
-                  placeholder="Password / PIN"
-                  className="w-52 text-center text-lg font-bold py-2.5 px-4 bg-slate-100 dark:bg-slate-800 border-2 border-purple-400 dark:border-purple-600 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 mx-auto block"
+                  placeholder={!hasDefaultChatPin(effectiveUserId || user.id) ? "Naya Password / PIN" : "Password darj karein"}
+                  className="w-56 text-center text-base font-bold py-2.5 px-4 bg-slate-100 dark:bg-slate-800 border-2 border-purple-400 dark:border-purple-600 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 mx-auto block"
                   autoFocus
                 />
                 {pinError && (
@@ -5749,13 +5977,24 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               </div>
 
               <div className="space-y-2">
-                <button
-                  onClick={handleVerifyPin}
-                  className="w-full py-2.5 bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-1.5"
-                >
-                  <Unlock size={14} />
-                  <span>Chat Unlock Karein</span>
-                </button>
+                {!hasDefaultChatPin(effectiveUserId || user.id) ? (
+                  <button
+                    onClick={handleSetInitialDefaultPin}
+                    className="w-full py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <KeyRound size={14} />
+                    <span>Password Set Karein & Chat Kholein</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleVerifyPin}
+                    className="w-full py-2.5 bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Unlock size={14} />
+                    <span>Chat Unlock Karein</span>
+                  </button>
+                )}
+
                 <button
                   onClick={() => {
                     setShowPinModal(false);
@@ -5763,7 +6002,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     setPinInput('');
                     setPinError(null);
                   }}
-                  className="w-full py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-xs font-bold"
+                  className="w-full py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-xs font-bold cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -5772,55 +6011,173 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           </div>
         )}
 
-        {/* ─── MODAL 4: SET / CHANGE CHAT PIN / PASSWORD ─────────────────────────── */}
-        {showChangePinModal && (
+        {/* ─── MODAL 4: CHAT PASSWORD SETTINGS (SPECIAL & DEFAULT PASSWORDS) ───── */}
+        {showPinSettingsModal && (
           <div className="fixed inset-0 z-[380] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-            <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 text-center space-y-4 animate-in fade-in zoom-in-95">
-              <div className="w-14 h-14 rounded-full bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 flex items-center justify-center mx-auto shadow-inner">
-                <KeyRound size={26} />
-              </div>
-              <div>
-                <h3 className="font-bold text-base text-slate-900 dark:text-white">Set / Change Chat Password</h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Naya password ya PIN darj karein (Koi naam, 1234, ya mix):
-                </p>
-              </div>
-
-              <div className="py-1">
-                <input
-                  type="password"
-                  value={newPinInput}
-                  onChange={(e) => {
-                    setNewPinInput(e.target.value);
-                    setNewPinError(null);
-                  }}
-                  placeholder="Naya Password / PIN"
-                  className="w-52 text-center text-base font-bold py-2.5 px-3 bg-slate-100 dark:bg-slate-800 border-2 border-indigo-400 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 mx-auto block"
-                  autoFocus
-                />
-                {newPinError && (
-                  <p className="text-xs text-rose-500 font-bold mt-2">
-                    {newPinError}
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
+            <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 animate-in fade-in zoom-in-95">
+              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-600 flex items-center justify-center font-bold">
+                    <KeyRound size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-base text-slate-900 dark:text-white">Chat Password Settings</h3>
+                    <p className="text-[11px] text-slate-500">Default aur Special Password manage karein</p>
+                  </div>
+                </div>
                 <button
-                  onClick={handleChangePin}
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-all"
+                  onClick={() => setShowPinSettingsModal(false)}
+                  className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 cursor-pointer"
                 >
-                  Save Naya Password
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Tabs: Special Password vs Default Password */}
+              <div className="flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
+                <button
+                  type="button"
+                  onClick={() => setPinSettingsTab('SPECIAL')}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    pinSettingsTab === 'SPECIAL'
+                      ? 'bg-white dark:bg-slate-900 text-purple-600 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Special Password (Is Chat Ka)
                 </button>
                 <button
-                  onClick={() => {
-                    setShowChangePinModal(false);
-                    setNewPinInput('');
-                    setNewPinError(null);
-                  }}
-                  className="w-full py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-xs font-bold"
+                  type="button"
+                  onClick={() => setPinSettingsTab('DEFAULT')}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                    pinSettingsTab === 'DEFAULT'
+                      ? 'bg-white dark:bg-slate-900 text-purple-600 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                  }`}
                 >
-                  Cancel
+                  Default Password (Sabhi Chats)
+                </button>
+              </div>
+
+              {pinSettingsTab === 'SPECIAL' ? (
+                <div className="space-y-3 pt-1">
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                    Sabhi chats ke liye ek hi <strong>Default Password</strong> hota hai. Agar aap chahein to is specific chat ke liye ek alag <strong>Special Password</strong> bana sakte hain.
+                  </p>
+
+                  <div className="p-3 rounded-2xl bg-purple-50/70 dark:bg-purple-950/30 border border-purple-200/60 dark:border-purple-900/60 text-xs text-purple-900 dark:text-purple-300 flex items-center justify-between">
+                    <span>Current Status:</span>
+                    <span className="font-bold">
+                      {activeChatContextId && hasSpecialChatPin(activeChatContextId, effectiveUserId || user.id)
+                        ? '🔒 Special Password Active'
+                        : '🔑 Using Default Password'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      {activeChatContextId && hasSpecialChatPin(activeChatContextId, effectiveUserId || user.id)
+                        ? 'Naya Special Password Set Karein'
+                        : 'Is Chat Ke Liye Special Password Set Karein'}
+                    </label>
+                    <input
+                      type="password"
+                      value={specialPinInput}
+                      onChange={(e) => {
+                        setSpecialPinInput(e.target.value);
+                        setSpecialPinError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveSpecialPin();
+                      }}
+                      placeholder="Special Password / PIN"
+                      className="w-full text-xs font-semibold py-2 px-3 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:border-purple-500"
+                    />
+                    {specialPinError && (
+                      <p className="text-xs text-rose-500 font-bold mt-1.5">{specialPinError}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 pt-1">
+                    <button
+                      onClick={handleSaveSpecialPin}
+                      className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                    >
+                      Save Special Password
+                    </button>
+                    {activeChatContextId && hasSpecialChatPin(activeChatContextId, effectiveUserId || user.id) && (
+                      <button
+                        onClick={handleResetToDefaultPin}
+                        className="w-full py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                      >
+                        Reset to Default Password (Special Password Hatayein)
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 pt-1">
+                  <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                    Yeh <strong>Default Password</strong> aapki sabhi normal chats ko unlock karne ke liye kaam karta hai.
+                  </p>
+
+                  {hasDefaultChatPin(effectiveUserId || user.id) && (
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        Current (Purana) Default Password:
+                      </label>
+                      <input
+                        type="password"
+                        value={oldDefaultPinInput}
+                        onChange={(e) => {
+                          setOldDefaultPinInput(e.target.value);
+                          setDefaultPinError(null);
+                        }}
+                        placeholder="Purana default password"
+                        className="w-full text-xs font-semibold py-2 px-3 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:border-purple-500"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Naya Default Password:
+                    </label>
+                    <input
+                      type="password"
+                      value={newDefaultPinInput}
+                      onChange={(e) => {
+                        setNewDefaultPinInput(e.target.value);
+                        setDefaultPinError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleChangeDefaultPin();
+                      }}
+                      placeholder="Naya Default Password"
+                      className="w-full text-xs font-semibold py-2 px-3 bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white focus:outline-none focus:border-purple-500"
+                    />
+                    {defaultPinError && (
+                      <p className="text-xs text-rose-500 font-bold mt-1.5">{defaultPinError}</p>
+                    )}
+                  </div>
+
+                  <div className="pt-1">
+                    <button
+                      onClick={handleChangeDefaultPin}
+                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                    >
+                      Save Naya Default Password
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-2">
+                <button
+                  onClick={() => setShowPinSettingsModal(false)}
+                  className="w-full py-2 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-xl text-xs font-bold cursor-pointer"
+                >
+                  Close
                 </button>
               </div>
             </div>

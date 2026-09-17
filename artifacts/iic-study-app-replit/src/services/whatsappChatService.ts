@@ -111,7 +111,8 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     id: 'student_rohit_v',
     name: 'Rohit Verma',
     classLevel: 'Class 10',
-    isOnline: true,
+    isOnline: false,
+    lastSeen: Date.now() - 45 * 60 * 1000,
     statusText: 'Maths Quadratic Equations solving 📐',
     role: 'STUDENT',
     subscriptionLevel: 'ULTRA',
@@ -121,7 +122,8 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     id: 'student_priya_s',
     name: 'Priya Sharma',
     classLevel: 'Class 12',
-    isOnline: true,
+    isOnline: false,
+    lastSeen: Date.now() - 2 * 3600 * 1000,
     statusText: 'Physics Electrostatics practice ⚡',
     role: 'STUDENT',
     subscriptionLevel: 'BASIC',
@@ -132,7 +134,7 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     name: 'Amit Kumar',
     classLevel: 'Class 11',
     isOnline: false,
-    lastSeen: Date.now() - 15 * 60 * 1000,
+    lastSeen: Date.now() - 3 * 3600 * 1000,
     statusText: 'Chemistry Organic notes revision 🧪',
     role: 'STUDENT',
     subscriptionLevel: 'BASIC',
@@ -142,7 +144,8 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     id: 'student_ananya_s',
     name: 'Ananya Singh',
     classLevel: 'Class 10',
-    isOnline: true,
+    isOnline: false,
+    lastSeen: Date.now() - 5 * 3600 * 1000,
     statusText: 'Biology NCERT line-by-line reading 🌿',
     role: 'STUDENT',
     subscriptionLevel: 'ULTRA',
@@ -152,7 +155,8 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     id: 'student_vikash_p',
     name: 'Vikash Patel',
     classLevel: 'Competition (JEE)',
-    isOnline: true,
+    isOnline: false,
+    lastSeen: Date.now() - 8 * 3600 * 1000,
     statusText: 'JEE Main mock test solving 🎯',
     role: 'STUDENT',
     subscriptionLevel: 'ULTRA',
@@ -163,7 +167,7 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     name: 'Sneha Gupta',
     classLevel: 'Class 9',
     isOnline: false,
-    lastSeen: Date.now() - 40 * 60 * 1000,
+    lastSeen: Date.now() - 12 * 3600 * 1000,
     statusText: 'Class 9 Science cell chapter complete 🔬',
     role: 'STUDENT',
     subscriptionLevel: 'FREE',
@@ -174,7 +178,7 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     name: 'Rahul Mehra',
     classLevel: 'Class 10',
     isOnline: false,
-    lastSeen: Date.now() - 2 * 3600 * 1000,
+    lastSeen: Date.now() - 24 * 3600 * 1000,
     statusText: 'Offline • At tuition batch 📚',
     role: 'STUDENT',
     subscriptionLevel: 'FREE',
@@ -185,7 +189,7 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     name: 'Aditya Raj',
     classLevel: 'Class 11',
     isOnline: false,
-    lastSeen: Date.now() - 3.5 * 3600 * 1000,
+    lastSeen: Date.now() - 28 * 3600 * 1000,
     statusText: 'Self-study mode on 🔕',
     role: 'STUDENT',
     subscriptionLevel: 'BASIC',
@@ -196,7 +200,7 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     name: 'Pooja Yadav',
     classLevel: 'Class 12',
     isOnline: false,
-    lastSeen: Date.now() - 5 * 3600 * 1000,
+    lastSeen: Date.now() - 36 * 3600 * 1000,
     statusText: 'Solving Bihar Board 12th PYQs 📝',
     role: 'STUDENT',
     subscriptionLevel: 'FREE',
@@ -207,7 +211,7 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     name: 'Manish Tiwari',
     classLevel: 'Class 9',
     isOnline: false,
-    lastSeen: Date.now() - 8 * 3600 * 1000,
+    lastSeen: Date.now() - 48 * 3600 * 1000,
     statusText: 'Offline • Evening study session 📖',
     role: 'STUDENT',
     subscriptionLevel: 'FREE',
@@ -217,7 +221,8 @@ export const INSTITUTE_CLASSMATES: ChatContact[] = [
     id: 'student_ritu_k',
     name: 'Ritu Kumari',
     classLevel: 'Class 12',
-    isOnline: true,
+    isOnline: false,
+    lastSeen: Date.now() - 14 * 3600 * 1000,
     statusText: 'English & Hindi grammar revision ✍️',
     role: 'STUDENT',
     subscriptionLevel: 'ULTRA',
@@ -1234,6 +1239,44 @@ export const subscribeToUserPresence = (
 };
 
 /**
+ * Real-time subscription to all active users' presence from RTDB
+ */
+export const subscribeToAllPresence = (
+  callback: (presenceMap: Record<string, { isOnline: boolean; lastSeen: number }>) => void
+): (() => void) => {
+  try {
+    const pRef = ref(rtdb, 'chat/presence');
+    return onValue(
+      pRef,
+      (snapshot) => {
+        const val = snapshot.val();
+        const map: Record<string, { isOnline: boolean; lastSeen: number }> = {};
+        const now = Date.now();
+        if (val && typeof val === 'object') {
+          Object.entries(val).forEach(([k, v]: [string, any]) => {
+            if (v && typeof v === 'object') {
+              const lastSeen = v.lastSeen || v.updatedAt || 0;
+              // User is only online if flag is set AND active within last 2 minutes
+              const isFresh = (now - lastSeen) < 2 * 60 * 1000;
+              map[k] = {
+                isOnline: !!v.isOnline && isFresh,
+                lastSeen: lastSeen || now,
+              };
+            }
+          });
+        }
+        callback(map);
+      },
+      () => {
+        callback({});
+      }
+    );
+  } catch {
+    return () => {};
+  }
+};
+
+/**
  * Fetch registered students from Firestore / RTDB + seeds
  */
 export const fetchRegisteredStudents = async (myUserId: string): Promise<ChatContact[]> => {
@@ -1266,13 +1309,16 @@ export const fetchRegisteredStudents = async (myUserId: string): Promise<ChatCon
           (d.email && d.email === myUserId);
         if (uid && !isSelf && !seenIds.has(uid)) {
           seenIds.add(uid);
+          const lastSeenTs = resolveLastSeen(d, uid);
+          // Only truly online if recent activity within 2 minutes and not mock
+          const isReallyOnline = !uid.startsWith('student_') && !!d.isOnline && (Date.now() - lastSeenTs < 2 * 60 * 1000);
           result.push({
             id: uid,
             name: d.name || d.displayName || 'Student',
             photoURL: d.photoURL || d.avatarUrl || '',
             statusText: d.statusText || d.bio || 'Studying on IIC App 📚',
-            isOnline: !!d.isOnline,
-            lastSeen: resolveLastSeen(d, uid),
+            isOnline: isReallyOnline,
+            lastSeen: lastSeenTs,
             classLevel: d.classLevel || d.role || 'Class 10-12',
             role: d.role || 'STUDENT',
             subscriptionLevel: d.subscriptionLevel || (d.isPremium ? 'BASIC' : 'FREE'),
@@ -1303,13 +1349,15 @@ export const fetchRegisteredStudents = async (myUserId: string): Promise<ChatCon
           (d?.email && d?.email === myUserId);
         if (uid && !isSelf && !seenIds.has(uid)) {
           seenIds.add(uid);
+          const lastSeenTs = resolveLastSeen(d || {}, uid);
+          const isReallyOnline = !uid.startsWith('student_') && !!d?.isOnline && (Date.now() - lastSeenTs < 2 * 60 * 1000);
           result.push({
             id: uid,
             name: d?.name || d?.displayName || 'Student',
             photoURL: d?.photoURL || d?.avatarUrl || '',
             statusText: d?.statusText || 'Available for study chat 💡',
-            isOnline: !!d?.isOnline,
-            lastSeen: resolveLastSeen(d || {}, uid),
+            isOnline: isReallyOnline,
+            lastSeen: lastSeenTs,
             classLevel: d?.classLevel || d?.role || 'Student',
             role: d?.role || 'STUDENT',
             subscriptionLevel: d?.subscriptionLevel || (d?.isPremium ? 'BASIC' : 'FREE'),
@@ -1325,12 +1373,15 @@ export const fetchRegisteredStudents = async (myUserId: string): Promise<ChatCon
     }
   } catch {}
 
-  // 3. Always include institute classmates / seeds so the directory is never empty
+  // 3. Always include institute classmates / seeds so the directory is never empty (all default to offline)
   INSTITUTE_CLASSMATES.forEach((c) => {
     const isSelf = isSameUser(c.id, myUserId);
     if (!isSelf && !seenIds.has(c.id)) {
       seenIds.add(c.id);
-      result.push(c);
+      result.push({
+        ...c,
+        isOnline: false,
+      });
     }
   });
 
@@ -1516,7 +1567,7 @@ export const acceptFriendRequest = async (
   );
 
   const convId = getDirectConversationId(myUser.id, requester.id);
-  const starterMsgId = `friend_init_${now}`;
+  const starterMsgId = `friend_init_${convId}`;
   const starterMsg = cleanPayload({
     id: starterMsgId,
     senderId: 'SYSTEM',
@@ -1534,6 +1585,10 @@ export const acceptFriendRequest = async (
     requesterId: requester.id,
   });
 
+  // Check if they are already friends locally or in RTDB to avoid re-posting starter messages
+  const existingFriends = getLocalFriends(myUser.id);
+  const isAlreadyFriend = existingFriends.some((f) => isSameUser(f.id, requester.id));
+
   // 1. Single atomic multi-path update: Adds friends, clears pending requests, posts starter message, notifies sender
   const updates: Record<string, any> = {};
   myKeys.forEach((mKey) => {
@@ -1547,7 +1602,9 @@ export const acceptFriendRequest = async (
       updates[`chat/friend_accepted/${rKey}/${mKey}`] = acceptedNotificationForSender;
     });
   });
-  updates[`chat/whatsapp_direct/${convId}/${starterMsgId}`] = starterMsg;
+  if (!isAlreadyFriend) {
+    updates[`chat/whatsapp_direct/${convId}/${starterMsgId}`] = starterMsg;
+  }
 
   try {
     await update(ref(rtdb), updates);
@@ -1715,10 +1772,17 @@ export const subscribeToFriendRequests = (
   const unsubs: Array<() => void> = [];
 
   const emit = () => {
+    const localFriends = getLocalFriends(myUserId);
     const combinedMap = new Map<string, FriendRequest>();
     sourceBuckets.forEach((bucket) => {
-      bucket.forEach((item, id) => {
+      bucket.forEach((item) => {
         if (item && item.status === 'PENDING') {
+          // Drop if sender is already a confirmed friend
+          const isAlreadyFriend = localFriends.some(
+            (f) => isSameUser(f.id, item.fromId) || isSameUser(f.uid, item.fromId)
+          );
+          if (isAlreadyFriend) return;
+
           // Normalize sender key so duplicate requests across aliases collapse cleanly
           const dedupeKey = `${item.fromId || (item as any).fromUid || ''}_${item.toId || ''}`;
           if (!combinedMap.has(dedupeKey)) {
@@ -1743,6 +1807,8 @@ export const subscribeToFriendRequests = (
       const unsub = onValue(
         reqRef,
         (snapshot) => {
+          // Live remote data received: clear local seed so it doesn't fight remote state
+          sourceBuckets.delete('local');
           bucket.clear();
           const val = snapshot.val();
           if (val && typeof val === 'object') {
@@ -1836,9 +1902,19 @@ export const subscribeToSentFriendRequests = (
   sourceBuckets.set('local_sent', localBucket);
 
   const emit = () => {
+    const localFriends = getLocalFriends(myUserId);
     const combinedMap = new Map<string, FriendRequest>();
     sourceBuckets.forEach((bucket) => {
       bucket.forEach((item) => {
+        // Drop any request if the target student is already a confirmed friend
+        const isAlreadyFriend = localFriends.some(
+          (f) => isSameUser(f.id, item.toId) || isSameUser(f.uid, item.toId)
+        );
+        if (isAlreadyFriend) {
+          removeLocalSentFriendRequest(myUserId, item.toId);
+          return;
+        }
+
         if (!combinedMap.has(item.id)) {
           combinedMap.set(item.id, item);
         }
@@ -1862,6 +1938,8 @@ export const subscribeToSentFriendRequests = (
       const unsub = onValue(
         sentRef,
         (snapshot) => {
+          // Authoritative remote data arrived: remove temporary local bucket
+          sourceBuckets.delete('local_sent');
           bucket.clear();
           const val = snapshot.val();
           if (val && typeof val === 'object') {
@@ -2039,7 +2117,7 @@ export const subscribeToFriends = (
                     id: docSnap.id,
                     name: data.name || 'Friend',
                     photoURL: data.photoURL || '',
-                    isOnline: data.isOnline !== undefined ? !!data.isOnline : true,
+                    isOnline: data.isOnline !== undefined ? !!data.isOnline : false,
                     lastSeen: data.lastSeen || Date.now(),
                     statusText: data.statusText || 'Friend 🤝 · Available to chat',
                     classLevel: data.classLevel || 'Friend',
@@ -2065,7 +2143,7 @@ export const subscribeToFriends = (
                     id: data.toId,
                     name: data.toName || data.friend?.name || 'Friend',
                     photoURL: data.toPhoto || data.friend?.photoURL || '',
-                    isOnline: true,
+                    isOnline: false,
                     lastSeen: data.acceptedAt || Date.now(),
                     statusText: 'Friend 🤝 · Available to chat',
                     classLevel: 'Friend',
@@ -2100,6 +2178,9 @@ export interface FriendAcceptedEvent {
   requesterId: string;
 }
 
+// Global deduplication set across subscriptions to prevent repeat alerts
+const globalProcessedAcceptedEvents = new Set<string>();
+
 /**
  * Subscribe to Friend Request Accepted Events in Real-Time!
  * When a recipient accepts a friend request, this immediately fires on the sender's client
@@ -2127,8 +2208,23 @@ export const subscribeToFriendAccepted = (
         if (val && typeof val === 'object') {
           Object.entries(val).forEach(([peerKey, item]: [string, any]) => {
             const eventKey = `${targetKey}_${peerKey}_${item?.acceptedAt || ''}`;
-            if (item && item.friend && !processedEvents.has(eventKey)) {
-              processedEvents.add(eventKey);
+
+            // Clean up from RTDB right away so this notification is not replayed repeatedly
+            remove(ref(rtdb, `chat/friend_accepted/${targetKey}/${peerKey}`)).catch(() => {});
+
+            if (globalProcessedAcceptedEvents.has(eventKey) || processedEvents.has(eventKey)) {
+              return;
+            }
+            processedEvents.add(eventKey);
+            globalProcessedAcceptedEvents.add(eventKey);
+
+            // Stale check: If acceptedAt is older than 2 minutes, it's an old event from a past session; silently ignore alert
+            const ageMs = Date.now() - (item?.acceptedAt || 0);
+            if (item?.acceptedAt && ageMs > 2 * 60 * 1000) {
+              return;
+            }
+
+            if (item && item.friend) {
               onAccepted({
                 friend: {
                   id: item.friend.id || peerKey,
@@ -2210,7 +2306,7 @@ export function removeLocalSentFriendRequest(userId: string, targetIdOrReqId: st
   } catch {}
 }
 
-function getLocalFriendRequests(): FriendRequest[] {
+export function getLocalFriendRequests(): FriendRequest[] {
   try {
     const raw = localStorage.getItem('nsta_friend_requests');
     return raw ? JSON.parse(raw) : [];
@@ -2248,7 +2344,7 @@ export function saveLocalFriend(userId: string, friend: any) {
     id: friend.id,
     name: friend.name,
     photoURL: friend.photoURL,
-    isOnline: true,
+    isOnline: false,
     statusText: 'Friend 🤝 · Available to chat',
     classLevel: 'Friend',
   });
@@ -2571,12 +2667,47 @@ export const deleteChatMessage = async (
   contextId: string, // convId or groupId
   msgId: string,
   userId: string,
-  mode: 'FOR_ME' | 'FOR_EVERYONE'
+  mode: 'FOR_ME' | 'FOR_EVERYONE',
+  explicitSenderId?: string
 ) => {
   const cacheKey = isGroup ? `group_${contextId}` : `dm_${contextId}`;
   const localList = getLocalMessages(cacheKey);
 
-  if (mode === 'FOR_ME') {
+  // Security authorization: A user can ONLY delete for everyone if they sent the message (or group creator)
+  let effectiveMode = mode;
+  if (mode === 'FOR_EVERYONE') {
+    let authorId = explicitSenderId;
+    if (!authorId) {
+      const targetMsg = localList.find((m) => m.id === msgId);
+      if (targetMsg) authorId = targetMsg.senderId;
+    }
+
+    if (authorId && !isSameUser(authorId, userId)) {
+      console.warn(
+        `[WhatsApp Security] User ${userId} is not the sender of message ${msgId}. Forcing FOR_ME.`
+      );
+      effectiveMode = 'FOR_ME';
+    }
+
+    // In 1-on-1 direct chat, if author is still not confirmed, verify with RTDB snapshot before allowing delete!
+    if (effectiveMode === 'FOR_EVERYONE' && !isGroup) {
+      try {
+        const msgPath = `chat/whatsapp_direct/${contextId}/${msgId}`;
+        const snap = await get(ref(rtdb, msgPath));
+        const val = snap.val();
+        if (val && val.senderId && !isSameUser(val.senderId, userId)) {
+          console.warn(
+            `[WhatsApp Security] RTDB check: User ${userId} is not author of message ${msgId}. Forcing FOR_ME.`
+          );
+          effectiveMode = 'FOR_ME';
+        }
+      } catch (e) {
+        effectiveMode = 'FOR_ME';
+      }
+    }
+  }
+
+  if (effectiveMode === 'FOR_ME') {
     // 1. Permanently register in persistent deleted-for-me cache
     addMessageToDeletedForMe(userId, msgId);
 
@@ -2922,8 +3053,7 @@ export const lockChatInSession = (contextId?: string): void => {
 
 export const isChatLocked = (contextId: string): boolean => {
   if (!contextId) return false;
-  // Chat lock is auto-enabled for chats.
-  // Returns true unless unlocked in the current session.
+  // Chat lock: returns true unless unlocked in the current session.
   return !sessionUnlockedChats.has(contextId);
 };
 
@@ -2937,29 +3067,92 @@ export const toggleChatLock = (contextId: string): boolean => {
   }
 };
 
-export const getChatPin = (): string => {
+// ── 1. Default Master Password (Applies to all chats by default) ─────────────
+export const getDefaultChatPin = (userId?: string): string => {
   try {
-    return localStorage.getItem(CHAT_PIN_STORAGE_KEY) || '1234';
+    if (userId) {
+      const userSpecific = localStorage.getItem(`nsta_master_chat_pin_${userId}`);
+      if (userSpecific) return userSpecific;
+    }
+    return localStorage.getItem(CHAT_PIN_STORAGE_KEY) || '';
   } catch {
-    return '1234';
+    return '';
   }
 };
 
-export const setChatPin = (pin: string): void => {
+export const setDefaultChatPin = (pin: string, userId?: string): void => {
   try {
-    localStorage.setItem(CHAT_PIN_STORAGE_KEY, pin);
+    const trimmed = (pin || '').trim();
+    if (userId) {
+      localStorage.setItem(`nsta_master_chat_pin_${userId}`, trimmed);
+    }
+    localStorage.setItem(CHAT_PIN_STORAGE_KEY, trimmed);
   } catch {}
 };
 
-export const hasChatPin = (): boolean => {
+export const hasDefaultChatPin = (userId?: string): boolean => {
+  return !!getDefaultChatPin(userId);
+};
+
+// ── 2. Special Custom Password (For a specific chat if user wants) ───────────
+export const getSpecialChatPin = (contextId: string, userId?: string): string => {
+  if (!contextId) return '';
   try {
-    return !!localStorage.getItem(CHAT_PIN_STORAGE_KEY);
+    const userPrefix = userId ? `${userId}_` : '';
+    return localStorage.getItem(`nsta_chat_special_pin_${userPrefix}${contextId}`) || '';
   } catch {
-    return false;
+    return '';
   }
 };
 
-export const verifyChatPin = (enteredPin: string): boolean => {
-  const current = getChatPin();
-  return enteredPin === current;
+export const setSpecialChatPin = (contextId: string, pin: string, userId?: string): void => {
+  if (!contextId) return;
+  try {
+    const userPrefix = userId ? `${userId}_` : '';
+    localStorage.setItem(`nsta_chat_special_pin_${userPrefix}${contextId}`, (pin || '').trim());
+  } catch {}
+};
+
+export const removeSpecialChatPin = (contextId: string, userId?: string): void => {
+  if (!contextId) return;
+  try {
+    const userPrefix = userId ? `${userId}_` : '';
+    localStorage.removeItem(`nsta_chat_special_pin_${userPrefix}${contextId}`);
+  } catch {}
+};
+
+export const hasSpecialChatPin = (contextId: string, userId?: string): boolean => {
+  return !!getSpecialChatPin(contextId, userId);
+};
+
+// ── 3. Unified Verification ──────────────────────────────────────────────────
+export const verifyChatPinForContext = (
+  enteredPin: string,
+  contextId: string,
+  userId?: string
+): boolean => {
+  const entered = (enteredPin || '').trim();
+  if (!entered) return false;
+
+  // Check special PIN for this specific chat
+  const specialPin = getSpecialChatPin(contextId, userId);
+  if (specialPin && entered === specialPin) return true;
+
+  // Default master PIN works for all chats
+  const defaultPin = getDefaultChatPin(userId);
+  if (defaultPin && entered === defaultPin) return true;
+
+  return false;
+};
+
+// Aliases for seamless backwards compatibility
+export const getChatPin = (userId?: string): string => getDefaultChatPin(userId);
+export const setChatPin = (pin: string, userId?: string): void => setDefaultChatPin(pin, userId);
+export const hasChatPin = (userId?: string): boolean => hasDefaultChatPin(userId);
+export const verifyChatPin = (enteredPin: string, contextId?: string, userId?: string): boolean => {
+  if (contextId) {
+    return verifyChatPinForContext(enteredPin, contextId, userId);
+  }
+  const current = getDefaultChatPin(userId);
+  return !!current && (enteredPin || '').trim() === current;
 };
