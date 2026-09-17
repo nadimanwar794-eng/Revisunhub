@@ -405,11 +405,17 @@ export const DailyEventPage: React.FC<Props> = ({
       if (!subjects.length) return null;
       const si = (cat.currentSubjectIndex || 0) % subjects.length;
       const sub = subjects[si];
-      // Find notes for this subject (same filter as MyRoutine's getNotesForSubject)
+      // Find notes for this subject (only multi-page books, excluding Sar Sangrah)
       const notes = lucentNotes.filter((n: any) => {
         const nb = (n.bookName || '').trim();
         const nc = n.classLevel || '';
         const ns = (n.subject || 'other').toLowerCase().trim();
+        const pCount = Array.isArray(n.pages) ? n.pages.length : (n.pageCount || 0);
+        if (pCount <= 1) return false;
+        const titleLower = (n.lessonTitle || n.title || '').toLowerCase();
+        const bookLower = nb.toLowerCase();
+        if (titleLower.includes('sar sangrah') || titleLower.includes('saar sangrah') || titleLower.includes('sar-sangrah')) return false;
+        if (bookLower.includes('sar sangrah') || bookLower.includes('saar sangrah') || bookLower.includes('sar-sangrah')) return false;
         if (sub.bookName && nb !== sub.bookName) return false;
         if (sub.classLevel && nc !== sub.classLevel) return false;
         return ns === sub.subjectId;
@@ -608,29 +614,9 @@ export const DailyEventPage: React.FC<Props> = ({
   }, [dueNotes]);
 
   const handlePracticeSlotMcq = useCallback((slot: any) => {
-    const lesson = lucentNotes.find((n: any) => n.id === slot.lessonId);
-    const pages = lesson?.pages || [];
-    if (pages.length > 0) {
-      const topics: TopicItem[] = pages.map((p: any, idx: number) => ({
-        id: `${slot.lessonId}_p${idx}`,
-        chapterId: slot.lessonId,
-        chapterName: slot.lessonTitle || slot.lessonId,
-        name: p.topic || `Topic ${idx + 1}`,
-        score: 0,
-        lastAttempt: '',
-        status: 'WEAK' as any,
-        nextRevision: null,
-        mcqDueDate: null,
-        subjectId: slot.subject,
-        subjectName: slot.subject,
-        isSubTopic: true,
-      }));
-      setRevMcqTopics(topics);
-      setRevMcqSessionActive(true);
-    } else {
-      onOpenLesson?.(slot.lessonId);
-    }
-  }, [lucentNotes, onOpenLesson]);
+    // When user taps MCQ in Routine, navigate to the lesson's page list so user can choose pages
+    onOpenLesson?.(slot.lessonId);
+  }, [onOpenLesson]);
 
   // Detect how many Notes/MCQ were completed today using updatedAt timestamp
   const { notesReviewedToday, mcqDoneToday } = useMemo(() => {

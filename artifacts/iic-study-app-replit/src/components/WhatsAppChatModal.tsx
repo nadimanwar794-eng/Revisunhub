@@ -44,10 +44,13 @@ import {
   Loader2,
   Crown,
   Zap,
+  Copy,
+  Bookmark,
+  BookmarkCheck,
 } from 'lucide-react';
 import { User } from '../types';
 import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
-import { saveUserToLive } from '../firebase';
+import { saveUserToLive, auth } from '../firebase';
 import {
   ChatContact,
   ChatMessage,
@@ -63,6 +66,9 @@ import {
   createWhatsAppGroup,
   reactToChatMessage,
   getLocalGroups,
+  formatLastSeen,
+  updateUserPresence,
+  subscribeToUserPresence,
   fetchRegisteredStudents,
   sendFriendRequest,
   acceptFriendRequest,
@@ -71,6 +77,7 @@ import {
   subscribeToFriendRequests,
   subscribeToSentFriendRequests,
   subscribeToFriends,
+  subscribeToFriendAccepted,
   sanitizeRtdbKey,
   joinPublicGroup,
   requestToJoinPrivateGroup,
@@ -86,12 +93,17 @@ import {
   clearChatHistory,
   deleteChatMessage,
   markMessagesAsRead,
+  confirmFriendshipLocally,
   getDisappearingTimer,
   setDisappearingTimer,
   filterDisappearingMessages,
   clearSeenVanishMessages,
+  toggleSaveChatMessage,
+  isMessageSaved,
   isChatLocked,
   toggleChatLock,
+  unlockChatInSession,
+  lockChatInSession,
   verifyChatPin,
   setChatPin,
   getChatPin,
@@ -232,6 +244,37 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   const effectiveUserId = String(user?.id || (user as any)?.uid || currentUser?.id || (currentUser as any)?.uid || '').trim();
 
+  // Real-time user presence tracking (Online & Last Seen in Nsta Messenger)
+  useEffect(() => {
+    if (!effectiveUserId) return;
+    updateUserPresence(effectiveUserId, true);
+    const interval = setInterval(() => {
+      updateUserPresence(effectiveUserId, true);
+    }, 45000);
+    return () => {
+      clearInterval(interval);
+      updateUserPresence(effectiveUserId, false);
+    };
+  }, [effectiveUserId]);
+
+  // Real-time presence listener for the active contact (Online status & Last Seen updates)
+  useEffect(() => {
+    if (!selectedContact?.id) return;
+    const unsubPresence = subscribeToUserPresence(selectedContact.id, (presence) => {
+      setSelectedContact((prev) => {
+        if (!prev || prev.id !== selectedContact.id) return prev;
+        return {
+          ...prev,
+          isOnline: presence.isOnline,
+          lastSeen: presence.lastSeen,
+        };
+      });
+    });
+    return () => {
+      unsubPresence();
+    };
+  }, [selectedContact?.id]);
+
   const currentBlockTier = getUserBlockTier(currentUser);
   const currentTier = currentBlockTier;
 
@@ -307,11 +350,52 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [students, setStudents] = useState<ChatContact[]>([]);
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
   const [groups, setGroups] = useState<ChatGroup[]>(getLocalGroups());
+  const [newAcceptedFriend, setNewAcceptedFriend] = useState<ChatContact | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   
-  const isUserFriend = (userId: string) => {
-    return friends.some(f => f.id === userId);
+  const isUserFriend = (contactOrId: string | ChatContact | { id?: string; uid?: string; email?: string } | null | undefined): boolean => {
+    if (!contactOrId) return false;
+    if (typeof contactOrId === 'string') {
+      if (contactOrId === 'peer_iic_ai_tutor') return true;
+      return friends.some((f) =>
+        isSameUser(f.id, contactOrId) ||
+        (f.uid && isSameUser(f.uid, contactOrId)) ||
+        (f.email && isSameUser(f.email, contactOrId))
+      );
+    }
+    const tId = contactOrId.id;
+    const tUid = (contactOrId as any).uid;
+    const tEmail = (contactOrId as any).email;
+    if (tId === 'peer_iic_ai_tutor') return true;
+
+    return friends.some((f) => {
+      if (tId && isSameUser(f.id, tId)) return true;
+      if (tUid && (isSameUser(f.id, tUid) || (f.uid && isSameUser(f.uid, tUid)))) return true;
+      if (tId && f.uid && isSameUser(f.uid, tId)) return true;
+      if (tEmail && (isSameUser(f.email, tEmail) || isSameUser(f.id, tEmail))) return true;
+      if (tId && f.email && isSameUser(f.email, tId)) return true;
+      return false;
+    });
+  };
+
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+
+  const handleInitiateReply = (msg: ChatMessage) => {
+    setReplyingTo(msg);
+    setTimeout(() => {
+      chatInputRef.current?.focus();
+    }, 50);
+  };
+
+  const handleScrollToMessage = (msgId: string) => {
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMsgId(msgId);
+      setTimeout(() => setHighlightedMsgId(null), 2200);
+    }
   };
 
   const [showSearchInput, setShowSearchInput] = useState(false);
@@ -356,9 +440,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [privacyTogglePassword, setPrivacyTogglePassword] = useState('');
   const [isSavingPrivacy, setIsSavingPrivacy] = useState(false);
 
-  // Voice note simulator state
-  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  // Playing voice message state (for listening to previous voice notes)
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
 
   // Quick 1-tap friend request sending state
@@ -389,6 +471,23 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   // Message Deletion Dialog State (Delete for me vs Delete for everyone)
   const [deletingMessage, setDeletingMessage] = useState<ChatMessage | null>(null);
 
+  // Multi-select & Batch Delete State
+  const [selectedMsgIds, setSelectedMsgIds] = useState<Set<string>>(new Set());
+  const [isSelectMode, setIsSelectMode] = useState<boolean>(false);
+  const [showBatchDeleteDialog, setShowBatchDeleteDialog] = useState<boolean>(false);
+
+  // Floating Emoji Reaction Picker for Double Tap
+  const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+
+  // Swipe-to-reply gesture state
+  const [activeSwipeMsgId, setActiveSwipeMsgId] = useState<string | null>(null);
+  const [activeSwipeOffset, setActiveSwipeOffset] = useState<number>(0);
+
+  // Gesture & interaction refs
+  const touchStartPosRef = useRef<{ x: number; y: number; msgId: string; time: number } | null>(null);
+  const longPressTimerRef = useRef<any>(null);
+  const lastTapTimeRef = useRef<{ id: string; time: number } | null>(null);
+
   // Disappearing Messages State (24h, 7d, 30d, 90d, Snapchat Vanish Mode)
   const [showDisappearingModal, setShowDisappearingModal] = useState<boolean>(false);
   const [currentDisappearingTimer, setCurrentDisappearingTimer] = useState<number>(0);
@@ -408,7 +507,6 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const [newPinError, setNewPinError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const recordingTimerRef = useRef<any>(null);
 
   const showToast = (msg: string) => {
     setBannerNotice(msg);
@@ -551,47 +649,124 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     });
   };
 
+  // Comprehensive list of all identity aliases for the current user (ID, UID, email, displayId, mobile)
+  const allMyUserIds = React.useMemo(() => {
+    const raw = [
+      user?.id,
+      (user as any)?.uid,
+      auth?.currentUser?.uid,
+      user?.email,
+      auth?.currentUser?.email,
+      user?.displayId,
+      (user as any)?.displayId,
+      user?.mobile,
+      (user as any)?.phone,
+      effectiveUserId,
+    ];
+    return Array.from(new Set(raw.filter(Boolean).map(String)));
+  }, [user, effectiveUserId]);
+
   // 1. Subscribe to confirmed friends
   useEffect(() => {
-    const unsub = subscribeToFriends(user.id, (list) => {
+    const unsub = subscribeToFriends(effectiveUserId || user.id, (list) => {
       setFriends(list);
-    });
+    }, allMyUserIds);
     return () => unsub();
-  }, [user.id]);
+  }, [user.id, effectiveUserId, allMyUserIds]);
 
   // 1b. Subscribe to blocked users
   useEffect(() => {
-    const unsub = subscribeToBlockedUsers(user.id, (list) => {
+    const unsub = subscribeToBlockedUsers(effectiveUserId || user.id, (list) => {
       setBlockedUsers(list);
     });
     return () => unsub();
-  }, [user.id]);
+  }, [user.id, effectiveUserId]);
 
-  // 2. Subscribe to incoming friend requests
+  // 2. Subscribe to incoming friend requests (Zero-latency real-time sync across all aliases)
   useEffect(() => {
-    const extraIds = [(user as any).uid, (user as any).displayId].filter(Boolean);
-    const unsub = subscribeToFriendRequests(user.id, (reqs) => {
+    const unsub = subscribeToFriendRequests(effectiveUserId || user.id, (reqs) => {
       setFriendRequests(reqs);
-    }, extraIds);
+    }, allMyUserIds);
     return () => unsub();
-  }, [user.id, (user as any).uid, (user as any).displayId]);
+  }, [user.id, effectiveUserId, allMyUserIds]);
 
   // Subscribe to outgoing sent requests
   useEffect(() => {
-    const unsub = subscribeToSentFriendRequests(user.id, (sent) => {
+    const unsub = subscribeToSentFriendRequests(effectiveUserId || user.id, (sent) => {
       setSentRequests(sent);
-    });
+    }, allMyUserIds);
     return () => unsub();
-  }, [user.id]);
+  }, [user.id, effectiveUserId, allMyUserIds]);
+
+  // Subscribe to Friend Request Accepted events (Real-time alert for the sender!)
+  useEffect(() => {
+    const unsub = subscribeToFriendAccepted(
+      effectiveUserId || user.id,
+      (event) => {
+        if (!event?.friend) return;
+        const acceptedFriend = event.friend;
+
+        // 1. Immediately update friends list in React state
+        setFriends((prev) => {
+          if (prev.some((f) => isSameUser(f.id, acceptedFriend.id))) return prev;
+          return [acceptedFriend, ...prev];
+        });
+
+        // 2. Remove from sent requests list in React state
+        setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, acceptedFriend.id)));
+
+        // 3. Audio notification chime
+        try {
+          const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+          audio.volume = 0.5;
+          audio.play().catch(() => {});
+        } catch {}
+
+        // 4. Set state for interactive banner & toast
+        setNewAcceptedFriend(acceptedFriend);
+        showToast(`🎉 ${acceptedFriend.name} ne aapki friend request accept kar li! Chat unlock ho chuki hai.`);
+      },
+      allMyUserIds
+    );
+    return () => unsub();
+  }, [user.id, effectiveUserId, allMyUserIds]);
+
+  // Redundant detection: If a student we sent a request to is now in our friends list, notify immediately
+  const prevFriendIdsRef = useRef<Set<string>>(new Set());
+  const isFriendsFirstMountRef = useRef<boolean>(true);
+
+  useEffect(() => {
+    if (friends.length === 0) return;
+    const currentFriendIds = new Set(friends.map((f) => f.id));
+
+    if (isFriendsFirstMountRef.current) {
+      isFriendsFirstMountRef.current = false;
+      prevFriendIdsRef.current = currentFriendIds;
+      return;
+    }
+
+    friends.forEach((f) => {
+      if (!prevFriendIdsRef.current.has(f.id)) {
+        const wasInSent = sentRequests.some((r) => isSameUser(r.toId, f.id));
+        if (wasInSent) {
+          setNewAcceptedFriend(f);
+          showToast(`🎉 ${f.name} ne aapki friend request accept kar li! Chat unlock ho chuki hai.`);
+          setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, f.id)));
+        }
+      }
+    });
+
+    prevFriendIdsRef.current = currentFriendIds;
+  }, [friends, sentRequests]);
 
   // 3. Fetch all registered students from Firebase & seeds
   useEffect(() => {
-    fetchRegisteredStudents(user.id).then((list) => {
+    fetchRegisteredStudents(effectiveUserId || user.id).then((list) => {
       if (list && list.length > 0) {
         setStudents(list);
       }
     });
-  }, [user.id]);
+  }, [user.id, effectiveUserId]);
 
   // 4. Initialize selected group if passed in props
   useEffect(() => {
@@ -606,7 +781,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   // Helper: Active chat context ID
   const activeChatContextId = selectedContact
-    ? getDirectConversationId(user.id, selectedContact.id)
+    ? getDirectConversationId(effectiveUserId || user.id, selectedContact.id)
     : selectedGroup
     ? selectedGroup.id
     : '';
@@ -625,6 +800,19 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         const filtered = filterDisappearingMessages(msgs, convId, effectiveUserId);
         setMessages(filtered);
         markMessagesAsRead(false, convId, effectiveUserId);
+
+        // Auto-reconciliation: If contact has replied or sent any messages, friend status is active!
+        const hasContactReplied = filtered.some(
+          (m) => !isSameUser(m.senderId, effectiveUserId) && m.type !== 'SYSTEM'
+        );
+        if (hasContactReplied) {
+          confirmFriendshipLocally(effectiveUserId || user.id, selectedContact);
+          setFriends((prev) => {
+            if (prev.some((f) => isSameUser(f.id, selectedContact.id))) return prev;
+            return [selectedContact, ...prev];
+          });
+          setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, selectedContact.id)));
+        }
       });
     } else if (selectedGroup && effectiveUserId) {
       const grpId = selectedGroup.id;
@@ -651,14 +839,37 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   const handleExitChat = () => {
     if (activeChatContextId) {
       clearSeenVanishMessages(activeChatContextId, !!selectedGroup, user.id);
+      lockChatInSession(activeChatContextId);
     }
     setSelectedContact(null);
     setSelectedGroup(null);
+    setIsSelectMode(false);
+    setSelectedMsgIds(new Set());
+    setReactionPickerMsgId(null);
+    setActiveSwipeMsgId(null);
+    setActiveSwipeOffset(0);
   };
+
+  // Auto-lock open chat when app is minimized or user navigates/switches away
+  useEffect(() => {
+    const handleAutoLockOnMinimize = () => {
+      if (document.hidden) {
+        if (selectedContact || selectedGroup) {
+          handleExitChat();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleAutoLockOnMinimize);
+    window.addEventListener('blur', handleAutoLockOnMinimize);
+    return () => {
+      document.removeEventListener('visibilitychange', handleAutoLockOnMinimize);
+      window.removeEventListener('blur', handleAutoLockOnMinimize);
+    };
+  }, [selectedContact, selectedGroup, activeChatContextId]);
 
   // Open Contact chat with PIN check
   const handleOpenContactChat = (contact: ChatContact) => {
-    const convId = getDirectConversationId(user.id, contact.id);
+    const convId = getDirectConversationId(effectiveUserId || user.id, contact.id);
     if (isChatLocked(convId)) {
       setPendingUnlockContext({ contact, contextId: convId });
       setPinInput('');
@@ -683,9 +894,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     }
   };
 
-  // Verify PIN to unlock chat
+  // Verify PIN / Password to unlock chat
   const handleVerifyPin = () => {
     if (verifyChatPin(pinInput)) {
+      if (pendingUnlockContext?.contextId) {
+        unlockChatInSession(pendingUnlockContext.contextId);
+      }
       setShowPinModal(false);
       if (pendingUnlockContext?.contact) {
         setSelectedContact(pendingUnlockContext.contact);
@@ -698,54 +912,293 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setPinInput('');
       setPinError(null);
     } else {
-      setPinError('Galat PIN! Sahi PIN darj karein (Default: 1234)');
+      setPinError('Galat Password! Sahi Password/PIN darj karein (Default: 1234)');
     }
   };
 
-  // Change PIN handler
+  // Change Password/PIN handler - allows any name, numbers (1234), or mix
   const handleChangePin = () => {
-    if (newPinInput.length !== 4 || !/^\d{4}$/.test(newPinInput)) {
-      setNewPinError('PIN 4 digits ka hona chahiye (e.g. 1234)');
+    const trimmed = newPinInput.trim();
+    if (!trimmed) {
+      setNewPinError('Kripya naya password ya PIN darj karein');
       return;
     }
-    setChatPin(newPinInput);
+    setChatPin(trimmed);
     setShowChangePinModal(false);
     setNewPinInput('');
     setNewPinError(null);
-    showToast('🔒 Chat Lock PIN update ho gaya!');
+    showToast('🔒 Chat Lock Password update ho gaya!');
   };
 
   // Handle message deletion
   const handleDeleteMessage = async (mode: 'FOR_ME' | 'FOR_EVERYONE') => {
     if (!deletingMessage || !activeChatContextId) return;
 
+    const targetMsgId = deletingMessage.id;
+    // 1. Immediately close the delete popup modal so it never lingers
+    setDeletingMessage(null);
+
+    // 2. Instantly remove message from UI state so it completely vanishes from screen
+    setMessages((prev) => prev.filter((m) => m.id !== targetMsgId));
+
+    if (mode === 'FOR_ME') {
+      showToast('🗑️ Message deleted for you');
+    } else {
+      showToast('🗑️ Message deleted for everyone');
+    }
+
+    // 3. Persist deletion in background
     await deleteChatMessage(
       !!selectedGroup,
       activeChatContextId,
-      deletingMessage.id,
+      targetMsgId,
       user.id,
       mode
     );
+  };
+
+  // Handle batch deletion of selected messages (Multi-select)
+  const handleBatchDelete = async (mode: 'FOR_ME' | 'FOR_EVERYONE') => {
+    if (selectedMsgIds.size === 0 || !activeChatContextId) return;
+    const idsToDelete = Array.from(selectedMsgIds);
+
+    // 1. Immediately close dialog & exit multi-select mode
+    setShowBatchDeleteDialog(false);
+    setIsSelectMode(false);
+    setSelectedMsgIds(new Set());
+
+    // 2. Instantly remove selected messages from screen so they vanish
+    setMessages((prev) => prev.filter((m) => !idsToDelete.includes(m.id)));
 
     if (mode === 'FOR_ME') {
-      setMessages((prev) => prev.filter((m) => m.id !== deletingMessage.id));
-      showToast('🗑️ Message deleted for you');
+      showToast(`🗑️ ${idsToDelete.length} message${idsToDelete.length > 1 ? 's' : ''} deleted for you`);
     } else {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === deletingMessage.id
-            ? {
-                ...m,
-                text: '🚫 This message was deleted',
-                isDeletedForEveryone: true,
-                type: 'TEXT' as const,
-              }
-            : m
-        )
-      );
-      showToast('🚫 Message deleted for everyone');
+      showToast(`🗑️ ${idsToDelete.length} message${idsToDelete.length > 1 ? 's' : ''} deleted for everyone`);
     }
-    setDeletingMessage(null);
+
+    const promises = idsToDelete.map(async (msgId) => {
+      const targetMsg = messages.find((m) => m.id === msgId);
+      if (!targetMsg) return;
+      if (mode === 'FOR_EVERYONE') {
+        const canDeleteEveryone =
+          isSameUser(targetMsg.senderId, effectiveUserId) || selectedGroup?.creatorId === user.id;
+        if (!canDeleteEveryone) {
+          return deleteChatMessage(!!selectedGroup, activeChatContextId, msgId, user.id, 'FOR_ME');
+        }
+      }
+      return deleteChatMessage(!!selectedGroup, activeChatContextId, msgId, user.id, mode);
+    });
+
+    await Promise.all(promises);
+  };
+
+  // Copy selected messages to clipboard (single or batch)
+  const handleCopySelectedMessages = async () => {
+    if (selectedMsgIds.size === 0) return;
+    const selectedList = messages.filter((m) => selectedMsgIds.has(m.id));
+    if (selectedList.length === 0) return;
+
+    let textToCopy = '';
+    if (selectedList.length === 1) {
+      textToCopy = selectedList[0].text || '';
+    } else {
+      textToCopy = selectedList
+        .map((m) => {
+          const timeStr = formatTime(m.timestamp);
+          return `[${timeStr}] ${m.senderName}: ${m.text || ''}`;
+        })
+        .join('\n\n');
+    }
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(textToCopy);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = textToCopy;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      showToast(
+        `📋 ${selectedList.length > 1 ? `${selectedList.length} messages` : 'Message'} copy ho gaya!`
+      );
+    } catch {
+      showToast('📋 Message copy ho gaya!');
+    }
+
+    setIsSelectMode(false);
+    setSelectedMsgIds(new Set());
+    setReactionPickerMsgId(null);
+  };
+
+  // Save / Unsave selected messages (Snapchat-style Save in Chat)
+  // "save kìya gaya message snapchart wala mode me delete na hoga unsave hone pe hi delete hoga"
+  const handleToggleSaveSelectedMessages = async (targetMsgId?: string) => {
+    if (!activeChatContextId) return;
+
+    let targetIds: string[] = [];
+    if (targetMsgId) {
+      targetIds = [targetMsgId];
+    } else {
+      targetIds = Array.from(selectedMsgIds);
+    }
+
+    if (targetIds.length === 0) return;
+    const selectedList = messages.filter((m) => targetIds.includes(m.id));
+    if (selectedList.length === 0) return;
+
+    const allAreSaved = selectedList.every((m) => isMessageSaved(m, effectiveUserId));
+    const nextSavedState = !allAreSaved;
+
+    // Optimistic UI state update
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (targetIds.includes(m.id)) {
+          const savedBy = { ...(m.savedBy || {}) };
+          if (nextSavedState) {
+            savedBy[effectiveUserId] = true;
+          } else {
+            delete savedBy[effectiveUserId];
+          }
+          return {
+            ...m,
+            isSaved: nextSavedState,
+            savedBy,
+          };
+        }
+        return m;
+      })
+    );
+
+    // Save in storage & RTDB
+    for (const msgId of targetIds) {
+      await toggleSaveChatMessage(
+        !!selectedGroup,
+        activeChatContextId,
+        msgId,
+        effectiveUserId,
+        nextSavedState
+      );
+    }
+
+    if (nextSavedState) {
+      showToast(
+        `📌 ${targetIds.length > 1 ? `${targetIds.length} messages` : 'Message'} saved in chat! (Snapchat Vanish Mode me delete nahi hoga)`
+      );
+    } else {
+      showToast(
+        `📌 ${targetIds.length > 1 ? `${targetIds.length} messages` : 'Message'} unsaved.`
+      );
+    }
+
+    setIsSelectMode(false);
+    setSelectedMsgIds(new Set());
+    setReactionPickerMsgId(null);
+  };
+
+  // Touch & Mouse Gesture Handlers for Swipe-to-Reply, Long-Press Multi-Select & Emoji Reaction
+  const handleMessageTouchStart = (e: React.TouchEvent, msg: ChatMessage) => {
+    if (isSelectMode) return;
+    const touch = e.touches[0];
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY, msgId: msg.id, time: Date.now() };
+
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      if (navigator.vibrate) {
+        try { navigator.vibrate(40); } catch {}
+      }
+      setIsSelectMode(true);
+      setSelectedMsgIds((prev) => new Set(prev).add(msg.id));
+      if (!msg.isDeletedForEveryone) {
+        setReactionPickerMsgId(msg.id);
+      }
+      touchStartPosRef.current = null;
+      setActiveSwipeMsgId(null);
+      setActiveSwipeOffset(0);
+    }, 380);
+  };
+
+  const handleMessageTouchMove = (e: React.TouchEvent, msg: ChatMessage) => {
+    if (!touchStartPosRef.current || touchStartPosRef.current.msgId !== msg.id) return;
+    const touch = e.touches[0];
+    const diffX = touch.clientX - touchStartPosRef.current.x;
+    const diffY = touch.clientY - touchStartPosRef.current.y;
+
+    // Cancel long press on movement
+    if (Math.abs(diffX) > 8 || Math.abs(diffY) > 8) {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    }
+
+    // Horizontal swipe gesture for reply
+    if (!isSelectMode && Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 10) {
+      const clamped = diffX > 0 ? Math.min(diffX, 65) : Math.max(diffX, -65);
+      setActiveSwipeMsgId(msg.id);
+      setActiveSwipeOffset(clamped);
+    }
+  };
+
+  const handleMessageTouchEnd = (_e: React.TouchEvent, msg: ChatMessage) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+
+    if (activeSwipeMsgId === msg.id) {
+      if (Math.abs(activeSwipeOffset) >= 35) {
+        if (!msg.isDeletedForEveryone) {
+          if (navigator.vibrate) {
+            try { navigator.vibrate(25); } catch {}
+          }
+          handleInitiateReply(msg);
+        }
+      }
+      setActiveSwipeMsgId(null);
+      setActiveSwipeOffset(0);
+    }
+
+    // Double tap detection for reaction popup
+    if (!isSelectMode && !msg.isDeletedForEveryone) {
+      const now = Date.now();
+      const lastTap = lastTapTimeRef.current;
+      if (lastTap && lastTap.id === msg.id && now - lastTap.time < 320) {
+        setReactionPickerMsgId((prev) => (prev === msg.id ? null : msg.id));
+        if (navigator.vibrate) {
+          try { navigator.vibrate(30); } catch {}
+        }
+        lastTapTimeRef.current = null;
+      } else {
+        lastTapTimeRef.current = { id: msg.id, time: now };
+      }
+    }
+  };
+
+  const handleMessageMouseDown = (_e: React.MouseEvent, msg: ChatMessage) => {
+    if (isSelectMode) return;
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      if (navigator.vibrate) {
+        try { navigator.vibrate(40); } catch {}
+      }
+      setIsSelectMode(true);
+      setSelectedMsgIds((prev) => new Set(prev).add(msg.id));
+      if (!msg.isDeletedForEveryone) {
+        setReactionPickerMsgId(msg.id);
+      }
+    }, 420);
+  };
+
+  const handleMessageMouseUp = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
   };
 
   // Helper: format disappearing duration
@@ -761,30 +1214,30 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   // Auto scroll to bottom on new message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isRecordingVoice]);
+  }, [messages]);
 
   // Helper: check if a user is a confirmed friend
   const isFriendWith = (targetUserId: string): boolean => {
-    if (targetUserId === 'peer_iic_ai_tutor') return true; // AI Tutor is always friendly
-    return friends.some((f) => f.id === targetUserId);
+    return isUserFriend(targetUserId);
   };
 
   // Helper: check if a user is blocked
   const isUserBlocked = (targetUserId: string): boolean => {
-    return blockedUsers.some((b) => b.id === targetUserId);
+    return blockedUsers.some((b) => isSameUser(b.id, targetUserId));
   };
 
   // Helper: check if outgoing request is pending
   const hasPendingSentRequest = (targetUserId: string): boolean => {
+    if (isUserFriend(targetUserId)) return false;
     const cleanTarget = sanitizeRtdbKey(targetUserId);
-    if (sentRequests.some((r) => (r.toId === targetUserId || sanitizeRtdbKey(r.toId) === cleanTarget) && r.status === 'PENDING')) {
+    if (sentRequests.some((r) => (isSameUser(r.toId, targetUserId) || sanitizeRtdbKey(r.toId) === cleanTarget) && (r.status === 'PENDING' || !r.status))) {
       return true;
     }
     const raw = localStorage.getItem('nsta_friend_requests');
     if (!raw) return false;
     try {
       const all: FriendRequest[] = JSON.parse(raw);
-      return all.some((r) => r.fromId === user.id && (r.toId === targetUserId || sanitizeRtdbKey(r.toId) === cleanTarget) && r.status === 'PENDING');
+      return all.some((r) => isSameUser(r.fromId, effectiveUserId || user.id) && (isSameUser(r.toId, targetUserId) || sanitizeRtdbKey(r.toId) === cleanTarget) && (r.status === 'PENDING' || !r.status));
     } catch {
       return false;
     }
@@ -888,35 +1341,69 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     }
   };
 
-  // Handle Send Friend Request
+  // Handle Send Friend Request with INSTANT OPTIMISTIC UI (Zero delay)
   const handleSendFriendRequest = async (targetStudent: ChatContact) => {
-    if (!targetStudent || targetStudent.id === user.id || sendingReqIds.has(targetStudent.id)) return;
+    if (
+      !targetStudent ||
+      isSameUser(targetStudent.id, user.id) ||
+      isSameUser(targetStudent.id, effectiveUserId) ||
+      sendingReqIds.has(targetStudent.id)
+    )
+      return;
+
     if (friends.length >= totalFriendLimit) {
       setShowFriendLimitModal(true);
       return;
     }
+
+    const reqId = `${effectiveUserId}_${targetStudent.id}`;
+    const optimisticReq: FriendRequest = {
+      id: reqId,
+      fromId: effectiveUserId,
+      fromName: user.name || 'Student',
+      fromPhoto: user.photoURL || (user as any).avatarUrl || '',
+      fromRole: user.role || 'STUDENT',
+      fromUid: (user as any).uid || auth.currentUser?.uid || '',
+      fromEmail: user.email || auth.currentUser?.email || '',
+      toId: targetStudent.id,
+      toName: targetStudent.name,
+      toPhoto: targetStudent.photoURL || '',
+      toUid: targetStudent.uid || '',
+      toEmail: targetStudent.email || '',
+      status: 'PENDING',
+      timestamp: Date.now(),
+    };
+
+    // ⚡ INSTANT OPTIMISTIC FEEDBACK: UI updates immediately without waiting for network!
+    setSentRequests((prev) => [optimisticReq, ...prev.filter((r) => !isSameUser(r.toId, targetStudent.id))]);
+    setFriendReqPromptStudent(null);
+    showToast(`🚀 Friend request sent to ${targetStudent.name}!`);
     setSendingReqIds((prev) => new Set(prev).add(targetStudent.id));
+
     try {
-      const newReq = await sendFriendRequest(
+      await sendFriendRequest(
         {
           id: effectiveUserId,
           name: user.name || 'Student',
           photoURL: user.photoURL || (user as any).avatarUrl || '',
           role: user.role || 'STUDENT',
+          uid: (user as any).uid || auth.currentUser?.uid || '',
+          email: user.email || auth.currentUser?.email || '',
+          displayId: user.displayId || '',
+          mobile: user.mobile || '',
         },
         {
           id: targetStudent.id,
           name: targetStudent.name,
           photoURL: targetStudent.photoURL || '',
+          uid: targetStudent.uid || '',
+          email: targetStudent.email || '',
+          displayId: targetStudent.displayId || '',
+          mobile: targetStudent.mobile || '',
         }
       );
-      setSentRequests((prev) => [newReq, ...prev.filter((r) => r.toId !== targetStudent.id)]);
-      showToast(`🚀 Friend request sent to ${targetStudent.name}!`);
-      setFriendReqPromptStudent(null);
-      setStudents((prev) => [...prev]);
     } catch (err) {
       console.warn('Error sending friend request:', err);
-      showToast('Friend request bhejte waqt error aaya.');
     } finally {
       setSendingReqIds((prev) => {
         const next = new Set(prev);
@@ -928,46 +1415,94 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   // Handle Cancel Sent Request
   const handleCancelSentRequest = async (toUserId: string, toName: string) => {
-    await cancelFriendRequest(user.id, toUserId);
-    setSentRequests((prev) => prev.filter((r) => r.toId !== toUserId));
+    setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, toUserId)));
     showToast(`Request to ${toName} cancelled.`);
+    try {
+      await cancelFriendRequest(effectiveUserId || user.id, toUserId, allMyUserIds);
+    } catch (err) {
+      console.warn('[Nsta Messenger] cancel friend request error:', err);
+    }
   };
 
-  // Handle Accept Friend Request
+  // Handle Accept Friend Request (Instantly unlocks chat and atomically updates both profiles)
   const handleAcceptRequest = async (req: FriendRequest) => {
     if (friends.length >= totalFriendLimit) {
       setShowFriendLimitModal(true);
       return;
     }
-    await acceptFriendRequest(
-      {
-        id: user.id,
-        name: user.name || 'Student',
-        photoURL: user.photoURL || (user as any).avatarUrl,
-      },
-      {
-        id: req.fromId,
-        name: req.fromName,
-        photoURL: req.fromPhoto,
-      }
-    );
-    showToast(`🎉 ${req.fromName} ke sath dosti ho gayi! Chat unlock ho chuki hai.`);
-    setFriendRequests((prev) => prev.filter((r) => r.id !== req.id));
-    // Auto open chat with new friend
-    setSelectedContact({
+
+    const requesterStudent = students.find((s) => isSameUser(s.id, req.fromId));
+
+    // 1. Optimistic friends list update immediately so Chat unlocks with ZERO delay
+    const newFriendContact: ChatContact = {
       id: req.fromId,
       name: req.fromName,
-      photoURL: req.fromPhoto,
+      photoURL: req.fromPhoto || requesterStudent?.photoURL || '',
       isOnline: true,
-      statusText: 'Friend 🤝 · Chat unlocked',
+      statusText: 'Friend 🤝 · Available to chat',
+      classLevel: 'Friend',
+      uid: (req as any).fromUid || requesterStudent?.uid || '',
+      email: (req as any).fromEmail || requesterStudent?.email || '',
+    };
+
+    setFriends((prev) => {
+      if (prev.some((f) => isSameUser(f.id, req.fromId))) return prev;
+      return [newFriendContact, ...prev];
     });
-    setSelectedGroup(null);
+    setFriendRequests((prev) => prev.filter((r) => r.id !== req.id && !isSameUser(r.fromId, req.fromId)));
+
+    // 2. Instantly open chat with new friend
+    handleOpenContactChat(newFriendContact);
+    showToast(`🎉 ${req.fromName} ke sath dosti ho gayi! Chat unlock ho chuki hai.`);
+
+    // 3. Persist to Firebase in background atomically
+    try {
+      await acceptFriendRequest(
+        {
+          id: effectiveUserId || user.id,
+          name: user.name || 'Student',
+          photoURL: user.photoURL || (user as any).avatarUrl,
+          uid: (user as any).uid || auth.currentUser?.uid || '',
+          email: user.email || auth.currentUser?.email || '',
+          displayId: user.displayId || '',
+        },
+        {
+          id: req.fromId,
+          name: req.fromName,
+          photoURL: req.fromPhoto || requesterStudent?.photoURL || '',
+          uid: (req as any).fromUid || requesterStudent?.uid || '',
+          email: (req as any).fromEmail || requesterStudent?.email || '',
+          displayId: (req as any).fromDisplayId || requesterStudent?.displayId || '',
+        }
+      );
+    } catch (e) {
+      console.warn('[Nsta Messenger] acceptFriendRequest error:', e);
+    }
+  };
+
+  // In-chat 1-tap friend request acceptance
+  const handleAcceptFromChat = async (reqData?: FriendRequest) => {
+    if (!selectedContact) return;
+    const req: FriendRequest = reqData || {
+      id: `${selectedContact.id}_${effectiveUserId}`,
+      fromId: selectedContact.id,
+      fromName: selectedContact.name,
+      fromPhoto: selectedContact.photoURL || '',
+      fromRole: selectedContact.role || 'STUDENT',
+      toId: effectiveUserId,
+      toName: user.name || 'Student',
+      status: 'PENDING',
+      timestamp: Date.now(),
+    };
+    await handleAcceptRequest(req);
   };
 
   // Handle Decline Friend Request
   const handleRejectRequest = async (req: FriendRequest) => {
-    await rejectFriendRequest(user.id, req.fromId);
-    setFriendRequests((prev) => prev.filter((r) => r.id !== req.id));
+    try {
+      await rejectFriendRequest(effectiveUserId || user.id, req.fromId, allMyUserIds);
+    } catch {}
+    setFriendRequests((prev) => prev.filter((r) => r.id !== req.id && !isSameUser(r.fromId, req.fromId)));
     showToast(`Friend Request declined.`);
   };
 
@@ -982,8 +1517,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     const currentReply = replyingTo
       ? {
           id: replyingTo.id,
-          senderName: replyingTo.senderName,
-          text: replyingTo.text,
+          senderName: replyingTo.senderName || 'Student',
+          text: (replyingTo.text || (replyingTo.type === 'VOICE' ? '🎤 Voice message' : '📎 Attachment')).slice(0, 150),
         }
       : undefined;
 
@@ -1066,59 +1601,6 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         'TEXT',
         currentReply ? { replyTo: currentReply } : undefined
       );
-    }
-  };
-
-  // Handle Voice Note Simulation
-  const handleToggleVoiceRecord = () => {
-    const userPhoto = user.photoURL || (user as any).avatarUrl;
-    if (isRecordingVoice) {
-      clearInterval(recordingTimerRef.current);
-      setIsRecordingVoice(false);
-      const duration = Math.max(2, recordingSeconds);
-      setRecordingSeconds(0);
-
-      if (totalDailyMsgLimit !== Infinity) {
-        const today = getTodayStr();
-        const nextSent = dailyMessagesSent + 1;
-        setDailyMessagesSent(nextSent);
-        try {
-          localStorage.setItem(`nsta_daily_msg_${user.id}_${today}`, String(nextSent));
-        } catch {}
-      }
-
-      const voiceText = `🎙️ Voice Note (${duration}s)`;
-      if (selectedContact) {
-        sendPrivateMessage(
-          user.id,
-          user.name || 'Student',
-          userPhoto,
-          selectedContact.id,
-          voiceText,
-          'VOICE',
-          { voiceDuration: duration }
-        );
-      } else if (selectedGroup) {
-        sendGroupMessage(
-          selectedGroup.id,
-          user.id,
-          user.name || 'Student',
-          userPhoto,
-          voiceText,
-          'VOICE',
-          { voiceDuration: duration }
-        );
-      }
-    } else {
-      if (totalDailyMsgLimit !== Infinity && dailyMessagesSent >= totalDailyMsgLimit) {
-        setShowMessageLimitModal(true);
-        return;
-      }
-      setIsRecordingVoice(true);
-      setRecordingSeconds(0);
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingSeconds((prev) => prev + 1);
-      }, 1000);
     }
   };
 
@@ -1411,7 +1893,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   const renderFindFriendsSection = () => {
     const candidateStudents = students.filter((st) => {
-      if (st.id === user.id) return false;
+      if (isSameUser(st.id, user.id) || isSameUser(st.id, effectiveUserId)) return false;
       if (findFriendQuery.trim()) {
         const q = findFriendQuery.toLowerCase();
         const matchesName = st.name.toLowerCase().includes(q);
@@ -1569,10 +2051,10 @@ export const WhatsAppChatModal: React.FC<Props> = ({
             </div>
 
             {candidateStudents.map((student) => {
-              const isFriend = friends.some((f) => f.id === student.id);
+              const isFriend = isUserFriend(student);
               const isBlocked = isUserBlocked(student.id);
-              const isSent = sentRequests.some((r) => r.toId === student.id);
-              const incomingReq = friendRequests.find((r) => r.fromId === student.id);
+              const isSent = !isFriend && sentRequests.some((r) => isSameUser(r.toId, student.id));
+              const incomingReq = !isFriend && friendRequests.find((r) => isSameUser(r.fromId, student.id));
               const isSending = sendingReqIds.has(student.id);
               const sTier = getStudentSubscriptionTier(student);
 
@@ -1669,7 +2151,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                           ) : (
                             <span className="text-[11px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
                               <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block" />
-                              <span>Offline {student.lastSeen ? `• ${formatTime(student.lastSeen)}` : ''}</span>
+                              <span>Offline • last seen {formatLastSeen(student.lastSeen)}</span>
                             </span>
                           )
                         ) : (
@@ -1699,9 +2181,10 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         </span>
                         <button
                           onClick={() => handleOpenContactChat(student)}
-                          className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+                          className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 active:scale-95 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center gap-1 cursor-pointer"
                         >
-                          Chat 💬
+                          <MessageCircle size={13} />
+                          <span>Chat 💬</span>
                         </button>
                       </div>
                     ) : isSent ? (
@@ -1965,6 +2448,110 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               </button>
             </div>
           </div>
+        ) : isSelectMode ? (
+          /* ─── MULTI-SELECT ACTION BAR HEADER (COPY, SAVE, DELETE, SELECT ALL) ─── */
+          <div className="bg-gradient-to-r from-purple-950 via-indigo-950 to-slate-950 text-white px-3 py-2.5 flex items-center justify-between shadow-lg border-b border-purple-500/40 animate-in fade-in duration-150">
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSelectMode(false);
+                  setSelectedMsgIds(new Set());
+                  setReactionPickerMsgId(null);
+                }}
+                className="p-1.5 rounded-full hover:bg-white/15 text-white transition-colors cursor-pointer"
+                title="Cancel Selection (X)"
+              >
+                <X size={20} />
+              </button>
+              <div>
+                <h3 className="font-black text-sm text-white flex items-center gap-1.5">
+                  <span>{selectedMsgIds.size} Selected</span>
+                </h3>
+                <p className="text-[10px] text-purple-200/80 leading-none">Tap message to select/deselect</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {/* Select or Deselect All */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedMsgIds.size === messages.length) {
+                    setSelectedMsgIds(new Set());
+                  } else {
+                    setSelectedMsgIds(new Set(messages.map((m) => m.id)));
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                title="Select or Deselect All"
+              >
+                <CheckCheck size={14} />
+                <span className="hidden sm:inline">{selectedMsgIds.size === messages.length ? 'Deselect All' : 'Select All'}</span>
+              </button>
+
+              {/* Copy Selected Messages */}
+              <button
+                type="button"
+                onClick={handleCopySelectedMessages}
+                disabled={selectedMsgIds.size === 0}
+                className={`px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${
+                  selectedMsgIds.size > 0
+                    ? 'bg-purple-600/80 hover:bg-purple-600 text-white shadow-sm cursor-pointer active:scale-95'
+                    : 'opacity-40 cursor-not-allowed text-slate-400 bg-white/5'
+                }`}
+                title="Copy Selected Messages (Clipboard me copy karein)"
+              >
+                <Copy size={15} />
+                <span className="hidden xs:inline">Copy</span>
+              </button>
+
+              {/* Save / Unsave Selected Messages (Snapchat-style Save in Chat) */}
+              {(() => {
+                const selectedList = messages.filter((m) => selectedMsgIds.has(m.id));
+                const allSaved = selectedList.length > 0 && selectedList.every((m) => isMessageSaved(m, effectiveUserId));
+                return (
+                  <button
+                    type="button"
+                    onClick={() => handleToggleSaveSelectedMessages()}
+                    disabled={selectedMsgIds.size === 0}
+                    className={`px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold ${
+                      selectedMsgIds.size > 0
+                        ? allSaved
+                          ? 'bg-amber-500/25 hover:bg-amber-500/35 text-amber-300 border border-amber-400/40 shadow-sm cursor-pointer active:scale-95'
+                          : 'bg-emerald-600/80 hover:bg-emerald-600 text-white shadow-sm cursor-pointer active:scale-95'
+                        : 'opacity-40 cursor-not-allowed text-slate-400 bg-white/5'
+                    }`}
+                    title={
+                      allSaved
+                        ? 'Unsave message (Snapchat mode me seen ke baad delete hoga)'
+                        : 'Save message (Snapchat Vanish Mode me kabhi delete na hoga unsave hone tak)'
+                    }
+                  >
+                    {allSaved ? <BookmarkCheck size={15} /> : <Bookmark size={15} />}
+                    <span className="hidden xs:inline">{allSaved ? 'Unsave' : 'Save'}</span>
+                  </button>
+                );
+              })()}
+
+              {/* Delete Selected Messages */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedMsgIds.size > 0) setShowBatchDeleteDialog(true);
+                }}
+                disabled={selectedMsgIds.size === 0}
+                className={`p-2 rounded-xl transition-all flex items-center justify-center ${
+                  selectedMsgIds.size > 0
+                    ? 'bg-rose-600/80 hover:bg-rose-600 text-white shadow-sm cursor-pointer active:scale-95'
+                    : 'opacity-40 cursor-not-allowed text-slate-400 bg-white/5'
+                }`}
+                title="Delete Selected Messages"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          </div>
         ) : (
           /* ─── ACTIVE CHAT CONVERSATION HEADER ──────────────────────── */
           <div className="bg-gradient-to-r from-slate-950 via-purple-950 to-slate-900 text-white px-3 py-2 flex items-center justify-between shadow-md border-b border-purple-500/20">
@@ -2042,14 +2629,15 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 </h3>
                 <p className="text-[11px] text-purple-200/80 truncate">
                   {selectedContact ? (
-                    isUserFriend(selectedContact.id) ? (
-                      selectedContact.isOnline ? (
-                        <span className="text-emerald-400 font-semibold">online</span>
-                      ) : (
-                        selectedContact.lastSeen ? `last seen ${formatTime(selectedContact.lastSeen)}` : 'Offline'
-                      )
+                    selectedContact.isOnline ? (
+                      <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block animate-pulse" />
+                        <span>Online</span>
+                      </span>
                     ) : (
-                      'active on Nsta Messenger'
+                      <span className="text-purple-200/90 font-medium">
+                        last seen {formatLastSeen(selectedContact.lastSeen)}
+                      </span>
                     )
                   ) : (
                     `${selectedGroup?.memberCount || 1} members · tap for info`
@@ -2072,23 +2660,6 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 {currentDisappearingTimer !== 0 && (
                   <span className="absolute top-1 right-1 w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
                 )}
-              </button>
-
-              {/* Chat Lock Button (Snapchat-style locking) */}
-              <button
-                onClick={() => {
-                  if (activeChatContextId) {
-                    const locked = toggleChatLock(activeChatContextId);
-                    setIsCurrentChatLocked(locked);
-                    showToast(locked ? '🔒 Chat Locked with PIN' : '🔓 Chat Unlocked');
-                  }
-                }}
-                className={`p-2 rounded-full hover:bg-white/10 transition-colors ${
-                  isCurrentChatLocked ? 'bg-rose-500/25 text-rose-300' : 'text-white'
-                }`}
-                title={isCurrentChatLocked ? 'Chat Locked (Tap to Unlock)' : 'Lock Chat with PIN'}
-              >
-                {isCurrentChatLocked ? <Lock size={17} /> : <Unlock size={17} />}
               </button>
 
               {/* If group is selected, quick friend add button */}
@@ -2138,20 +2709,6 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         <span className="text-[10px] text-amber-500 font-bold">
                           {formatDisappearingDuration(currentDisappearingTimer)}
                         </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowContactMenu(false);
-                          if (activeChatContextId) {
-                            const locked = toggleChatLock(activeChatContextId);
-                            setIsCurrentChatLocked(locked);
-                            showToast(locked ? '🔒 Chat Locked (PIN Protected)' : '🔓 Chat Unlocked');
-                          }
-                        }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
-                      >
-                        <Lock size={14} className="text-indigo-500" />
-                        <span>{isCurrentChatLocked ? 'Unlock Group' : 'Lock Group (PIN)'}</span>
                       </button>
                       <button
                         onClick={() => {
@@ -2238,22 +2795,6 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         <span className="text-[10px] text-amber-500 font-bold">
                           {formatDisappearingDuration(currentDisappearingTimer)}
                         </span>
-                      </button>
-
-                      {/* Lock Chat / Snapchat Vanish Lock */}
-                      <button
-                        onClick={() => {
-                          setShowContactMenu(false);
-                          if (activeChatContextId) {
-                            const locked = toggleChatLock(activeChatContextId);
-                            setIsCurrentChatLocked(locked);
-                            showToast(locked ? '🔒 Chat Locked (PIN Protected)' : '🔓 Chat Unlocked');
-                          }
-                        }}
-                        className="w-full px-3 py-2 text-left text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2"
-                      >
-                        <Lock size={14} className="text-indigo-500" />
-                        <span>{isCurrentChatLocked ? 'Unlock Chat' : 'Lock Chat (PIN)'}</span>
                       </button>
 
                       {/* Set / Change PIN */}
@@ -2356,6 +2897,43 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         {/* ─── BODY CONTAINER ─────────────────────────────────────────── */}
         {!isCurrentChatActive ? (
           <div className="flex-1 overflow-y-auto relative bg-white dark:bg-slate-900">
+            {/* Real-time Friend Request Accepted Banner for Sender */}
+            {newAcceptedFriend && (
+              <div className="mx-3 mt-2.5 p-3 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 text-white shadow-lg flex items-center justify-between gap-3 animate-in slide-in-from-top duration-300 z-30">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-xl shrink-0">
+                    🤝
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-black truncate">
+                      🎉 {newAcceptedFriend.name} ne aapki friend request accept kar li!
+                    </p>
+                    <p className="text-[11px] text-emerald-100 truncate">
+                      Aap dono ab dost ban chuke hain. Direct chat unlock ho chuki hai.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => {
+                      handleOpenContactChat(newAcceptedFriend);
+                      setNewAcceptedFriend(null);
+                    }}
+                    className="px-3.5 py-1.5 bg-white text-emerald-800 rounded-xl text-xs font-black shadow-md hover:bg-emerald-50 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <MessageCircle size={14} />
+                    <span>Chat Shuru Karein 💬</span>
+                  </button>
+                  <button
+                    onClick={() => setNewAcceptedFriend(null)}
+                    className="p-1 hover:bg-black/20 rounded-lg text-emerald-100 cursor-pointer"
+                    title="Dismiss"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* TAB 1: CONFIRMED CHATS (FRIENDS ONLY) */}
             {activeTab === 'CHATS' && (
@@ -2438,7 +3016,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 ) : (
                   <div className="divide-y divide-slate-100 dark:divide-slate-800">
                     {filteredFriends.map((contact) => {
-                      const convId = getDirectConversationId(user.id, contact.id);
+                      const convId = getDirectConversationId(effectiveUserId || user.id, contact.id);
                       const isLocked = isChatLocked(convId);
                       const disTimer = getDisappearingTimer(convId);
 
@@ -2490,7 +3068,16 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                                 </span>
                               </h4>
                               <span className="text-[10px] text-slate-400 font-medium">
-                                {contact.isOnline ? 'Online' : 'Active'}
+                                {contact.isOnline ? (
+                                  <span className="text-emerald-500 dark:text-emerald-400 font-semibold flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse" />
+                                    Online
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 dark:text-slate-400">
+                                    last seen {formatLastSeen(contact.lastSeen)}
+                                  </span>
+                                )}
                               </span>
                             </div>
                             <p className="text-xs text-slate-500 dark:text-slate-400 truncate flex items-center gap-1">
@@ -2499,6 +3086,15 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                             </p>
                           </div>
                         </div>
+
+                        {/* Direct Chat Action Button */}
+                        <button
+                          onClick={() => handleOpenContactChat(contact)}
+                          className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 active:scale-95 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 shrink-0 transition-all cursor-pointer"
+                        >
+                          <MessageCircle size={13} />
+                          <span>Chat</span>
+                        </button>
 
                         {/* More Options Menu: Unfriend / Block */}
                         {contact.id !== 'peer_iic_ai_tutor' && (
@@ -2558,18 +3154,19 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         <span>Classmates & Students (Friend Request Bhejein)</span>
                       </span>
                     </div>
-                    {filteredStudents.filter((st) => st.id !== user.id && !friends.some((f) => f.id === st.id)).length === 0 ? (
+                    {filteredStudents.filter((st) => !isSameUser(st.id, effectiveUserId || user.id)).length === 0 ? (
                       <p className="text-center py-3 text-xs text-slate-400">
                         "{searchQuery}" se koi aur student nahi mila.
                       </p>
                     ) : (
                       <div className="divide-y divide-slate-100 dark:divide-slate-800">
                         {filteredStudents
-                          .filter((st) => st.id !== user.id && !friends.some((f) => f.id === st.id))
+                          .filter((st) => !isSameUser(st.id, effectiveUserId || user.id))
                           .map((st) => {
+                            const isFriend = isUserFriend(st);
                             const isBlocked = isUserBlocked(st.id);
-                            const isSent = sentRequests.some((r) => r.toId === st.id);
-                            const incomingReq = friendRequests.find((r) => r.fromId === st.id);
+                            const isSent = !isFriend && sentRequests.some((r) => isSameUser(r.toId, st.id));
+                            const incomingReq = !isFriend && friendRequests.find((r) => isSameUser(r.fromId, st.id));
                             const isSending = sendingReqIds.has(st.id);
 
                             return (
@@ -2605,12 +3202,20 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                                 <div className="shrink-0">
                                   {isBlocked ? (
                                     <span className="text-[11px] text-rose-500 font-bold">Blocked</span>
+                                  ) : isFriend ? (
+                                    <button
+                                      onClick={() => handleOpenContactChat(st)}
+                                      className="px-2.5 py-1 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer active:scale-95"
+                                    >
+                                      <MessageCircle size={12} />
+                                      <span>Chat 💬</span>
+                                    </button>
                                   ) : isSent ? (
                                     <span className="text-[11px] text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-lg">Sent ⏳</span>
                                   ) : incomingReq ? (
                                     <button
                                       onClick={() => handleAcceptRequest(incomingReq)}
-                                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold"
+                                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold cursor-pointer"
                                     >
                                       Accept ✅
                                     </button>
@@ -2618,7 +3223,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                                     <button
                                       onClick={() => handleSendFriendRequest(st)}
                                       disabled={isSending}
-                                      className="px-2.5 py-1 bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs"
+                                      className="px-2.5 py-1 bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-xs cursor-pointer"
                                     >
                                       {isSending ? (
                                         <Loader2 size={12} className="animate-spin" />
@@ -2805,14 +3410,17 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     ) : (
                       <div className="space-y-2">
                         {sentRequests.map((req) => {
-                          const recipientStudent = students.find((s) => s.id === req.toId);
+                          const recipientStudent = students.find((s) => isSameUser(s.id, req.toId));
                           const recipientTier = recipientStudent ? getStudentSubscriptionTier(recipientStudent) : 'FREE';
+                          const isAcceptedFriend = isUserFriend(req.toId) || (req as any).status === 'ACCEPTED';
 
                           return (
                           <div
                             key={req.id}
                             className={`p-3.5 rounded-2xl border shadow-sm flex items-center justify-between gap-3 ${
-                              recipientTier === 'ULTRA'
+                              isAcceptedFriend
+                                ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800/60'
+                                : recipientTier === 'ULTRA'
                                 ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800/60'
                                 : recipientTier === 'BASIC'
                                 ? 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900/50'
@@ -2858,21 +3466,45 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-0.5">
-                                  ⏳ Request pending approval
-                                </p>
+                                {isAcceptedFriend ? (
+                                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5 flex items-center gap-1">
+                                    <span>✅ Request Accepted! Dost ban chuke hain</span>
+                                  </p>
+                                ) : (
+                                  <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-0.5">
+                                    ⏳ Request pending approval
+                                  </p>
+                                )}
                                 <span className="text-[9px] text-slate-400">
                                   {formatTime(req.timestamp)}
                                 </span>
                               </div>
                             </div>
 
-                            <button
-                              onClick={() => handleCancelSentRequest(req.toId, req.toName || 'User')}
-                              className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-bold transition-all border border-rose-200 dark:border-rose-900/50"
-                            >
-                              Cancel ✕
-                            </button>
+                            {isAcceptedFriend ? (
+                              <button
+                                onClick={() => handleOpenContactChat({
+                                  id: req.toId,
+                                  name: req.toName || recipientStudent?.name || 'Student',
+                                  photoURL: req.toPhoto || recipientStudent?.photoURL,
+                                  isOnline: true,
+                                  statusText: 'Friend 🤝 · Available to chat',
+                                  uid: (req as any).toUid || recipientStudent?.uid || '',
+                                  email: (req as any).toEmail || recipientStudent?.email || '',
+                                })}
+                                className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                              >
+                                <MessageCircle size={13} />
+                                <span>Chat Shuru Karein 💬</span>
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleCancelSentRequest(req.toId, req.toName || 'User')}
+                                className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-bold transition-all border border-rose-200 dark:border-rose-900/50 cursor-pointer"
+                              >
+                                Cancel ✕
+                              </button>
+                            )}
                           </div>
                           );
                         })}
@@ -3328,19 +3960,157 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               {/* Message List */}
               {messages.map((msg) => {
                 const isMe = isSameUser(msg.senderId, effectiveUserId);
+                const isSelected = selectedMsgIds.has(msg.id);
+                const isSwipingThis = activeSwipeMsgId === msg.id;
+                const currentSwipe = isSwipingThis ? activeSwipeOffset : 0;
 
                 return (
                   <div
                     key={msg.id}
-                    className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} group`}
+                    id={`msg-${msg.id}`}
+                    className={`flex items-center gap-2 w-full transition-all duration-200 ${
+                      isMe ? 'justify-end' : 'justify-start'
+                    } ${
+                      highlightedMsgId === msg.id ? 'scale-[1.02] -translate-y-0.5' : ''
+                    }`}
                   >
+                    {/* If in Select Mode and message is received (on left), show checkbox */}
+                    {isSelectMode && !isMe && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedMsgIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(msg.id)) next.delete(msg.id);
+                            else next.add(msg.id);
+                            return next;
+                          });
+                        }}
+                        className="p-1 shrink-0 cursor-pointer text-purple-600 transition-transform active:scale-90"
+                        title={isSelected ? 'Deselect message' : 'Select message'}
+                      >
+                        {isSelected ? (
+                          <div className="w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs shadow-xs">
+                            <Check size={13} className="stroke-[3]" />
+                          </div>
+                        ) : (
+                          <div className="w-5 h-5 rounded-full border-2 border-slate-400 dark:border-slate-500 hover:border-purple-500 transition-colors" />
+                        )}
+                      </button>
+                    )}
+
+                    {/* Interactive Message Bubble Container */}
                     <div
-                      className={`max-w-[85%] md:max-w-[70%] rounded-2xl px-3 py-2 shadow-xs relative text-slate-900 dark:text-white ${
-                        isMe
-                          ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-tr-xs'
-                          : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-tl-xs'
-                      }`}
+                      className="relative max-w-[85%] md:max-w-[70%] select-none touch-pan-y"
+                      onTouchStart={(e) => handleMessageTouchStart(e, msg)}
+                      onTouchMove={(e) => handleMessageTouchMove(e, msg)}
+                      onTouchEnd={(e) => handleMessageTouchEnd(e, msg)}
+                      onMouseDown={(e) => handleMessageMouseDown(e, msg)}
+                      onMouseUp={handleMessageMouseUp}
+                      onMouseLeave={handleMessageMouseUp}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (navigator.vibrate) {
+                          try { navigator.vibrate(40); } catch {}
+                        }
+                        setIsSelectMode(true);
+                        setSelectedMsgIds((prev) => new Set(prev).add(msg.id));
+                        if (!msg.isDeletedForEveryone) {
+                          setReactionPickerMsgId(msg.id);
+                        }
+                      }}
+                      onClick={() => {
+                        if (isSelectMode) {
+                          setSelectedMsgIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(msg.id)) next.delete(msg.id);
+                            else next.add(msg.id);
+                            return next;
+                          });
+                        }
+                      }}
+                      onDoubleClick={() => {
+                        if (!isSelectMode && !msg.isDeletedForEveryone) {
+                          setReactionPickerMsgId((prev) => (prev === msg.id ? null : msg.id));
+                        }
+                      }}
                     >
+                      {/* Swipe-to-reply visual indicator */}
+                      {isSwipingThis && Math.abs(currentSwipe) > 10 && (
+                        <div
+                          className={`absolute top-1/2 -translate-y-1/2 flex items-center justify-center w-7 h-7 rounded-full bg-purple-600 text-white shadow-md transition-all duration-75 pointer-events-none z-10 ${
+                            currentSwipe > 0 ? '-left-10' : '-right-10'
+                          }`}
+                          style={{
+                            opacity: Math.min(1, Math.abs(currentSwipe) / 35),
+                            transform: `translateY(-50%) scale(${Math.min(1.15, Math.abs(currentSwipe) / 32)})`,
+                          }}
+                        >
+                          <Reply size={14} className={currentSwipe < 0 ? 'scale-x-[-1]' : ''} />
+                        </div>
+                      )}
+
+                      {/* Floating Emoji Reaction Popover on Long Press / Double Tap */}
+                      {reactionPickerMsgId === msg.id && (
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className={`absolute -top-11 z-40 flex items-center gap-1 px-2 py-1 bg-white dark:bg-slate-800 rounded-full shadow-2xl border border-purple-200/80 dark:border-purple-800/80 animate-in zoom-in-90 duration-150 max-w-[92vw] overflow-x-auto no-scrollbar ${
+                            isMe ? 'right-0' : 'left-0'
+                          }`}
+                        >
+                          {['❤️', '👍', '😂', '😮', '😢', '🙏', '🔥', '🎉'].map((emoji) => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleReaction(msg.id, emoji);
+                                setReactionPickerMsgId(null);
+                              }}
+                              className="text-lg hover:scale-130 active:scale-95 transition-transform px-1 py-0.5 cursor-pointer leading-none"
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setReactionPickerMsgId(null);
+                            }}
+                            className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors ml-0.5 cursor-pointer"
+                            title="Close"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Message Bubble Body */}
+                      <div
+                        style={{
+                          transform: isSwipingThis ? `translateX(${currentSwipe}px)` : 'translateX(0)',
+                          transition: isSwipingThis ? 'none' : 'transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1)',
+                        }}
+                        className={`rounded-2xl px-3 py-2 shadow-xs relative text-slate-900 dark:text-white transition-all duration-200 cursor-pointer ${
+                          isSelected
+                            ? 'ring-2 ring-purple-500 ring-offset-2 ring-offset-purple-100 dark:ring-offset-purple-950 scale-[0.99] opacity-95'
+                            : highlightedMsgId === msg.id
+                            ? 'ring-2 ring-purple-500 ring-offset-2 ring-offset-purple-50 dark:ring-offset-slate-950 shadow-md'
+                            : ''
+                        } ${
+                          isMessageSaved(msg, effectiveUserId)
+                            ? isMe
+                              ? 'border-2 border-amber-300/80 shadow-md shadow-amber-500/10'
+                              : 'border-2 border-amber-400/90 shadow-md shadow-amber-500/10 bg-amber-50/20 dark:bg-amber-950/20'
+                            : ''
+                        } ${
+                          isMe
+                            ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-tr-xs'
+                            : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-tl-xs'
+                        }`}
+                      >
                       {/* Sender Name for Group Chats */}
                       {selectedGroup && !isMe && msg.type !== 'SYSTEM' && (
                         <p
@@ -3350,11 +4120,69 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         </p>
                       )}
 
+                      {/* Quoted Reply Banner */}
+                      {msg.replyTo && (
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleScrollToMessage(msg.replyTo!.id);
+                          }}
+                          className={`mb-2 p-2 rounded-xl border-l-4 text-xs cursor-pointer transition-opacity hover:opacity-90 select-none ${
+                            isMe
+                              ? 'bg-black/25 border-white text-white'
+                              : 'bg-purple-50 dark:bg-purple-950/70 border-purple-500 text-slate-800 dark:text-slate-200'
+                          }`}
+                          title="Original message par jaane ke liye click karein"
+                        >
+                          <div className="flex items-center gap-1.5 font-bold text-[11px] mb-0.5 opacity-90">
+                            <Reply size={11} className="shrink-0" />
+                            <span className="truncate">{msg.replyTo.senderName || 'Message'}</span>
+                          </div>
+                          <p className="line-clamp-2 text-[11px] opacity-85 leading-snug">
+                            {msg.replyTo.text || 'Message'}
+                          </p>
+                        </div>
+                      )}
+
                       {/* System Message */}
                       {msg.type === 'SYSTEM' ? (
-                        <p className="text-[11px] italic text-center py-1 opacity-90">
-                          {msg.text}
-                        </p>
+                        <div className="py-1 text-center">
+                          <p className="text-[11px] italic opacity-90">{msg.text}</p>
+                          {msg.text?.includes('friend request bheji hai') &&
+                            selectedContact &&
+                            !isUserFriend(selectedContact.id) &&
+                            !messages.some((m) => !isSameUser(m.senderId, effectiveUserId) && m.type !== 'SYSTEM') && (
+                              <div className="mt-2 inline-flex flex-col items-center p-2.5 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800 rounded-xl max-w-xs shadow-xs">
+                                <span className="text-[11px] font-semibold text-purple-900 dark:text-purple-200">
+                                  {isMe
+                                    ? 'Aapne friend request bheji hai (Pending ⏳)'
+                                    : `🤝 ${selectedContact.name} ne request bheji hai`}
+                                </span>
+                                {!isMe && (
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAcceptFromChat((msg as any).friendRequestData)}
+                                      className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center gap-1"
+                                    >
+                                      <Check size={12} />
+                                      <span>Accept ✅</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        rejectFriendRequest(effectiveUserId || user.id, selectedContact.id, allMyUserIds);
+                                        showToast('Request decline kar di gayi.');
+                                      }}
+                                      className="px-2.5 py-1 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-xs font-medium active:scale-95 transition-all"
+                                    >
+                                      Decline
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                        </div>
                       ) : msg.type === 'VOICE' ? (
                         <div className="flex items-center gap-3 py-1 min-w-[180px]">
                           <button
@@ -3408,8 +4236,21 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         <p className="text-xs whitespace-pre-wrap leading-relaxed">{msg.text}</p>
                       )}
 
-                      {/* Footer: Timestamp, Disappearing status, and Read Receipts (Sent / Delivered / Seen) */}
+                      {/* Footer: Timestamp, Disappearing status, Saved status, and Read Receipts (Sent / Delivered / Seen) */}
                       <div className={`flex items-center justify-end gap-1.5 mt-1 text-[10px] ${isMe ? 'text-white/80' : 'text-slate-400'}`}>
+                        {isMessageSaved(msg, effectiveUserId) && (
+                          <span
+                            title="📌 Saved in Chat (Snapchat style: Vanish Mode me tab tak delete nahi hoga jab tak unsave na karein)"
+                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md text-[9px] font-bold mr-0.5 ${
+                              isMe
+                                ? 'bg-amber-400/30 text-amber-200 border border-amber-300/40'
+                                : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-300/60 dark:border-amber-700/50'
+                            }`}
+                          >
+                            <Bookmark size={9} className="fill-amber-400 stroke-amber-400" />
+                            <span>Saved</span>
+                          </span>
+                        )}
                         {msg.disappearingExpiresAt && (
                           <span title="Disappearing message timer active" className="flex items-center gap-0.5 text-[9px] opacity-80">
                             <Clock size={10} />
@@ -3473,40 +4314,42 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
                       {/* Reactions Display */}
                       {msg.reactions && Object.keys(msg.reactions).length > 0 && (
-                        <div className="absolute -bottom-2 right-2 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-full px-1.5 py-0.5 text-[11px] flex items-center gap-0.5">
+                        <div className="absolute -bottom-2 right-2 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 rounded-full px-1.5 py-0.5 text-[11px] flex items-center gap-0.5 pointer-events-none">
                           {Object.values(msg.reactions).map((emoji, idx) => (
                             <span key={idx}>{emoji}</span>
                           ))}
                         </div>
                       )}
                     </div>
-
-                    {/* Quick Reaction & Action Bar on Hover */}
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mt-0.5 px-1.5 py-0.5 bg-white/90 dark:bg-slate-800/90 backdrop-blur-xs rounded-full shadow-sm border border-slate-200/60 dark:border-slate-700/60">
-                      {['❤️', '👍', '😂', '👏', '💡'].map((emoji) => (
-                        <button
-                          key={emoji}
-                          onClick={() => handleReaction(msg.id, emoji)}
-                          className="hover:scale-125 transition-transform text-xs p-0.5"
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-
-                      {/* Message Delete Action Button */}
-                      {!msg.isDeletedForEveryone && (
-                        <button
-                          onClick={() => setDeletingMessage(msg)}
-                          className="hover:scale-110 transition-transform text-xs p-1 text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-full ml-1"
-                          title="Message Delete Karein (For me / For everyone)"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
                   </div>
-                );
-              })}
+
+                  {/* If in Select Mode and message is sent by me (on right), show checkbox */}
+                  {isSelectMode && isMe && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMsgIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(msg.id)) next.delete(msg.id);
+                          else next.add(msg.id);
+                          return next;
+                        });
+                      }}
+                      className="p-1 shrink-0 cursor-pointer text-purple-600 transition-transform active:scale-90"
+                      title={isSelected ? 'Deselect message' : 'Select message'}
+                    >
+                      {isSelected ? (
+                        <div className="w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center text-xs shadow-xs">
+                          <Check size={13} className="stroke-[3]" />
+                        </div>
+                      ) : (
+                        <div className="w-5 h-5 rounded-full border-2 border-slate-400 dark:border-slate-500 hover:border-purple-500 transition-colors" />
+                      )}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
               <div ref={messagesEndRef} />
             </div>
 
@@ -3576,6 +4419,38 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   </span>
                 </div>
               )}
+              {/* Replying To Preview Banner */}
+              {replyingTo && (
+                <div className="mb-2 p-2.5 bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-950/60 dark:to-slate-900 border-l-4 border-purple-600 rounded-r-2xl flex items-center justify-between shadow-xs animate-in slide-in-from-bottom-2 duration-150">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <div className="w-7 h-7 rounded-lg bg-purple-600/15 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+                      <Reply size={15} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider">
+                          Replying to
+                        </span>
+                        <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
+                          {isSameUser(replyingTo.senderId, effectiveUserId) ? 'Yourself' : replyingTo.senderName}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 truncate mt-0.5 font-medium">
+                        {replyingTo.text || (replyingTo.type === 'VOICE' ? '🎤 Voice message' : '📎 Attachment')}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setReplyingTo(null)}
+                    className="p-1.5 hover:bg-purple-200/50 dark:hover:bg-purple-900/50 rounded-full text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors shrink-0 ml-2 cursor-pointer"
+                    title="Cancel Reply"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              )}
+
               {selectedContact && isUserBlocked(selectedContact.id) ? (
                 <div className="flex items-center justify-between p-3 bg-rose-50 dark:bg-rose-950/40 rounded-2xl border border-rose-200 dark:border-rose-900/60">
                   <div className="flex items-center gap-2.5">
@@ -3604,26 +4479,11 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     Unblock Karein
                   </button>
                 </div>
-              ) : isRecordingVoice ? (
-                <div className="flex items-center justify-between px-3 py-2 bg-rose-50 dark:bg-rose-950/40 rounded-2xl border border-rose-200 dark:border-rose-900 animate-pulse">
-                  <div className="flex items-center gap-2">
-                    <span className="w-3 h-3 bg-red-600 rounded-full animate-ping" />
-                    <span className="text-xs font-bold text-red-600 dark:text-red-400">
-                      Recording Voice... ({recordingSeconds}s)
-                    </span>
-                  </div>
-                  <button
-                    onClick={handleToggleVoiceRecord}
-                    className="px-3 py-1 bg-gradient-to-r from-rose-600 to-red-600 hover:opacity-90 text-white rounded-xl text-xs font-black shadow-sm"
-                  >
-                    Send Voice
-                  </button>
-                </div>
               ) : (
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                    className="p-2 text-slate-500 hover:text-purple-600 transition-colors"
+                    className="p-2 text-slate-500 hover:text-purple-600 transition-colors cursor-pointer"
                     title="Emojis"
                   >
                     <Smile size={20} />
@@ -3631,7 +4491,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
                   <button
                     onClick={() => setShowAttachmentMenu(!showAttachmentMenu)}
-                    className="p-2 text-slate-500 hover:text-purple-600 transition-colors"
+                    className="p-2 text-slate-500 hover:text-purple-600 transition-colors cursor-pointer"
                     title="Share Doubt or Notes"
                   >
                     <Paperclip size={20} />
@@ -3639,6 +4499,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
                   <div className="flex-1 relative">
                     <input
+                      ref={chatInputRef}
                       type="text"
                       value={inputText}
                       onChange={(e) => setInputText(e.target.value)}
@@ -3646,7 +4507,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         if (e.key === 'Enter') handleSendMessage();
                       }}
                       placeholder={
-                        selectedGroup
+                        replyingTo
+                          ? `Replying to ${isSameUser(replyingTo.senderId, effectiveUserId) ? 'yourself' : replyingTo.senderName}...`
+                          : selectedGroup
                           ? `Message ${selectedGroup.name}...`
                           : `Message ${selectedContact?.name.split(' ')[0]}...`
                       }
@@ -3654,23 +4517,18 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                     />
                   </div>
 
-                  {inputText.trim() ? (
-                    <button
-                      onClick={handleSendMessage}
-                      className="w-10 h-10 rounded-full bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 hover:opacity-95 text-white flex items-center justify-center shadow-md transition-transform active:scale-95 flex-shrink-0"
-                      title="Send"
-                    >
-                      <Send size={18} className="ml-0.5" />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleToggleVoiceRecord}
-                      className="w-10 h-10 rounded-full bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center shadow-md transition-transform active:scale-95 flex-shrink-0"
-                      title="Record Voice Note"
-                    >
-                      <Mic size={18} />
-                    </button>
-                  )}
+                  <button
+                    onClick={handleSendMessage}
+                    disabled={!inputText.trim()}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center shadow-md transition-all flex-shrink-0 ${
+                      inputText.trim()
+                        ? 'bg-gradient-to-r from-rose-500 via-purple-600 to-indigo-600 hover:opacity-95 text-white active:scale-95 cursor-pointer'
+                        : 'bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-50'
+                    }`}
+                    title="Send"
+                  >
+                    <Send size={18} className="ml-0.5" />
+                  </button>
                 </div>
               )}
             </div>
@@ -4676,7 +5534,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
               <div className="space-y-2 pt-1">
                 {/* Delete for everyone (Allowed if sender is current user or group creator) */}
-                {(deletingMessage.senderId === user.id || selectedGroup?.creatorId === user.id) && (
+                {(isSameUser(deletingMessage.senderId, effectiveUserId) || selectedGroup?.creatorId === user.id) && (
                   <button
                     onClick={() => handleDeleteMessage('FOR_EVERYONE')}
                     className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-2"
@@ -4698,6 +5556,64 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 <button
                   onClick={() => setDeletingMessage(null)}
                   className="w-full py-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── MODAL 1B: BATCH DELETE MESSAGES (MULTI-SELECT) ─── */}
+        {showBatchDeleteDialog && selectedMsgIds.size > 0 && (
+          <div className="fixed inset-0 z-[370] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-5 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 animate-in fade-in zoom-in-95">
+              <div className="text-center">
+                <div className="w-12 h-12 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 flex items-center justify-center mx-auto mb-2">
+                  <Trash2 size={24} />
+                </div>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">
+                  Delete {selectedMsgIds.size} Selected Message{selectedMsgIds.size > 1 ? 's' : ''}?
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
+                  Aap in {selectedMsgIds.size} messages ko kis tarah se delete karna chahte hain?
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                {/* Delete for everyone */}
+                <button
+                  onClick={() => handleBatchDelete('FOR_EVERYONE')}
+                  className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Ban size={15} />
+                  <span>Delete for Everyone</span>
+                </button>
+
+                {/* Delete for me */}
+                <button
+                  onClick={() => handleBatchDelete('FOR_ME')}
+                  className="w-full py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Trash2 size={15} />
+                  <span>Delete for Me ({selectedMsgIds.size})</span>
+                </button>
+
+                {/* Copy Selected Messages */}
+                <button
+                  onClick={() => {
+                    setShowBatchDeleteDialog(false);
+                    handleCopySelectedMessages();
+                  }}
+                  className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Copy size={15} />
+                  <span>Copy {selectedMsgIds.size} Selected Message{selectedMsgIds.size > 1 ? 's' : ''}</span>
+                </button>
+
+                <button
+                  onClick={() => setShowBatchDeleteDialog(false)}
+                  className="w-full py-2 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-xs font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -4738,7 +5654,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   { label: '7 Days (1 Week)', ms: 604800000, desc: '1 week ke baad sabhi messages delete ho jayenge' },
                   { label: '30 Days', ms: 2592000000, desc: '30 din baad messages saaf ho jayenge' },
                   { label: '90 Days', ms: 7776000000, desc: '90 din baad messages automatically delete honge' },
-                  { label: 'Snapchat Vanish Mode', ms: -1, desc: 'Chat dekhne (seen) ke baad aur back jane par turant delete!' },
+                  { label: 'Snapchat Vanish Mode', ms: -1, desc: 'Chat dekhne ke baad aur exit par delete! (Saved in Chat messages unsave hone tak safe rahenge)' },
                   { label: 'Off', ms: 0, desc: 'Messages hamesha safe rahenge' },
                 ].map((opt) => {
                   const isSelected = currentDisappearingTimer === opt.ms;
@@ -4803,17 +5719,16 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               <div>
                 <h3 className="font-bold text-lg text-slate-900 dark:text-white">Chat Locked 🔒</h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Yeh chat PIN se protected hai. Khodne ke liye 4-digit PIN darj karein:
+                  Yeh chat password se protected hai. Kholne ke liye password darj karein:
                 </p>
                 <p className="text-[11px] text-purple-600 font-semibold mt-0.5">
-                  (Default PIN: 1234)
+                  (Default: 1234)
                 </p>
               </div>
 
               <div className="py-2">
                 <input
                   type="password"
-                  maxLength={4}
                   value={pinInput}
                   onChange={(e) => {
                     setPinInput(e.target.value);
@@ -4822,8 +5737,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleVerifyPin();
                   }}
-                  placeholder="• • • •"
-                  className="w-36 text-center text-2xl tracking-[0.4em] font-bold py-2.5 px-4 bg-slate-100 dark:bg-slate-800 border-2 border-purple-400 dark:border-purple-600 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 mx-auto block"
+                  placeholder="Password / PIN"
+                  className="w-52 text-center text-lg font-bold py-2.5 px-4 bg-slate-100 dark:bg-slate-800 border-2 border-purple-400 dark:border-purple-600 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 mx-auto block"
                   autoFocus
                 />
                 {pinError && (
@@ -4857,7 +5772,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
           </div>
         )}
 
-        {/* ─── MODAL 4: SET / CHANGE CHAT PIN ─────────────────────────── */}
+        {/* ─── MODAL 4: SET / CHANGE CHAT PIN / PASSWORD ─────────────────────────── */}
         {showChangePinModal && (
           <div className="fixed inset-0 z-[380] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
             <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl border border-slate-200 dark:border-slate-800 text-center space-y-4 animate-in fade-in zoom-in-95">
@@ -4865,23 +5780,22 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 <KeyRound size={26} />
               </div>
               <div>
-                <h3 className="font-bold text-base text-slate-900 dark:text-white">Set / Change Chat PIN</h3>
+                <h3 className="font-bold text-base text-slate-900 dark:text-white">Set / Change Chat Password</h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Locked chats ko kholne ke liye naya 4-digit PIN banayein:
+                  Naya password ya PIN darj karein (Koi naam, 1234, ya mix):
                 </p>
               </div>
 
               <div className="py-1">
                 <input
                   type="password"
-                  maxLength={4}
                   value={newPinInput}
                   onChange={(e) => {
                     setNewPinInput(e.target.value);
                     setNewPinError(null);
                   }}
-                  placeholder="Naya 4-Digit PIN"
-                  className="w-40 text-center text-xl tracking-[0.3em] font-bold py-2.5 px-3 bg-slate-100 dark:bg-slate-800 border-2 border-indigo-400 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 mx-auto block"
+                  placeholder="Naya Password / PIN"
+                  className="w-52 text-center text-base font-bold py-2.5 px-3 bg-slate-100 dark:bg-slate-800 border-2 border-indigo-400 rounded-2xl text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 mx-auto block"
                   autoFocus
                 />
                 {newPinError && (
@@ -4896,7 +5810,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   onClick={handleChangePin}
                   className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-md transition-all"
                 >
-                  Save Naya PIN
+                  Save Naya Password
                 </button>
                 <button
                   onClick={() => {

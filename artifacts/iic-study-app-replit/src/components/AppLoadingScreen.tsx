@@ -854,4 +854,3 @@ export const AppLoadingScreen: React.FC<AppLoadingScreenProps> = ({
 };
 
 export default AppLoadingScreen;
-

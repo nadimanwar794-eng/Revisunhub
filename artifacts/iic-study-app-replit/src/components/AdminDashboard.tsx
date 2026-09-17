@@ -44,6 +44,8 @@ import { ALL_FEATURES } from '../utils/featureRegistry';
 import { HOME_SECTION_REGISTRY } from '../utils/homeSections';
 import { SPLASH_FONTS, getSplashFontById, ensureGoogleFontLoaded } from '../utils/splashFonts';
 import { NstaFeatureManager } from './admin/NstaFeatureManager';
+import { ReferralPrizesManager } from './admin/ReferralPrizesManager';
+import { PlanComparisonManager } from './admin/PlanComparisonManager';
 // @ts-ignore
 import JSZip from 'jszip';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -138,6 +140,8 @@ type AdminTab =
   | 'SUBSCRIPTION_PLANS_EDITOR'
   | 'CONFIG_REWARDS'
   | 'CONFIG_PRIZES' // NEW: Prize Configuration
+  | 'REFERRAL_PRIZES_MANAGER' // NEW: Refer & Earn Prizes Manager
+  | 'PLAN_COMPARISON_MANAGER' // NEW: Compare (Plan Comparison Matrix Manager)
   | 'FEATURED_CONTENT'
   | 'CONFIG_CHAT'
   | 'UNIVERSAL_PLAYLIST'
@@ -5021,6 +5025,32 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   <h3 className="text-xl font-black text-slate-800">Store Manager</h3>
               </div>
 
+              {/* PLAN COMPARE MATRIX SHORTCUT */}
+              <div className="mb-6 bg-gradient-to-r from-sky-500/10 via-indigo-500/10 to-purple-500/10 p-4 sm:p-5 rounded-2xl border border-sky-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                      <div className="w-12 h-12 rounded-2xl bg-sky-600 text-white flex items-center justify-center font-black shadow-md shrink-0">
+                          <SlidersHorizontal size={24} />
+                      </div>
+                      <div>
+                          <div className="flex items-center gap-2">
+                              <h4 className="font-black text-slate-900 text-sm sm:text-base">Plan Compare Matrix (Compare)</h4>
+                              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200">
+                                  Full Customizer
+                              </span>
+                          </div>
+                          <p className="text-xs text-slate-600 mt-0.5">
+                              Free, Basic & Ultra plans comparison table, sequential reading rules aur limits edit karein.
+                          </p>
+                      </div>
+                  </div>
+                  <button
+                      onClick={() => setActiveTab('PLAN_COMPARISON_MANAGER')}
+                      className="px-4 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-black text-xs rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 shrink-0"
+                  >
+                      <SlidersHorizontal size={15} /> Open Compare Manager
+                  </button>
+              </div>
+
               {/* STORE EVENTS & POPUPS */}
               <div className="mb-8 bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Zap size={18} className="text-yellow-500" /> Advanced Store Events & Logic</h4>
@@ -7048,8 +7078,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       <div>
                           <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
                               Card Rotating Border Animation
-                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${localSettings.cardBorderAnimation !== false ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
-                                  {localSettings.cardBorderAnimation !== false ? 'ACTIVE' : 'OFF'}
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${localSettings.cardBorderAnimation === true ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                                  {localSettings.cardBorderAnimation === true ? 'ACTIVE' : 'OFF'}
                               </span>
                           </h4>
                           <p className="text-[11px] text-slate-500 mt-0.5">
@@ -7060,12 +7090,12 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   <button
                       type="button"
                       onClick={() => {
-                          const nextVal = localSettings.cardBorderAnimation === false ? true : false;
+                          const nextVal = localSettings.cardBorderAnimation === true ? false : true;
                           setLocalSettings({ ...localSettings, cardBorderAnimation: nextVal });
                       }}
-                      className={`w-12 h-6 rounded-full transition-colors relative shrink-0 p-0.5 ${localSettings.cardBorderAnimation !== false ? 'bg-blue-600' : 'bg-slate-300'}`}
+                      className={`w-12 h-6 rounded-full transition-colors relative shrink-0 p-0.5 ${localSettings.cardBorderAnimation === true ? 'bg-blue-600' : 'bg-slate-300'}`}
                   >
-                      <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${localSettings.cardBorderAnimation !== false ? 'translate-x-6' : 'translate-x-0'}`} />
+                      <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${localSettings.cardBorderAnimation === true ? 'translate-x-6' : 'translate-x-0'}`} />
                   </button>
               </div>
 
@@ -7207,6 +7237,25 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   </div>
               </div>
 
+              {/* REFER & EARN PRIZES LINK BANNER */}
+              <div className="bg-gradient-to-r from-amber-50 to-purple-50 p-5 rounded-2xl border border-amber-200 mb-6 flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-3">
+                      <span className="p-2.5 rounded-xl bg-amber-500 text-slate-950 font-black shadow-sm text-lg">
+                          🎁
+                      </span>
+                      <div>
+                          <h4 className="font-black text-slate-900 text-base">Refer & Earn Prizes & Milestones</h4>
+                          <p className="text-xs text-slate-600">Students ke 1 se 50,000+ active friends ke rewards (Coins, Diamonds, VIP Passes) ko customize karein.</p>
+                      </div>
+                  </div>
+                  <button
+                      onClick={() => setActiveTab('REFERRAL_PRIZES_MANAGER')}
+                      className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-purple-600/20 flex items-center gap-1.5 transition-all"
+                  >
+                      Manage Refer Prizes →
+                  </button>
+              </div>
+
               <div className="bg-yellow-50 p-6 rounded-2xl border border-yellow-100 mb-8">
                   <h4 className="font-bold text-yellow-900 mb-4">Add New Prize Rule</h4>
                   <div className="space-y-4">
@@ -7334,6 +7383,31 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
               
               <button onClick={() => handleSaveSettings()} className="w-full mt-6 bg-green-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-green-700">Save Changes</button>
           </div>
+      )}
+
+      {/* --- REFERRAL PRIZES & MILESTONES MANAGER --- */}
+      {activeTab === 'REFERRAL_PRIZES_MANAGER' && (
+          <ReferralPrizesManager
+              settings={localSettings}
+              onSaveSettings={(updated) => {
+                  setLocalSettings(updated);
+                  handleSaveSettings(updated);
+              }}
+              onBack={() => setActiveTab('DASHBOARD')}
+              isSaving={isSettingsSaving}
+          />
+      )}
+
+      {/* --- PLAN COMPARISON MATRIX MANAGER (COMPARE) --- */}
+      {activeTab === 'PLAN_COMPARISON_MANAGER' && (
+          <PlanComparisonManager
+              settings={localSettings}
+              onUpdateSettings={(updated) => {
+                  setLocalSettings(updated);
+                  handleSaveSettings(updated);
+              }}
+              onBack={() => setActiveTab('DASHBOARD')}
+          />
       )}
 
       {/* 3-TIER POPUP CONFIG TAB */}
@@ -7822,6 +7896,29 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               <p className="text-[10px] text-cyan-700 mt-2 leading-snug">
                                   💡 Tip: PNG transparent background ke saath best dikhta hai. Max 1 MB. Changes "Save Settings" press karne ke baad apply honge.
                               </p>
+                          </div>
+
+                          {/* ── Sequential Page Reading Setting ── */}
+                          <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4">
+                              <div className="flex items-center justify-between gap-3">
+                                  <div className="flex-1 min-w-0">
+                                      <label className="text-xs font-black uppercase text-amber-800 flex items-center gap-1.5">
+                                          <span>🔒 Sequential Page Reading Rule (Page 1 Read → Page 2 Unlock)</span>
+                                      </label>
+                                      <p className="text-[11px] text-amber-700 mt-1 leading-snug">
+                                          Jab yeh on rahega, student jab tak Page 1 complete read nahi karega tab tak Page 2 lock rahega. Isi tarah aage ke pages ke liye previous page read karna compulsory hoga.
+                                      </p>
+                                  </div>
+                                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                      <input
+                                          type="checkbox"
+                                          checked={Boolean(localSettings.enforceSequentialPages)}
+                                          onChange={e => setLocalSettings({ ...localSettings, enforceSequentialPages: e.target.checked })}
+                                          className="sr-only peer"
+                                      />
+                                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
+                                  </label>
+                              </div>
                           </div>
                       </>
                   )}

@@ -12,7 +12,7 @@ import { StudentProgressDashboard } from "./StudentProgressDashboard";
 import { SuggestionsPanel } from "./SuggestionsPanel";
 import { applyDeduction, getTotalCredits, getCreditCost } from "../utils/creditSystem";
 import { fireCreditNotify } from "../utils/creditNotify";
-import { getDiamondUnlockCost, UNLOCK_COSTS } from "../utils/limits";
+import { getDiamondUnlockCost, getAllModesDiamondCost, UNLOCK_COSTS } from "../utils/limits";
 import { LevelLeaderboard } from "./LevelLeaderboard";
 import { StudentLevelPage } from "./StudentLevelPage";
 import { TopBarRow2XpBar } from "./TopBarRow2XpBar";
@@ -71,6 +71,7 @@ import { isHomeSectionVisible } from "../utils/homeSections";
 import { checkFeatureAccess } from "../utils/permissionUtils";
 import { downloadAsMHTML, downloadAsHTML, downloadElementAsHTML } from "../utils/downloadUtils";
 import { renderMathInHtml, formatExplanationHtml } from "../utils/mathUtils";
+import { isSequentialReadingEnforced } from "../utils/readingRules";
 import { recordLogin, updateSessionDuration, getLoginHistory, formatDuration, formatLoginTime, type LoginSession } from "../utils/loginHistory";
 import { getNewContentItems, markContentItemSeen, markAllContentItemsSeen, formatContentDate, type ContentNotifItem } from "../utils/contentNotifications";
 import { clearAllRecentReads, saveRecentHomework, getRecentHomeworks, removeRecentHomework, getRecentChapters, removeRecentChapter, saveRecentLucent, getRecentLucent, removeRecentLucent, markNoteFullyRead, getFullyReadMap, markReadToday, getReadingStreak, getReadDates, getBestReadingDay, getTodayItemCount, type RecentChapterEntry, type RecentHwEntry, type RecentLucentEntry, type StreakInfo, type BestDay } from "../utils/recentReads";
@@ -270,7 +271,7 @@ import { MyRoutine } from "./MyRoutine"; // My Routine full-screen
 import { DailyEventPage } from "./DailyEventPage"; // Daily Hub: Routine + Revision + Mistakes + Tracker
 import { CustomBloggerPage } from "./CustomBloggerPage";
 import { ReferralPopup } from "./ReferralPopup";
-import { getReferralStats } from "../utils/referralEngine";
+import { getReferralStats, getEffectiveReferralMilestones, REFERRAL_MILESTONES } from "../utils/referralEngine";
 import { SpeakButton } from "./SpeakButton";
 import { McqSpeakButtons } from "./McqSpeakButtons";
 import { FlashcardMcqView } from "./FlashcardMcqView";
@@ -1178,6 +1179,19 @@ export const StudentDashboard: React.FC<Props> = ({
   ) => {
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
     if (_isAdm) { action(); return; }
+
+    const _allModesKey = pageInfo?.pageLabel ? `${pageInfo.pageLabel} (All Modes)` : '';
+    const _singleModeKey = pageInfo?.pageLabel ? `${pageInfo.pageLabel} - ${reason}` : '';
+    const isPermanentlyUnlocked = !!(
+      (user.unlockedContent || []).includes(reason) ||
+      (_singleModeKey && (user.unlockedContent || []).includes(_singleModeKey)) ||
+      (_allModesKey && (user.unlockedContent || []).includes(_allModesKey))
+    );
+    if (baseCost === 0 || isPermanentlyUnlocked) {
+      action();
+      return;
+    }
+
     const { cost, discountPct } = _getCoinCost(baseCost);
     const total = getTotalCredits(user);
     if (total < cost) {
@@ -1262,6 +1276,7 @@ export const StudentDashboard: React.FC<Props> = ({
   };
 
   // Projector costs 20 CR once and has an independent unlock from every other mode.
+  // Reading, Writing, MCQ, and Projector are NEVER free with any subscription.
   const handleProjectorModeGate = (
     lid: string,
     pi: number,
@@ -1269,7 +1284,7 @@ export const StudentDashboard: React.FC<Props> = ({
     pgInfo?: Parameters<typeof showCoinGate>[5],
   ) => {
     const _isAdm = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
-    if (_isAdm || _isBasicUser || _isUltraUser || isProjectorUnlocked(lid, pi)) { action(); return; }
+    if (_isAdm || isProjectorUnlocked(lid, pi)) { action(); return; }
     showCoinGate(20, 'Projector Mode', () => {
       if (lid) markProjectorUnlocked(lid, pi);
       action();
@@ -5613,6 +5628,15 @@ export const StudentDashboard: React.FC<Props> = ({
       return;
     }
 
+    // Check sequential page reading rule: Free users always ON, Basic/Ultra configurable
+    if (isSequentialReadingEnforced(user, settings) && pageIdx > 0) {
+      const prevRead = isRoutinePageRead(entry.id, pageIdx - 1);
+      if (!prevRead) {
+        showAlert(`🔒 Page ${pageIdx} jab tak complete read na hoga, Page ${pageIdx + 1} lock rahega! Pehle Page ${pageIdx} complete read karein.`, 'INFO', 'Page Locked');
+        return;
+      }
+    }
+
     const doOpen = () => {
       setLucentNoteViewer(entry);
       setLucentPageIndex(pageIdx);
@@ -5698,8 +5722,8 @@ export const StudentDashboard: React.FC<Props> = ({
         ...(_hasMcqOpen ? [
           { mode: 'MCQ', label: 'MCQ Practice', emoji: '🧠', cost: 20,
             isUnlocked: isMcqPageUnlocked(entry.id, pageIdx), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markMcqPageUnlocked(entry.id, pageIdx) },
-          { mode: 'FLASHCARD', label: 'Flashcard', emoji: '🃏', cost: 20,
-            isUnlocked: isFcPageUnlocked(entry.id, pageIdx), isAccessible: _isUltraUser, requiredTier: 'ultra' as const, unlockAction: () => markFcPageUnlocked(entry.id, pageIdx) },
+          { mode: 'FLASHCARD', label: 'Flashcard', emoji: '🃏', cost: _isUltraUser ? 0 : 20,
+            isUnlocked: _isUltraUser || isFcPageUnlocked(entry.id, pageIdx), isAccessible: true, requiredTier: 'ultra' as const, unlockAction: () => markFcPageUnlocked(entry.id, pageIdx) },
         ] : []),
         ...(_hasPdfOpen ? [{ mode: 'PDF',   label: 'PDF',   emoji: '📄', cost: 0, isUnlocked: true, isAccessible: _isBasicUser || _isUltraUser, requiredTier: 'basic' as const, unlockAction: undefined }] : []),
         ...(_hasVidOpen ? [{ mode: 'VIDEO', label: 'Video', emoji: '🎬', cost: 0, isUnlocked: true, isAccessible: _isUltraUser, requiredTier: 'ultra' as const, unlockAction: undefined }] : []),
@@ -6097,9 +6121,6 @@ export const StudentDashboard: React.FC<Props> = ({
     if (unseen.length === 0) return;
     const first = unseen[0];
     setNotifToast(first);
-    const ids = [...seenNotifIds, ...unseen.map(n => n.id)];
-    setSeenNotifIds(ids);
-    try { localStorage.setItem('nst_seen_notifs_v1', JSON.stringify(ids)); } catch {}
     const t = setTimeout(() => setNotifToast(null), 5000);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7277,6 +7298,61 @@ export const StudentDashboard: React.FC<Props> = ({
     return false;
   }).length;
 
+  // TopBar buttons dynamic auto-hide:
+  // After 5s on HOME page: Mail hides first (only when there is nothing unread).
+  // At 6s: Streak hides.
+  // At 7s: Gift hides and the Store/Credits/Diamonds button moves to Row 1.
+  // If user navigates away from HOME (competition, lucent, classes, etc.), components remain hidden.
+  // When user returns to HOME, everything resets back to visible, and the 5s timer restarts.
+  const [hideStreakTopBar, setHideStreakTopBar] = useState(false);
+  const [hideMailTopBar, setHideMailTopBar] = useState(false);
+  const [hideGiftTopBar, setHideGiftTopBar] = useState(false);
+  const [hasHiddenOnHome, setHasHiddenOnHome] = useState(false);
+
+  useEffect(() => {
+    if (activeTab === 'HOME') {
+      setHideStreakTopBar(false);
+      setHideMailTopBar(false);
+      setHideGiftTopBar(false);
+      setHasHiddenOnHome(false);
+
+      // At 5s: Mail hides first, unless it still has something unread/pending.
+      const tMail = setTimeout(() => {
+        const pendingRewards = (user?.inbox || []).filter(
+          (m: any) => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())
+        ).length;
+        const total = (unreadCount || 0) + (unreadNotifCount || 0) + pendingRewards;
+        if (total === 0) {
+          setHideMailTopBar(true);
+        }
+      }, 5000);
+
+      // 1s later: hide the streak independently of the mail button.
+      const tStreak = setTimeout(() => {
+        setHideStreakTopBar(true);
+      }, 6000);
+
+      // 1s later: hide the gift and move the rotating store button to Row 1.
+      const tGift = setTimeout(() => {
+        setHideGiftTopBar(true);
+        setHasHiddenOnHome(true);
+      }, 7000);
+
+      return () => {
+        clearTimeout(tMail);
+        clearTimeout(tStreak);
+        clearTimeout(tGift);
+      };
+    } else {
+      // If elements already hid on HOME, keep them hidden when user navigates to other tabs/classes
+      if (hasHiddenOnHome) {
+        setHideStreakTopBar(true);
+        setHideMailTopBar(true);
+        setHideGiftTopBar(true);
+      }
+    }
+  }, [activeTab, unreadCount, unreadNotifCount, user?.inbox]);
+
   useEffect(() => {
     setCanClaimReward(
       RewardEngine.canClaimDaily(user, dailyStudySeconds, dailyTargetSeconds),
@@ -7764,24 +7840,41 @@ export const StudentDashboard: React.FC<Props> = ({
   useEffect(() => {
     if (!showInbox) return;
     const freshUser = (window as any).__dashUserRef?.current ?? user;
-    if (!freshUser.inbox || freshUser.inbox.length === 0) return;
-    const hasUnread = freshUser.inbox.some((m: any) => {
-      if (m.isClaimed) return false;
-      const now = Date.now();
-      const expired = m.expiresAt && new Date(m.expiresAt).getTime() <= now;
-      if (expired) return false;
-      if (!m.read) return true;
-      const expiringSoon = m.expiresAt && (new Date(m.expiresAt).getTime() - now) < EXPIRY_SOON_MS;
-      if (expiringSoon && !m.expirySoonRead) return true;
-      return false;
-    });
-    if (!hasUnread) return;
-    const updatedInbox = freshUser.inbox.map((m: any) => {
-      const now = Date.now();
-      const expiringSoon = m.expiresAt && (new Date(m.expiresAt).getTime() - now) < EXPIRY_SOON_MS;
-      return { ...m, read: true, ...(expiringSoon ? { expirySoonRead: true } : {}) };
-    });
-    handleUserUpdate({ ...freshUser, inbox: updatedInbox });
+    if (freshUser.inbox && freshUser.inbox.length > 0) {
+      const hasUnread = freshUser.inbox.some((m: any) => {
+        if (m.isClaimed) return false;
+        const now = Date.now();
+        const expired = m.expiresAt && new Date(m.expiresAt).getTime() <= now;
+        if (expired) return false;
+        if (!m.read) return true;
+        const expiringSoon = m.expiresAt && (new Date(m.expiresAt).getTime() - now) < EXPIRY_SOON_MS;
+        if (expiringSoon && !m.expirySoonRead) return true;
+        return false;
+      });
+      if (hasUnread) {
+        const updatedInbox = freshUser.inbox.map((m: any) => {
+          const now = Date.now();
+          const expiringSoon = m.expiresAt && (new Date(m.expiresAt).getTime() - now) < EXPIRY_SOON_MS;
+          return { ...m, read: true, ...(expiringSoon ? { expirySoonRead: true } : {}) };
+        });
+        handleUserUpdate({ ...freshUser, inbox: updatedInbox });
+      }
+    }
+
+    // Opening the mailbox is the user's explicit "seen" action for admin
+    // notifications and new-content alerts. A toast alone must not clear the
+    // mailbox badge.
+    const notificationIds = allNotifications.map(n => n.id);
+    if (notificationIds.length > 0) {
+      const mergedIds = [...new Set([...seenNotifIds, ...notificationIds])];
+      if (mergedIds.length !== seenNotifIds.length) {
+        setSeenNotifIds(mergedIds);
+        try { localStorage.setItem('nst_seen_notifs_v1', JSON.stringify(mergedIds)); } catch {}
+      }
+    }
+    if (_newContentFiltered.length > 0) {
+      markAllContentItemsSeen(user.id, _newContentFiltered.map(item => item.id));
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showInbox]);
 
@@ -9220,32 +9313,32 @@ export const StudentDashboard: React.FC<Props> = ({
                     <>
                       <span className="text-[9px] font-black text-teal-600 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">✏️ WRITE</span>
                       {_isAdminUser && (
-                        <button onClick={() => setShowAdminBoard(true)} className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-200 text-orange-500 active:scale-90 transition shrink-0" title="Whiteboard"><Presentation size={12} /></button>
+                        <button onClick={() => setShowAdminBoard(true)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Whiteboard"><Presentation size={12} /></button>
                       )}
                       {_isAdminUser && (
-                        <button onClick={() => { const src = (activeHw as any)?.htmlNotes || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'hw_html', entryId: activeHw.id || '', title: activeHw.title || 'Competition Note', originalEntry: activeHw }); setHwWriteMenuOpen(false); }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-200 text-orange-500 active:scale-90 transition shrink-0" title="Edit HTML"><Pencil size={12} /></button>
+                        <button onClick={() => { const src = (activeHw as any)?.htmlNotes || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'hw_html', entryId: activeHw.id || '', title: activeHw.title || 'Competition Note', originalEntry: activeHw }); setHwWriteMenuOpen(false); }} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Edit HTML"><Pencil size={12} /></button>
                       )}
-                      <div className="flex items-center rounded-lg overflow-hidden border border-slate-200 bg-slate-50 shrink-0">
-                        <button onClick={zoomOut} className="w-6 h-7 flex items-center justify-center text-slate-600 text-[10px] font-black active:scale-90 transition hover:bg-slate-100">A−</button>
+                      <div className="flex items-center rounded-xl overflow-hidden border border-slate-200 bg-white shadow-sm shrink-0">
+                        <button onClick={zoomOut} className="w-8 h-8 flex items-center justify-center text-slate-600 text-[11px] font-black active:scale-95 transition-all hover:bg-slate-50 hover:text-indigo-600">A−</button>
                         <span className="px-1 text-slate-500 text-[9px] font-bold tabular-nums border-x border-slate-200">{Math.round(noteZoom * 100)}%</span>
-                        <button onClick={zoomIn} className="w-6 h-7 flex items-center justify-center text-slate-600 text-[10px] font-black active:scale-90 transition hover:bg-slate-100">A+</button>
+                        <button onClick={zoomIn} className="w-8 h-8 flex items-center justify-center text-slate-600 text-[11px] font-black active:scale-95 transition-all hover:bg-slate-50 hover:text-indigo-600">A+</button>
                       </div>
-                      <button onClick={handleRotate} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${isLandscape ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Rotate"><RotateCcw size={12} /></button>
+                      <button onClick={handleRotate} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${isLandscape ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title="Rotate"><RotateCcw size={12} /></button>
                       <button
                         onClick={async () => { try { const src = (activeHw as any).htmlNotes || (activeHw as any).chunkNotes || activeHw.notes || ''; await saveOfflineItem({ id: `hw_${activeHw.id}`, type: 'NOTE', title: activeHw.title || 'Homework', subtitle: `Competition · ${activeHw.targetSubject || ''}`, data: { kind: 'LUCENT_CHUNK', chunkNotes: src, lessonTitle: activeHw.title, subject: activeHw.targetSubject } }); setHwSaved(true); showAlert('✅ Saved offline!', 'SUCCESS'); setTimeout(() => setHwSaved(false), 3000); } catch { showAlert('Save failed.', 'ERROR'); } }}
-                        className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${hwSaved ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`}
+                        className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${hwSaved ? "bg-emerald-500 border-emerald-600 text-white shadow-emerald-200" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
                         title={hwSaved ? 'Saved ✓' : 'Save Offline'}
                       ><WifiOff size={12} /></button>
                       {(activeHw as any).htmlNotes && (
-                        <button onClick={async () => { try { const safeTitle = (activeHw.title || 'Homework').replace(/[^a-z0-9_\- ]/gi, '_').slice(0, 60); const _dlOk = await checkAndDoDownload(async () => { await downloadAsMHTML('hw-html-download', safeTitle, { appName: settings?.appShortName || settings?.appName || 'IIC', pageTitle: activeHw.title || 'Homework', subtitle: 'Homework Notes — Write Mode' }); }); if (_dlOk) showAlert('📥 Saved!', 'SUCCESS'); } catch { showAlert('Download failed.', 'ERROR'); } }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-500 active:scale-90 transition shrink-0" title="Download"><Download size={12} /></button>
+                        <button onClick={async () => { try { const safeTitle = (activeHw.title || 'Homework').replace(/[^a-z0-9_\- ]/gi, '_').slice(0, 60); const _dlOk = await checkAndDoDownload(async () => { await downloadAsMHTML('hw-html-download', safeTitle, { appName: settings?.appShortName || settings?.appName || 'IIC', pageTitle: activeHw.title || 'Homework', subtitle: 'Homework Notes — Write Mode' }); }); if (_dlOk) showAlert('📥 Saved!', 'SUCCESS'); } catch { showAlert('Download failed.', 'ERROR'); } }} className="w-8 h-8 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 active:scale-95 shadow-sm transition-all shrink-0" title="Download"><Download size={12} /></button>
                       )}
                     </>
                   )}
                   {/* MCQ controls */}
                   {effectiveMode === 'mcq' && (
                     <>
-                      <button onClick={handleRotate} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${isLandscape ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Rotate"><RotateCcw size={12} /></button>
-                      {_isAdminUser && <button onClick={() => setShowAdminBoard(true)} className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-200 text-orange-500 active:scale-90 transition shrink-0" title="Whiteboard"><Presentation size={12} /></button>}
+                      <button onClick={handleRotate} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${isLandscape ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title="Rotate"><RotateCcw size={12} /></button>
+                      {_isAdminUser && <button onClick={() => setShowAdminBoard(true)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Whiteboard"><Presentation size={12} /></button>}
                     </>
                   )}
                   {/* Q&A — Reveal All / Hide All */}
@@ -13392,41 +13485,122 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* ── REFER & EARN (VIP) TOP BANNER (Directly visible without scrolling) ── */}
-          <div className="px-3 mb-3">
-            <button
-              onClick={() => setShowReferralPopup(true)}
-              className="w-full text-left rounded-2xl p-3.5 relative overflow-hidden transition-all active:scale-[0.98] group cursor-pointer"
-              style={{
-                background: 'linear-gradient(135deg, rgba(16,185,129,0.20), rgba(5,150,105,0.08))',
-                border: '1.5px solid rgba(16,185,129,0.45)',
-                boxShadow: '0 4px 20px rgba(16,185,129,0.18)',
-              }}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 shadow-md relative"
-                  style={{ background: 'linear-gradient(135deg, #10b981, #059669)', border: '1px solid rgba(255,255,255,0.2)' }}>
-                  <Gift size={20} className="text-white" />
-                  <span className="absolute -top-1 -right-1 text-[10px]">👑</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <p className={`text-xs sm:text-sm font-black ${_pTxt}`}>Refer & Earn (VIP)</p>
-                    <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500 text-white uppercase tracking-wider shadow-sm">
-                      FREE PASSES ⚡
+          {/* ── REFER & EARN (VIP) SHOWCASE BANNER (NO GREEN - ROYAL INDIGO / PURPLE / AMBER GOLD) ── */}
+          {(() => {
+            const refStats = getReferralStats(user);
+            const activeInvites = refStats.activeCount || 0;
+            const effectiveMilestones = getEffectiveReferralMilestones(settings?.referralMilestones);
+            const nextMilestone = effectiveMilestones.find(m => activeInvites < m.target) || effectiveMilestones[effectiveMilestones.length - 1];
+            const nextTarget = nextMilestone.target;
+            const canClaimAny = effectiveMilestones.some(m => activeInvites >= m.target && !(user.claimedReferralMilestones || []).includes(m.target));
+
+            return (
+              <div className="px-3 mb-3.5">
+                <div
+                  className="w-full text-left rounded-3xl p-4 relative overflow-hidden transition-all shadow-xl border select-none group"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(88, 28, 135, 0.40) 0%, rgba(49, 46, 129, 0.35) 50%, rgba(120, 53, 15, 0.28) 100%)',
+                    borderColor: 'rgba(192, 132, 252, 0.45)',
+                    boxShadow: '0 8px 28px rgba(76, 29, 149, 0.28), inset 0 1px 1px rgba(255, 255, 255, 0.15)',
+                  }}
+                >
+                  {/* Soft ambient glow accents */}
+                  <div className="absolute -top-10 -right-10 w-36 h-36 bg-amber-400/15 rounded-full blur-2xl pointer-events-none" />
+                  <div className="absolute -bottom-10 -left-10 w-36 h-36 bg-purple-500/20 rounded-full blur-2xl pointer-events-none" />
+
+                  {/* Header Row */}
+                  <div className="relative z-10 flex items-center justify-between gap-2.5 mb-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 shadow-lg relative border border-white/20"
+                        style={{ background: 'linear-gradient(135deg, #7c3aed, #4f46e5)' }}
+                      >
+                        <Gift size={20} className="text-amber-300" />
+                        <span className="absolute -top-1 -right-1 text-[10px]">👑</span>
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h3 className={`text-sm sm:text-base font-black ${_pTxt} tracking-tight`}>
+                            Refer & Earn (VIP)
+                          </h3>
+                          <span className="text-[8px] font-black px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 uppercase tracking-wider shadow-sm font-mono">
+                            FREE PASSES ⚡
+                          </span>
+                        </div>
+                        <p className="text-[10.5px] font-medium leading-tight text-purple-200/90 mt-0.5">
+                          Doston ko invite karein aur paayein VIP Passes, Free Royalty & Coins!
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className="text-[11px] font-black px-2.5 py-1 rounded-xl bg-white/10 text-amber-300 border border-amber-400/30 shrink-0 font-mono">
+                      {activeInvites.toLocaleString('en-IN')} Active
                     </span>
                   </div>
-                  <p className="text-[10.5px] mt-0.5 font-medium leading-tight" style={{ color: _pTxtMutedColor }}>
-                    Doston ko invite karein aur paayein <span className="text-emerald-400 font-bold">1-Year Free Ultra VIP</span> & Royalty!
-                  </p>
-                </div>
-                <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-                  style={{ background: 'rgba(16,185,129,0.2)', border: '1px solid rgba(16,185,129,0.4)' }}>
-                  <ChevronRight size={16} className="text-emerald-400 group-hover:translate-x-0.5 transition-transform" />
+
+                  {/* BIG PROMINENT PRIZE / REWARD SHOWCASE BOX */}
+                  <div
+                    className="relative z-10 p-3 sm:p-3.5 rounded-2xl mb-3 flex flex-col xs:flex-row items-start xs:items-center justify-between gap-3 border"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.14) 0%, rgba(124, 58, 237, 0.18) 100%)',
+                      borderColor: 'rgba(251, 191, 36, 0.38)',
+                      boxShadow: 'inset 0 1px 2px rgba(255, 255, 255, 0.1)',
+                    }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-400 via-amber-300 to-yellow-500 flex items-center justify-center shrink-0 shadow-lg shadow-amber-500/20 text-slate-950 font-black text-xl border border-amber-200">
+                        🎁
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] font-black uppercase tracking-wider text-amber-300 bg-amber-400/15 px-2 py-0.5 rounded border border-amber-400/30">
+                            Prize Box
+                          </span>
+                          <span className="text-[10px] text-purple-200 font-semibold">Target: {nextTarget.toLocaleString('en-IN')} Active</span>
+                        </div>
+                        <p className="text-xs sm:text-sm font-black text-white mt-1 leading-snug truncate">
+                          {nextMilestone.title} ({nextMilestone.rewardDescription})
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-2">
+                      <div className="text-right hidden xs:block">
+                        <span className="text-[9px] text-slate-300 block">Reward Status</span>
+                        <span className="text-[11px] font-black text-amber-300">
+                          {canClaimAny ? 'Ready to Claim!' : `${activeInvites.toLocaleString('en-IN')}/${nextTarget.toLocaleString('en-IN')} Active`}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ACTION BUTTONS ROW: "Claim Prize Now" / "Invite Friends" */}
+                  <div className="relative z-10 flex items-center gap-2 pt-0.5">
+                    <button
+                      onClick={() => setShowReferralPopup(true)}
+                      className="flex-1 py-2.5 px-3.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all active:scale-[0.98] cursor-pointer shadow-lg tracking-wide border border-amber-300"
+                      style={{
+                        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)',
+                        color: '#0f172a',
+                        boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
+                      }}
+                    >
+                      <Gift size={15} strokeWidth={2.6} className="text-slate-950" />
+                      <span>{canClaimAny ? 'Claim VIP Prize Now 🎁' : 'Claim Prizes & Invite Doston 🎁'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => setShowReferralPopup(true)}
+                      className="py-2.5 px-3 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/15 text-purple-200 border border-purple-400/30 transition-all active:scale-95 cursor-pointer shrink-0"
+                    >
+                      <span>Details</span>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </button>
-          </div>
+            );
+          })()}
 
 
           {/* ── LEVEL ACHIEVEMENTS ── */}
@@ -14218,6 +14392,83 @@ export const StudentDashboard: React.FC<Props> = ({
               <ChevronRight size={14} style={{ color: _pTxtMutedColor }} className="shrink-0" />
             </button>
 
+            {/* ── Sequential Page Reading Control (Free: Always ON, Basic/Ultra: Self ON/OFF) ── */}
+            {(() => {
+              const isVip = Boolean(
+                user.isPremium && (user.subscriptionLevel === 'BASIC' || user.subscriptionLevel === 'ULTRA')
+              );
+              // For VIP users: sequentialReadingDisabled === true means OFF, else ON
+              const isEnabled = isVip ? !user.sequentialReadingDisabled : true;
+
+              return (
+                <button
+                  onClick={async () => {
+                    if (!isVip) {
+                      showAlert('🔒 Sequential Page Reading Free users ke liye hamesha ON rehta hai! Isko toggle karne ke liye Store se Basic ya Ultra plan lijiye.', 'INFO', 'Free Plan Rule');
+                      return;
+                    }
+                    try {
+                      const nextDisabled = !user.sequentialReadingDisabled;
+                      const uRef = doc(db, 'users', user.id);
+                      await updateDoc(uRef, { sequentialReadingDisabled: nextDisabled });
+                      const updated = { ...user, sequentialReadingDisabled: nextDisabled };
+                      handleUserUpdate(updated);
+                      showAlert(
+                        nextDisabled
+                          ? '🔓 Sequential Page Reading OFF! Ab aap kisi bhi page par direct ja sakte hain.'
+                          : '🔒 Sequential Page Reading ON! Pehle ka page poora padhne par hi agla page khulega.',
+                        'SUCCESS',
+                        'Reading Rule Updated'
+                      );
+                    } catch {
+                      showAlert('❌ Setting update nahi ho payi.', 'ERROR');
+                    }
+                  }}
+                  className={`w-full px-4 py-4 flex items-center gap-3.5 ${_pHovCls} transition-colors`}
+                  style={{ borderBottom: _pSep }}>
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{
+                    background: isEnabled ? 'rgba(14,165,233,0.15)' : 'rgba(100,116,139,0.15)',
+                    border: `1px solid ${isEnabled ? 'rgba(14,165,233,0.40)' : 'rgba(100,116,139,0.30)'}`,
+                  }}>
+                    <span className="text-base leading-none">{isEnabled ? '📖' : '📑'}</span>
+                  </div>
+                  <div className="flex-1 text-left">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className={`text-sm font-bold ${_pTxt}`}>
+                        Sequential Page Reading
+                      </p>
+                      {isVip ? (
+                        <span className="text-[9px] bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 px-1.5 py-0.5 rounded font-black">
+                          {user.subscriptionLevel} VIP Control
+                        </span>
+                      ) : (
+                        <span className="text-[9px] bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded font-black">
+                          Free (Always ON)
+                        </span>
+                      )}
+                    </div>
+                    <p className={`text-[10px] mt-0.5 ${_pTxtSub}`}>
+                      {isVip
+                        ? isEnabled
+                          ? 'ON (Active) — Pehla page padhne ke baad hi agla page unlock hoga. Tap to turn OFF.'
+                          : 'OFF (Disabled) — Free navigation active! Aap kisi bhi page par ja sakte hain.'
+                        : 'Free students ke liye hamesha ON rehta hai (Strict sequence required).'}
+                    </p>
+                  </div>
+                  {/* Toggle pill */}
+                  <div className="shrink-0 w-10 h-5 rounded-full relative transition-all"
+                    style={{ background: isEnabled ? 'rgba(14,165,233,0.85)' : 'rgba(255,255,255,0.12)' }}>
+                    <div className="absolute top-0.5 w-4 h-4 rounded-full transition-all"
+                      style={{
+                        background: '#fff',
+                        left: isEnabled ? '1.375rem' : '0.125rem',
+                        boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                      }} />
+                  </div>
+                </button>
+              );
+            })()}
+
             {/* ── Theme Override Toggle ── */}
             {(() => {
               // useDefaultTheme !== false  →  LOCKED (default safe state, admin can't override)
@@ -14929,6 +15180,14 @@ export const StudentDashboard: React.FC<Props> = ({
         <div className="relative z-10 flex items-center justify-between w-full px-2.5 sm:px-3 pt-2.5 pb-1.5 gap-1.5">
           {/* LEFT: logo + app name + verified badge — only the badge tap opens What's New */}
           <div className="flex items-center gap-1.5 shrink-0 min-w-0">
+            <img
+              src={settings?.appLogo || "/pwa-192x192.png"}
+              alt="Logo"
+              className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg object-contain bg-white/10 p-0.5 border border-white/20 shrink-0"
+              onError={(e) => {
+                (e.currentTarget as HTMLElement).style.display = 'none';
+              }}
+            />
             <span className="font-black text-[20px] sm:text-[23px] leading-tight tracking-tight uppercase text-white truncate max-w-[85px] xs:max-w-[120px] sm:max-w-none">
               {settings?.appShortName || settings?.appName || "NSTA"}
             </span>
@@ -15536,118 +15795,236 @@ export const StudentDashboard: React.FC<Props> = ({
               );
             })()}
 
-            {/* Refer & Earn (VIP) Gift Box — tap to open Refer & Earn popup */}
+            {/* Refer & Earn (VIP) Gift Box — tap to open Refer & Earn popup. Hides after 6s on Home page */}
             {(() => {
               const refStats = getReferralStats(user);
               const refCount = refStats.totalInvited || 0;
               const hasUsers = refCount > 0;
+              const isHidden = activeTab === 'HOME' && hideGiftTopBar;
 
               return (
-                <button
-                  id="topbar-referral-gift-btn"
-                  onClick={() => setShowReferralPopup(true)}
-                  className="relative inline-flex items-center justify-center h-7 px-2 rounded-full active:scale-95 transition-all shrink-0 cursor-pointer overflow-hidden border select-none group"
-                  style={{
-                    background: hasUsers
-                      ? 'linear-gradient(135deg, rgba(16,185,129,0.30), rgba(5,150,105,0.18))'
-                      : 'linear-gradient(135deg, rgba(236,72,153,0.22), rgba(168,85,247,0.18))',
-                    borderColor: hasUsers ? 'rgba(16,185,129,0.45)' : 'rgba(236,72,153,0.40)',
-                    boxShadow: hasUsers
-                      ? '0 0 10px rgba(16,185,129,0.25)'
-                      : '0 0 10px rgba(236,72,153,0.22)',
-                  }}
-                  title="Refer & Earn (VIP) — Doston ko jodein aur VIP passes paayein"
-                >
-                  {!hasUsers ? (
-                    /* When no user referred yet: only show animated gift box with sparkles */
-                    <div className="flex items-center gap-1">
-                      <span className="text-[14px] leading-none animate-gift-wiggle">
-                        🎁
-                      </span>
-                      <span className="text-[10px] font-black text-pink-200 tracking-tight hidden xs:inline">
-                        VIP
-                      </span>
-                    </div>
-                  ) : (
-                    /* When users are referred: flip smoothly between gift icon and user count */
-                    <div className="relative h-full flex items-center justify-center min-w-[34px]">
-                      {/* Phase 0: Gift Box */}
-                      <div
-                        className={`flex items-center gap-1 transition-all duration-500 ease-out ${
-                          referralGiftPhase === 0
-                            ? 'opacity-100 translate-y-0 scale-100'
-                            : 'opacity-0 -translate-y-2 scale-90 pointer-events-none absolute'
-                        }`}
-                      >
-                        <span className="text-[13px] leading-none select-none animate-gift-wiggle">🎁</span>
-                        <span className="text-[10px] font-black text-emerald-300">VIP</span>
-                      </div>
-
-                      {/* Phase 1: User Count */}
-                      <div
-                        className={`flex items-center gap-0.5 transition-all duration-500 ease-out ${
-                          referralGiftPhase === 1
-                            ? 'opacity-100 translate-y-0 scale-100'
-                            : 'opacity-0 translate-y-2 scale-90 pointer-events-none absolute'
-                        }`}
-                      >
-                        <Users size={12} className="text-emerald-400 shrink-0" />
-                        <span className="font-black text-[11px] tabular-nums text-emerald-300">
-                          {refCount}
+                <div className={`transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] shrink-0 ${
+                  isHidden
+                    ? 'max-w-0 opacity-0 overflow-hidden scale-[.96] pointer-events-none translate-x-1 m-0 p-0'
+                    : 'max-w-[120px] opacity-100 scale-100'
+                }`}>
+                  <button
+                    id="topbar-referral-gift-btn"
+                    onClick={() => setShowReferralPopup(true)}
+                    className="relative inline-flex items-center justify-center h-7 px-2 rounded-full active:scale-95 transition-all shrink-0 cursor-pointer overflow-hidden border select-none group"
+                    style={{
+                      background: hasUsers
+                        ? 'linear-gradient(135deg, rgba(16,185,129,0.30), rgba(5,150,105,0.18))'
+                        : 'linear-gradient(135deg, rgba(236,72,153,0.22), rgba(168,85,247,0.18))',
+                      borderColor: hasUsers ? 'rgba(16,185,129,0.45)' : 'rgba(236,72,153,0.40)',
+                      boxShadow: hasUsers
+                        ? '0 0 10px rgba(16,185,129,0.25)'
+                        : '0 0 10px rgba(236,72,153,0.22)',
+                    }}
+                    title="Refer & Earn (VIP) — Doston ko jodein aur VIP passes paayein"
+                  >
+                    {!hasUsers ? (
+                      /* When no user referred yet: only show animated gift box with sparkles */
+                      <div className="flex items-center gap-1">
+                        <span className="text-[14px] leading-none animate-gift-wiggle">
+                          🎁
+                        </span>
+                        <span className="text-[10px] font-black text-pink-200 tracking-tight hidden xs:inline">
+                          VIP
                         </span>
                       </div>
-                    </div>
-                  )}
+                    ) : (
+                      /* When users are referred: flip smoothly between gift icon and user count */
+                      <div className="relative h-full flex items-center justify-center min-w-[34px]">
+                        {/* Phase 0: Gift Box */}
+                        <div
+                          className={`flex items-center gap-1 transition-all duration-500 ease-out ${
+                            referralGiftPhase === 0
+                              ? 'opacity-100 translate-y-0 scale-100'
+                              : 'opacity-0 -translate-y-2 scale-90 pointer-events-none absolute'
+                          }`}
+                        >
+                          <span className="text-[13px] leading-none select-none animate-gift-wiggle">🎁</span>
+                          <span className="text-[10px] font-black text-emerald-300">VIP</span>
+                        </div>
 
-                  {/* Gentle pulsing ping dot if milestone is reachable or active users present */}
-                  {hasUsers && (
-                    <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 animate-ping opacity-75" />
-                  )}
-                </button>
+                        {/* Phase 1: User Count */}
+                        <div
+                          className={`flex items-center gap-0.5 transition-all duration-500 ease-out ${
+                            referralGiftPhase === 1
+                              ? 'opacity-100 translate-y-0 scale-100'
+                              : 'opacity-0 translate-y-2 scale-90 pointer-events-none absolute'
+                          }`}
+                        >
+                          <Users size={12} className="text-emerald-400 shrink-0" />
+                          <span className="font-black text-[11px] tabular-nums text-emerald-300">
+                            {refCount}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Gentle pulsing ping dot if milestone is reachable or active users present */}
+                    {hasUsers && (
+                      <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 animate-ping opacity-75" />
+                    )}
+                  </button>
+                </div>
               );
             })()}
 
-            {/* Streak — tap to see streak popup */}
-            <button
-              id="topbar-streak-btn"
-              onClick={() => setShowStreakPopup(true)}
-              className="inline-flex items-center gap-1 px-1.5 py-1 rounded-lg active:scale-95 text-white hover:text-amber-200 transition-all shrink-0"
-              title="Aapki Study Streak — Tap karke detail dekhein"
-            >
-              <span className="text-[13px] sm:text-[14px] leading-none select-none">🔥</span>
-              <span className="font-black text-[11px] sm:text-xs tabular-nums text-amber-300">
-                {user.streak > 0 ? user.streak : 0}
-              </span>
-            </button>
+            {/* Streak — tap to see streak popup. Hides after 4s on Home page */}
+            <div className={`transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] shrink-0 ${
+              activeTab === 'HOME' && hideStreakTopBar
+                ? 'max-w-0 opacity-0 overflow-hidden scale-[.96] pointer-events-none translate-x-1 m-0 p-0'
+                : 'max-w-[80px] opacity-100 scale-100'
+            }`}>
+              <button
+                id="topbar-streak-btn"
+                onClick={() => setShowStreakPopup(true)}
+                className="inline-flex items-center gap-1 px-1.5 py-1 rounded-lg active:scale-95 text-white hover:text-amber-200 transition-all shrink-0"
+                title="Aapki Study Streak — Tap karke detail dekhein"
+              >
+                <span className="text-[13px] sm:text-[14px] leading-none select-none">🔥</span>
+                <span className="font-black text-[11px] sm:text-xs tabular-nums text-amber-300">
+                  {user.streak > 0 ? user.streak : 0}
+                </span>
+              </button>
+            </div>
 
-            {/* Mail */}
+            {/* Mail — hides after 5s on Home page UNLESS there are unread messages or pending rewards */}
             {(() => {
               const pendingCreditSub = canClaimCreditSubToday(user) ? 1 : 0;
               const pendingDiamondSub = canClaimDiamondSubToday(user) ? 1 : 0;
               const pendingRewards = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub + pendingDiamondSub;
               const totalCount = unreadCount + unreadNotifCount + _newContentCount + pendingRewards;
+              const isHidden = activeTab === 'HOME' && hideMailTopBar && totalCount === 0;
+
               return (
-                <button
-                  onClick={() => {
-                    if ((pendingCreditSub > 0 || pendingDiamondSub > 0) && unreadCount === 0 && unreadNotifCount === 0) {
-                      setInboxTab('REWARDS');
-                    } else {
-                      setInboxTab('UPDATES');
-                    }
-                    setShowInbox(true);
-                  }}
-                  className={`p-[3px] rounded-xl transition-colors relative text-white shrink-0 active:scale-95${topBarBtnGlow ? ' nst-topbar-btn-glow' : ''}`}
-                  title="Mail & Notifications"
-                >
-                  <Mail size={19} />
-                  {totalCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 bg-red-500 rounded-full text-[9px] text-white font-black flex items-center justify-center">
-                      {totalCount > 9 ? '9+' : totalCount}
-                    </span>
-                  )}
-                </button>
+                <div className={`transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] shrink-0 ${
+                  isHidden
+                    ? 'max-w-0 opacity-0 overflow-hidden scale-[.96] pointer-events-none translate-x-1 m-0 p-0'
+                    : 'max-w-[60px] opacity-100 scale-100'
+                }`}>
+                  <button
+                    onClick={() => {
+                      if ((pendingCreditSub > 0 || pendingDiamondSub > 0) && unreadCount === 0 && unreadNotifCount === 0) {
+                        setInboxTab('REWARDS');
+                      } else {
+                        setInboxTab('UPDATES');
+                      }
+                      setShowInbox(true);
+                    }}
+                    className={`p-[3px] rounded-xl transition-colors relative text-white shrink-0 active:scale-95${topBarBtnGlow ? ' nst-topbar-btn-glow' : ''}`}
+                    title="Mail & Notifications"
+                  >
+                    <Mail size={19} />
+                    {totalCount > 0 && (
+                      <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 bg-red-500 rounded-full text-[9px] text-white font-black flex items-center justify-center">
+                        {totalCount > 9 ? '9+' : totalCount}
+                      </span>
+                    )}
+                  </button>
+                </div>
               );
             })()}
+
+            {/* Store / Credits / Diamonds hand off to Row 1 after the gift collapses.
+                The slot stays mounted so Row 2 can expand into it smoothly. */}
+            <div className={`flex items-center shrink-0 overflow-hidden transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              activeTab === 'HOME' && hideGiftTopBar
+                ? 'max-w-[104px] opacity-100 translate-x-0 nst-topbar-row1-handoff-active'
+                : 'max-w-0 opacity-0 translate-x-2 pointer-events-none'
+            }`}>
+                <div className="nst-topbar-row1-content relative h-7 w-[96px] sm:w-[104px] overflow-hidden flex items-center justify-center select-none">
+                  {/* 1. STORE BUTTON (Index 0) - Premium Emerald Luxury Glass */}
+                  <button
+                    id="topbar-row1-store-btn"
+                    onClick={() => {
+                      setStoreInitialTier('SUBSCRIPTION');
+                      onTabChange("STORE");
+                    }}
+                    className={`absolute top-0.5 bottom-0.5 left-1/2 -translate-x-1/2 w-[94px] flex items-center justify-between px-2 rounded-full border transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                      topBarSwitchIdx === 0
+                        ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                        : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                    }`}
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.32) 0%, rgba(5, 150, 105, 0.22) 100%)',
+                      borderColor: 'rgba(52, 211, 153, 0.50)',
+                      boxShadow: '0 0 7px rgba(16, 185, 129, 0.24), inset 0 1px 1px rgba(255, 255, 255, 0.22)',
+                    }}
+                    title="Store kholein — VIP Plans, Credits aur Offers"
+                  >
+                    <ShoppingBag size={12.5} className="text-emerald-300 group-hover:scale-110 transition-transform shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]" />
+                    <span className="font-black text-[11px] sm:text-[11.5px] text-emerald-100 tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                      Store
+                    </span>
+                    <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-emerald-400 text-slate-950 font-mono uppercase leading-none shadow-xs tracking-wider shrink-0">
+                      VIP
+                    </span>
+                  </button>
+
+                  {/* 2. CREDITS BUTTON (Index 1) - Premium Gold Amber Coin Glass */}
+                  <button
+                    id="topbar-row1-credits-btn"
+                    onClick={() => {
+                      setStoreInitialTier('CREDITS');
+                      onTabChange("STORE");
+                    }}
+                    className={`absolute top-0.5 bottom-0.5 left-1/2 -translate-x-1/2 w-[94px] flex items-center justify-between px-2 rounded-full border transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                      topBarSwitchIdx === 1
+                        ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                        : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                    }`}
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.32) 0%, rgba(217, 119, 6, 0.22) 100%)',
+                      borderColor: 'rgba(251, 191, 36, 0.50)',
+                      boxShadow: '0 0 7px rgba(245, 158, 11, 0.24), inset 0 1px 1px rgba(255, 255, 255, 0.22)',
+                    }}
+                    title="Aapke Credits — Tap karke Store se aur paayein"
+                  >
+                    <span className="text-[12px] leading-none shrink-0 select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">🪙</span>
+                    <span className="font-black text-[11px] sm:text-[11.5px] tabular-nums text-amber-100 group-hover:text-white truncate max-w-[46px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                      {(user.credits || 0).toLocaleString('en-IN')}
+                    </span>
+                    <span className="w-3.5 h-3.5 rounded-full bg-amber-400/30 flex items-center justify-center text-amber-300 border border-amber-400/40 group-hover:scale-110 transition-transform shrink-0">
+                      <Plus size={8} strokeWidth={3.5} />
+                    </span>
+                  </button>
+
+                  {/* 3. DIAMONDS BUTTON (Index 2) - Premium Cyan Diamond Sapphire Glass */}
+                  <button
+                    id="topbar-row1-diamonds-btn"
+                    onClick={() => {
+                      setStoreInitialTier('DIAMONDS');
+                      onTabChange("STORE");
+                    }}
+                    className={`absolute top-0.5 bottom-0.5 left-1/2 -translate-x-1/2 w-[94px] flex items-center justify-between px-2 rounded-full border transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                      topBarSwitchIdx === 2
+                        ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                        : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                    }`}
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.32) 0%, rgba(2, 132, 199, 0.22) 100%)',
+                      borderColor: 'rgba(56, 189, 248, 0.50)',
+                      boxShadow: '0 0 7px rgba(6, 182, 212, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.22)',
+                    }}
+                    title="Aapke Diamonds — Tap karke Diamond Store kholein"
+                  >
+                    <span className="text-[12px] leading-none shrink-0 select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">💎</span>
+                    <span className="font-black text-[11px] sm:text-[11.5px] tabular-nums text-cyan-100 group-hover:text-white truncate max-w-[46px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                      {(user.diamonds ?? 0).toLocaleString('en-IN')}
+                    </span>
+                    <span className="w-3.5 h-3.5 rounded-full bg-cyan-400/30 flex items-center justify-center text-cyan-200 border border-cyan-400/40 group-hover:scale-110 transition-transform shrink-0">
+                      <Plus size={8} strokeWidth={3.5} />
+                    </span>
+                    {canClaimDiamondSubToday(user) && (
+                      <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                    )}
+                  </button>
+                </div>
+            </div>
 
             {/* 3-dot menu */}
             <div className="relative shrink-0">
@@ -15810,11 +16187,36 @@ export const StudentDashboard: React.FC<Props> = ({
                         };
 
                         type ListItem = { label: string; right?: string; locked?: boolean; isTheme?: boolean; action: () => void };
+                        const pendingCreditSub = canClaimCreditSubToday(user) ? 1 : 0;
+                        const pendingDiamondSub = canClaimDiamondSubToday(user) ? 1 : 0;
+                        const pendingRewardsCount = (user.inbox || []).filter(m => (m.type === 'REWARD' || m.type === 'GIFT') && !m.isClaimed && (!m.expiresAt || new Date(m.expiresAt).getTime() > Date.now())).length + pendingCreditSub + pendingDiamondSub;
+                        const totalMailBadge = unreadCount + unreadNotifCount + _newContentCount + pendingRewardsCount;
                         const items: ListItem[] = [
+                          {
+                            label: 'Mail Box',
+                            right: totalMailBadge > 0 ? `📬 ${totalMailBadge}` : '✉️',
+                            action: () => {
+                              if ((pendingCreditSub > 0 || pendingDiamondSub > 0) && unreadCount === 0 && unreadNotifCount === 0) {
+                                setInboxTab('REWARDS');
+                              } else {
+                                setInboxTab('UPDATES');
+                              }
+                              setShowInbox(true);
+                              setShowDotsMenu(false);
+                            },
+                          },
+                          {
+                            label: 'Refer & Earn',
+                            right: '🎁 VIP',
+                            action: () => {
+                              setShowReferralPopup(true);
+                              setShowDotsMenu(false);
+                            },
+                          },
                           {
                             label: 'Store',
                             right: '🛍️',
-                            action: () => { setStoreInitialTier('FREE'); onTabChange("STORE"); setShowDotsMenu(false); },
+                            action: () => { setStoreInitialTier('SUBSCRIPTION'); onTabChange("STORE"); setShowDotsMenu(false); },
                           },
                           {
                             label: 'Diamond Store',
@@ -15956,86 +16358,106 @@ export const StudentDashboard: React.FC<Props> = ({
             settings={settings}
             activeTab={activeTab}
             levelAnimOff={levelAnimOff}
+            isExpanded={activeTab === 'HOME' && hideGiftTopBar}
             onOpenScorePanel={() => setShowScorePanel(true)}
           />
 
-          {/* Right: Rotating button (Store -> Credits -> Diamonds) switching every 3 seconds - background-free */}
-          <div className="flex items-center shrink-0">
-            <div className="relative h-6 w-[88px] sm:w-[98px] overflow-hidden flex items-center justify-center select-none">
-              
-              {/* 1. STORE BUTTON (Index 0) - No Background */}
-              <button
-                id="topbar-row2-store-btn"
-                onClick={() => {
-                  setStoreInitialTier('FREE');
-                  onTabChange("STORE");
-                }}
-                className={`absolute inset-0 flex items-center justify-center gap-1 px-1 w-full h-full transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
-                  topBarSwitchIdx === 0
-                    ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
-                    : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
-                }`}
-                title="Store kholein — Subscriptions, Credits aur Offers"
-              >
-                <ShoppingBag size={12} className="text-emerald-400 group-hover:scale-110 transition-transform shrink-0" />
-                <span className="font-black text-[10.5px] sm:text-[11px] text-emerald-300 tracking-wide">
-                  Store
-                </span>
-                <span className="text-[8px] font-black px-1 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 uppercase leading-tight">
-                  VIP
-                </span>
-              </button>
+          {/* Right: Rotating button (Store -> Credits -> Diamonds) switching every 3 seconds - hidden when shifted to Row 1 */}
+          <div className={`flex items-center shrink-0 overflow-hidden transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            activeTab === 'HOME' && hideGiftTopBar
+              ? 'max-w-0 opacity-0 scale-[.96] pointer-events-none'
+              : 'max-w-[104px] opacity-100 scale-100'
+          }`}>
+              <div className="relative h-7 w-[96px] sm:w-[104px] overflow-hidden flex items-center justify-center select-none">
+                
+                {/* 1. STORE BUTTON (Index 0) - Premium Emerald Luxury Glass */}
+                <button
+                  id="topbar-row2-store-btn"
+                  onClick={() => {
+                    setStoreInitialTier('SUBSCRIPTION');
+                    onTabChange("STORE");
+                  }}
+                  className={`absolute top-0.5 bottom-0.5 left-1/2 -translate-x-1/2 w-[94px] flex items-center justify-between px-2 rounded-full border transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                    topBarSwitchIdx === 0
+                      ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                      : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                  }`}
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.32) 0%, rgba(5, 150, 105, 0.22) 100%)',
+                    borderColor: 'rgba(52, 211, 153, 0.50)',
+                    boxShadow: '0 0 7px rgba(16, 185, 129, 0.24), inset 0 1px 1px rgba(255, 255, 255, 0.22)',
+                  }}
+                  title="Store kholein — VIP Plans, Credits aur Offers"
+                >
+                  <ShoppingBag size={12.5} className="text-emerald-300 group-hover:scale-110 transition-transform shrink-0 drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]" />
+                  <span className="font-black text-[11px] sm:text-[11.5px] text-emerald-100 tracking-wide drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                    Store
+                  </span>
+                  <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-emerald-400 text-slate-950 font-mono uppercase leading-none shadow-xs tracking-wider shrink-0">
+                    VIP
+                  </span>
+                </button>
 
-              {/* 2. CREDITS BUTTON (Index 1) - No Background */}
-              <button
-                id="topbar-row2-credits-btn"
-                onClick={() => {
-                  setStoreInitialTier('CREDITS');
-                  onTabChange("STORE");
-                }}
-                className={`absolute inset-0 flex items-center justify-center gap-0.5 sm:gap-1 px-1 w-full h-full transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
-                  topBarSwitchIdx === 1
-                    ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
-                    : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
-                }`}
-                title="Aapke Credits — Tap karke Store se aur paayein"
-              >
-                <span className="text-[11px] leading-none shrink-0 select-none">🪙</span>
-                <span className="font-black text-[10.5px] tabular-nums text-amber-300 group-hover:text-amber-200 truncate max-w-[50px]">
-                  {(user.credits || 0).toLocaleString('en-IN')}
-                </span>
-                <span className="text-amber-400 group-hover:scale-110 transition-transform shrink-0">
-                  <Plus size={9} strokeWidth={3.5} />
-                </span>
-              </button>
+                {/* 2. CREDITS BUTTON (Index 1) - Premium Gold Amber Coin Glass */}
+                <button
+                  id="topbar-row2-credits-btn"
+                  onClick={() => {
+                    setStoreInitialTier('CREDITS');
+                    onTabChange("STORE");
+                  }}
+                  className={`absolute top-0.5 bottom-0.5 left-1/2 -translate-x-1/2 w-[94px] flex items-center justify-between px-2 rounded-full border transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                    topBarSwitchIdx === 1
+                      ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                      : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                  }`}
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.32) 0%, rgba(217, 119, 6, 0.22) 100%)',
+                    borderColor: 'rgba(251, 191, 36, 0.50)',
+                    boxShadow: '0 0 7px rgba(245, 158, 11, 0.24), inset 0 1px 1px rgba(255, 255, 255, 0.22)',
+                  }}
+                  title="Aapke Credits — Tap karke Store se aur paayein"
+                >
+                  <span className="text-[12px] leading-none shrink-0 select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">🪙</span>
+                  <span className="font-black text-[11px] sm:text-[11.5px] tabular-nums text-amber-100 group-hover:text-white truncate max-w-[46px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                    {(user.credits || 0).toLocaleString('en-IN')}
+                  </span>
+                  <span className="w-3.5 h-3.5 rounded-full bg-amber-400/30 flex items-center justify-center text-amber-300 border border-amber-400/40 group-hover:scale-110 transition-transform shrink-0">
+                    <Plus size={8} strokeWidth={3.5} />
+                  </span>
+                </button>
 
-              {/* 3. DIAMONDS BUTTON (Index 2) - No Background */}
-              <button
-                id="topbar-row2-diamonds-btn"
-                onClick={() => {
-                  setStoreInitialTier('DIAMONDS');
-                  onTabChange("STORE");
-                }}
-                className={`absolute inset-0 flex items-center justify-center gap-0.5 sm:gap-1 px-1 w-full h-full transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
-                  topBarSwitchIdx === 2
-                    ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
-                    : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
-                }`}
-                title="Aapke Diamonds — Tap karke Diamond Store kholein"
-              >
-                <span className="text-[11px] leading-none shrink-0 select-none">💎</span>
-                <span className="font-black text-[10.5px] tabular-nums text-sky-200 group-hover:text-sky-100 truncate max-w-[50px]">
-                  {(user.diamonds ?? 0).toLocaleString('en-IN')}
-                </span>
-                <span className="text-sky-300 group-hover:scale-110 transition-transform shrink-0">
-                  <Plus size={9} strokeWidth={3.5} />
-                </span>
-                {canClaimDiamondSubToday(user) && (
-                  <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-                )}
-              </button>
+                {/* 3. DIAMONDS BUTTON (Index 2) - Premium Cyan Diamond Sapphire Glass */}
+                <button
+                  id="topbar-row2-diamonds-btn"
+                  onClick={() => {
+                    setStoreInitialTier('DIAMONDS');
+                    onTabChange("STORE");
+                  }}
+                  className={`absolute top-0.5 bottom-0.5 left-1/2 -translate-x-1/2 w-[94px] flex items-center justify-between px-2 rounded-full border transition-all duration-500 ease-out cursor-pointer active:scale-95 group ${
+                    topBarSwitchIdx === 2
+                      ? 'opacity-100 translate-y-0 scale-100 pointer-events-auto'
+                      : 'opacity-0 -translate-y-2 scale-95 pointer-events-none'
+                  }`}
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(6, 182, 212, 0.32) 0%, rgba(2, 132, 199, 0.22) 100%)',
+                    borderColor: 'rgba(56, 189, 248, 0.50)',
+                    boxShadow: '0 0 7px rgba(6, 182, 212, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.22)',
+                  }}
+                  title="Aapke Diamonds — Tap karke Diamond Store kholein"
+                >
+                  <span className="text-[12px] leading-none shrink-0 select-none drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">💎</span>
+                  <span className="font-black text-[11px] sm:text-[11.5px] tabular-nums text-cyan-100 group-hover:text-white truncate max-w-[46px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
+                    {(user.diamonds ?? 0).toLocaleString('en-IN')}
+                  </span>
+                  <span className="w-3.5 h-3.5 rounded-full bg-cyan-400/30 flex items-center justify-center text-cyan-200 border border-cyan-400/40 group-hover:scale-110 transition-transform shrink-0">
+                    <Plus size={8} strokeWidth={3.5} />
+                  </span>
+                  {canClaimDiamondSubToday(user) && (
+                    <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                  )}
+                </button>
 
-            </div>
+              </div>
           </div>
         </div>
       </div>
@@ -22388,6 +22810,13 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
           const _isAdm2 = user.role === 'ADMIN' || user.role === 'SUB_ADMIN';
           if (safeIndex < totalPages - 1) {
             const _nextIdx = safeIndex + 1;
+            if (isSequentialReadingEnforced(user, settings)) {
+              const currentRead = isRoutinePageRead(entry.id, safeIndex);
+              if (!currentRead) {
+                showAlert(`🔒 Page ${safeIndex + 1} jab tak complete read na hoga, Page ${_nextIdx + 1} lock rahega! Pehle Page ${safeIndex + 1} poora padhein.`, 'INFO', 'Page Locked');
+                return;
+              }
+            }
             if (_isAdm2 || isPgReadUnlocked(entry.id, _nextIdx)) {
               setLucentPageIndex(_nextIdx);
             } else {
@@ -22765,8 +23194,8 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                 ...(_hasMcqTb ? [
                   { mode: 'MCQ',      label: 'MCQ Practice',  emoji: '🧠', cost: 20,
                     isUnlocked: isMcqPageUnlocked(entry.id, safeIndex), isAccessible: true,                       requiredTier: 'free'  as const, unlockAction: () => markMcqPageUnlocked(entry.id, safeIndex) },
-                  { mode: 'FLASHCARD',label: 'Flashcard',     emoji: '🃏', cost: 20,
-                    isUnlocked: isFcPageUnlocked(entry.id, safeIndex),  isAccessible: _isUltraUser,               requiredTier: 'ultra' as const, unlockAction: () => markFcPageUnlocked(entry.id, safeIndex) },
+                  { mode: 'FLASHCARD',label: 'Flashcard',     emoji: '🃏', cost: _isUltraUser ? 0 : 20,
+                    isUnlocked: _isUltraUser || isFcPageUnlocked(entry.id, safeIndex),  isAccessible: true,                       requiredTier: 'ultra' as const, unlockAction: () => markFcPageUnlocked(entry.id, safeIndex) },
                 ] : []),
                 ...(_hasPdfTb ? [
                   { mode: 'PDF',   label: 'PDF',   emoji: '📄', cost: 0,
@@ -22840,12 +23269,11 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                   showCoinGate(20, 'Q&A Mode', () => { markQaPageUnlocked(entry.id, safeIndex); _doSwitch(); }, undefined, undefined, _pgInfo);
                 } else if (tab === 'FLASHCARD') {
                   if (_isUltraUser || _isAdm) {
-                    if (isFcPageUnlocked(entry.id, safeIndex)) { _doSwitch(); return; }
-                    showCoinGate(20, 'Flashcard', () => { markFcPageUnlocked(entry.id, safeIndex); _doSwitch(); }, undefined, undefined, _pgInfo);
-                  } else {
-                    if (isFcPageUnlocked(entry.id, safeIndex)) { _doSwitch(); return; }
-                    showDiamondOnlyGate(5, 'Flashcard (Ultra Exclusive)', () => { markFcPageUnlocked(entry.id, safeIndex); _doSwitch(); });
+                    _doSwitch();
+                    return;
                   }
+                  if (isFcPageUnlocked(entry.id, safeIndex)) { _doSwitch(); return; }
+                  showDiamondOnlyGate(5, 'Flashcard (Ultra Exclusive)', () => { markFcPageUnlocked(entry.id, safeIndex); _doSwitch(); });
                 }
               };
               return (
@@ -23006,20 +23434,20 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                         </button>
                       )}
                       {_isAdminUser && (
-                        <button onClick={() => { const src = (currentPage as any)?.htmlNotes || (currentPage as any)?.content || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'lucent_html', entryId: entry.id, pageIndex: safeIndex, title: `${entry.lessonTitle} · Page ${currentPage?.pageNo ?? safeIndex + 1}`, originalEntry: entry }); setLucentWriteMenuOpen(false); }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-200 text-orange-500 active:scale-90 transition shrink-0" title="Edit HTML"><Pencil size={12} /></button>
+                        <button onClick={() => { const src = (currentPage as any)?.htmlNotes || (currentPage as any)?.content || ''; setInlineEditContent(src); setInlineEditPoints(splitHtmlIntoBlocks(src)); setInlineEditPointIdx(null); setInlineEditPointDraft(''); setInlineEditModal({ type: 'lucent_html', entryId: entry.id, pageIndex: safeIndex, title: `${entry.lessonTitle} · Page ${currentPage?.pageNo ?? safeIndex + 1}`, originalEntry: entry }); setLucentWriteMenuOpen(false); }} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Edit HTML"><Pencil size={12} /></button>
                       )}
                       {_isAdminUser && (
-                        <button onClick={() => setShowAdminBoard(true)} className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-200 text-orange-500 active:scale-90 transition shrink-0" title="Whiteboard"><Presentation size={12} /></button>
+                        <button onClick={() => setShowAdminBoard(true)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Whiteboard"><Presentation size={12} /></button>
                       )}
-                      <div className="flex items-center rounded-lg overflow-hidden border border-slate-200 bg-slate-50 shrink-0">
-                        <button onClick={zoomOut} className="w-6 h-7 flex items-center justify-center text-slate-600 text-[10px] font-black active:scale-90 transition hover:bg-slate-100">A−</button>
+                      <div className="flex items-center rounded-xl overflow-hidden border border-slate-200 bg-white shadow-sm shrink-0">
+                        <button onClick={zoomOut} className="w-8 h-8 flex items-center justify-center text-slate-600 text-[11px] font-black active:scale-95 transition-all hover:bg-slate-50 hover:text-indigo-600">A−</button>
                         <span className="px-1 text-slate-500 text-[9px] font-bold tabular-nums border-x border-slate-200">{Math.round(noteZoom * 100)}%</span>
-                        <button onClick={zoomIn} className="w-6 h-7 flex items-center justify-center text-slate-600 text-[10px] font-black active:scale-90 transition hover:bg-slate-100">A+</button>
+                        <button onClick={zoomIn} className="w-8 h-8 flex items-center justify-center text-slate-600 text-[11px] font-black active:scale-95 transition-all hover:bg-slate-50 hover:text-indigo-600">A+</button>
                       </div>
-                      <button onClick={handleRotate} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${isLandscape ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Rotate"><RotateCcw size={12} /></button>
-                      <button onClick={() => handleLucentSaveOffline(true)} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentSaved ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title={lucentSaved ? 'Saved ✓' : 'Save Offline'}><WifiOff size={12} /></button>
+                      <button onClick={handleRotate} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${isLandscape ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title="Rotate"><RotateCcw size={12} /></button>
+                      <button onClick={() => handleLucentSaveOffline(true)} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${lucentSaved ? "bg-emerald-500 border-emerald-600 text-white shadow-emerald-200" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title={lucentSaved ? 'Saved ✓' : 'Save Offline'}><WifiOff size={12} /></button>
                       {(currentPage?.htmlNotes || currentPage?.content) && (
-                        <button onClick={async () => { try { const pageLabel = `Page ${currentPage?.pageNo || safeIndex + 1}`; const safeTitle = `${entry.lessonTitle || 'Lucent'} · ${pageLabel}`.replace(/[^a-z0-9_\- ·]/gi, '_').slice(0, 60); const _dlOk = await checkAndDoDownload(async () => { await downloadAsMHTML('lucent-html-download', safeTitle, { appName: settings?.appShortName || settings?.appName || 'IIC', pageTitle: `${entry.lessonTitle || 'Lucent'} · ${pageLabel}`, subtitle: 'Write Mode Notes' }); }); if (_dlOk) showAlert('📥 Saved!', 'SUCCESS'); } catch { showAlert('Download failed.', 'ERROR'); } }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-slate-100 border border-slate-200 text-slate-500 active:scale-90 transition shrink-0" title="Download"><Download size={12} /></button>
+                        <button onClick={async () => { try { const pageLabel = `Page ${currentPage?.pageNo || safeIndex + 1}`; const safeTitle = `${entry.lessonTitle || 'Lucent'} · ${pageLabel}`.replace(/[^a-z0-9_\- ·]/gi, '_').slice(0, 60); const _dlOk = await checkAndDoDownload(async () => { await downloadAsMHTML('lucent-html-download', safeTitle, { appName: settings?.appShortName || settings?.appName || 'IIC', pageTitle: `${entry.lessonTitle || 'Lucent'} · ${pageLabel}`, subtitle: 'Write Mode Notes' }); }); if (_dlOk) showAlert('📥 Saved!', 'SUCCESS'); } catch { showAlert('Download failed.', 'ERROR'); } }} className="w-8 h-8 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 active:scale-95 shadow-sm transition-all shrink-0" title="Download"><Download size={12} /></button>
                       )}
                     </>
                   )}
@@ -23080,7 +23508,7 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
                       >
                         <LayoutGrid size={12} />
                       </button>
-                      <button onClick={handleRotate} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${isLandscape ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Rotate"><RotateCcw size={12} /></button>
+                      <button onClick={handleRotate} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${isLandscape ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title="Rotate"><RotateCcw size={12} /></button>
                     </>
                   )}
 
@@ -23111,7 +23539,7 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
 
                   {/* VIDEO MODE */}
                   {lucentActiveTab === 'VIDEO' && (
-                    <button onClick={handleRotate} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${isLandscape ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Rotate"><RotateCcw size={12} /></button>
+                    <button onClick={handleRotate} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${isLandscape ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title="Rotate"><RotateCcw size={12} /></button>
                   )}
 
                   {/* Q&A MODE — Reveal All / Hide All */}
@@ -23143,7 +23571,7 @@ isActive: !showStarredPage && !showRevisionHubScreen && !showMyRoutine && !showP
 
                   {/* Admin Whiteboard (PDF/Video/Audio tabs) */}
                   {lucentActiveTab !== 'NOTES' && lucentActiveTab !== 'MCQS' && lucentActiveTab !== 'QA' && _isAdminUser && (
-                    <button onClick={() => setShowAdminBoard(true)} className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-200 text-orange-500 active:scale-90 transition shrink-0" title="Whiteboard"><Presentation size={12} /></button>
+                    <button onClick={() => setShowAdminBoard(true)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Whiteboard"><Presentation size={12} /></button>
                   )}
                 </div>
                 {/* 📖 Live session pts — fixed right side of slim bar */}
@@ -25660,7 +26088,8 @@ RULES:
           mode: 'READING' | 'WRITING' | 'MCQ' | 'QA' | 'FLASHCARD',
           action: () => void,
         ) => {
-          if (_isAdminUser || fl?.isCompetition) { action(); return; }
+          if (_isAdminUser) { action(); return; }
+          if (mode === 'FLASHCARD' && _isUltraUser) { action(); return; }
           const modeConfig = {
             READING: { label: 'Reading Mode', isUnlocked: isPgReadUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markPgReadUnlocked(_overlayUnlockId, _overlayUnlockPage) },
             WRITING: { label: 'Writing Mode', isUnlocked: isPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markPgWriteUnlocked(_overlayUnlockId, _overlayUnlockPage) },
@@ -25669,6 +26098,13 @@ RULES:
             FLASHCARD: { label: 'Flashcard', isUnlocked: isFcPageUnlocked(_overlayUnlockId, _overlayUnlockPage), mark: () => markFcPageUnlocked(_overlayUnlockId, _overlayUnlockPage) },
           }[mode];
           if (modeConfig.isUnlocked) { action(); return; }
+          if (mode === 'FLASHCARD') {
+            showDiamondOnlyGate(5, 'Flashcard (Ultra Exclusive)', () => {
+              modeConfig.mark();
+              action();
+            });
+            return;
+          }
           showCoinGate(20, modeConfig.label, () => {
             modeConfig.mark();
             action();
@@ -25686,7 +26122,7 @@ RULES:
              { mode: 'PROJECTOR', label: 'Projector Mode', emoji: '📽️', cost: 20, isUnlocked: isProjectorUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markProjectorUnlocked(_overlayUnlockId, _overlayUnlockPage) },
              ...(fl.hasMcq ? [
                { mode: 'MCQ', label: 'MCQ Practice', emoji: '🧠', cost: 20, isUnlocked: isMcqPageUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: true, requiredTier: 'free' as const, unlockAction: () => markMcqPageUnlocked(_overlayUnlockId, _overlayUnlockPage) },
-               { mode: 'FLASHCARD', label: 'Flashcard', emoji: '🃏', cost: 20, isUnlocked: isFcPageUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: _isUltraUser, requiredTier: 'ultra' as const, unlockAction: () => markFcPageUnlocked(_overlayUnlockId, _overlayUnlockPage) },
+               { mode: 'FLASHCARD', label: 'Flashcard', emoji: '🃏', cost: _isUltraUser ? 0 : 20, isUnlocked: _isUltraUser || isFcPageUnlocked(_overlayUnlockId, _overlayUnlockPage), isAccessible: true, requiredTier: 'ultra' as const, unlockAction: () => markFcPageUnlocked(_overlayUnlockId, _overlayUnlockPage) },
              ] : []),
              ...(fl.hasPdf ? [{ mode: 'PDF', label: 'PDF', emoji: '📄', cost: 0, isUnlocked: true, isAccessible: _isBasicUser || _isUltraUser, requiredTier: 'basic' as const, unlockAction: undefined }] : []),
              ...(fl.hasVideo ? [{ mode: 'VIDEO', label: 'Video', emoji: '🎬', cost: 0, isUnlocked: true, isAccessible: _isUltraUser, requiredTier: 'ultra' as const, unlockAction: undefined }] : []),
@@ -28686,11 +29122,36 @@ RULES:
         const { cost, originalCost, discountPct, reason, action, onCancel, selectedBulk, bulkOption, pageInfo, diamondOnly, costDiamonds, diamondCostOverride } = coinGate;
         const isDiamondOnly = !!diamondOnly;
         const diamondCostOnly = costDiamonds || 5;
+
+        // User subscription tier for study modes:
+        const userTier: 'FREE' | 'BASIC' | 'ULTRA' = (_isUltraUser || user.role === 'ADMIN' || user.role === 'SUB_ADMIN')
+          ? 'ULTRA'
+          : _isBasicUser
+            ? 'BASIC'
+            : 'FREE';
+
+        // 7 Modes Diamond Pricing:
+        // - Free user: 7 modes × 5 = 35 Diamonds
+        // - Basic user: PDF free in Basic -> 6 modes × 5 = 30 Diamonds
+        // - Ultra user: PDF, Flashcard, Video free in Ultra -> 4 modes × 5 = 20 Diamonds
+        const allModesDiamondInfo = getAllModesDiamondCost(userTier);
+
+        const _allModesKey = pageInfo?.pageLabel ? `${pageInfo.pageLabel} (All Modes)` : '';
+        const _singleModeKey = pageInfo?.pageLabel ? `${pageInfo.pageLabel} - ${reason}` : '';
         const isPermanentlyUnlocked = !!(
           (user.unlockedContent || []).includes(reason) ||
+          (_singleModeKey && (user.unlockedContent || []).includes(_singleModeKey)) ||
+          (_allModesKey && (user.unlockedContent || []).includes(_allModesKey)) ||
           (pageInfo?.pageLabel && (user.unlockedContent || []).includes(pageInfo.pageLabel))
         );
         const isFree = !isDiamondOnly && (cost === 0 || isPermanentlyUnlocked);
+        if (isFree) {
+          setTimeout(() => {
+            setCoinGate(null);
+            action();
+          }, 0);
+          return null;
+        }
         const hasPageInfo = !isDiamondOnly && !!pageInfo;
         const isDisc50 = discountPct === 50;
         const isDisc25 = discountPct === 25;
@@ -28702,7 +29163,23 @@ RULES:
           : [];
         const _bulkModeCost = _lockableModes.reduce((s, m) => s + Math.max(1, Math.floor(m.cost * discMult)), 0);
         const _bulkModeCostDiscounted = Math.floor(_bulkModeCost * 0.8); // 20% off for Sabhi Modes bundle
-        const _hasMultiModes = _lockableModes.length > 1; // more than just the current mode
+        const _hasMultiModes = hasPageInfo && ((pageInfo!.availableModes || []).length > 1 || _lockableModes.length > 1);
+
+        // Effective Diamond Cost based on selection:
+        const effectiveDiamondCost = (() => {
+          if (diamondCostOverride) return diamondCostOverride;
+          if (isDiamondOnly) return costDiamonds || 5;
+          if (hasPageInfo) {
+            if (selectedBulk) {
+              return allModesDiamondInfo.totalDiamonds;
+            }
+            return 5; // Yahi Mode (1 single mode = 5 diamonds)
+          }
+          if (bulkOption && selectedBulk) {
+            return Math.max(5, bulkOption.count * 5);
+          }
+          return getDiamondUnlockCost(activeCost, reason);
+        })();
 
         // ── Active cost/action based on selection ──
         const activeCost = hasPageInfo
@@ -28710,7 +29187,10 @@ RULES:
           : (selectedBulk && bulkOption ? bulkOption.totalCost : cost);
         const activeAction = hasPageInfo
           ? (selectedBulk
-              ? () => { _lockableModes.forEach(m => { if (m.unlockAction) m.unlockAction(); }); action(); }
+              ? () => {
+                  (pageInfo!.availableModes || []).forEach(m => { if (m.unlockAction) m.unlockAction(); });
+                  action();
+                }
               : action)
           : (selectedBulk && bulkOption ? bulkOption.action : action);
         const canAfford = balance >= activeCost;
@@ -28875,14 +29355,17 @@ RULES:
                     </div>
                     <p className="text-[11px] font-black leading-tight mb-1 line-clamp-2" style={{ color: 'var(--nst-color-brand)' }}>{reason}</p>
                     <div className="mt-auto">
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{cost}</span>
-                        <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>CR</span>
-                        {(isDisc50 || isDisc25) && <span className="text-[10px] text-slate-400 line-through">{originalCost}</span>}
+                      <div className="flex items-baseline justify-between gap-1">
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-[20px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{cost}</span>
+                          <span className="text-[10px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>CR</span>
+                          {(isDisc50 || isDisc25) && <span className="text-[10px] text-slate-400 line-through">{originalCost}</span>}
+                        </div>
+                        <span className="text-[12px] font-black text-sky-600 shrink-0">💎 5</span>
                       </div>
                       {isDisc50 && <p className="text-[8px] font-black text-emerald-600">🎉 50% off</p>}
                       {isDisc25 && <p className="text-[8px] font-black text-amber-600">⚡ 25% off</p>}
-                      <p className="text-[9px] text-slate-400 font-semibold mt-0.5">{pageInfo!.pageLabel || '1 page'}</p>
+                      <p className="text-[9px] text-slate-400 font-semibold mt-0.5">{pageInfo!.pageLabel || '1 page'} · 1 Mode</p>
                     </div>
                   </button>
 
@@ -28931,14 +29414,19 @@ RULES:
                           );
                         })}
                       </div>
-                      {/* Total — 20% discounted */}
+                      {/* Total — Coins & Diamonds */}
                       <div className="border-t border-slate-200/70 pt-1.5 mt-auto">
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-[22px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{_bulkModeCostDiscounted}</span>
-                          <span className="text-[11px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>CR</span>
-                          <span className="text-[10px] text-slate-400 line-through">{_bulkModeCost}</span>
+                        <div className="flex items-baseline justify-between gap-1">
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-[20px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>{_bulkModeCostDiscounted}</span>
+                            <span className="text-[10px] font-bold" style={{ color: 'var(--nst-color-brand-60, #818cf8)' }}>CR</span>
+                            <span className="text-[10px] text-slate-400 line-through">{_bulkModeCost}</span>
+                          </div>
+                          <span className="text-[12px] font-black text-sky-600 shrink-0">💎 {allModesDiamondInfo.totalDiamonds}</span>
                         </div>
-                        <p className="text-[9px] font-black leading-none" style={{ color: 'var(--nst-color-brand)' }}>🔓 Sab modes unlock — 20% off</p>
+                        <p className="text-[8.5px] font-black leading-tight mt-0.5" style={{ color: 'var(--nst-color-brand)' }}>
+                          🔓 Sabhi Modes · {allModesDiamondInfo.breakdown}
+                        </p>
                       </div>
                     </button>
                   )}
@@ -29080,7 +29568,7 @@ RULES:
                   <button
                     type="button"
                     onClick={() => {
-                       const diamondCost = diamondCostOverride || getDiamondUnlockCost(activeCost, reason);
+                      const diamondCost = effectiveDiamondCost;
                       const freshU = (window as any).__dashUserRef?.current ?? userRef.current ?? user;
                       const userDiamonds = typeof freshU.diamonds === 'number' ? freshU.diamonds : (user.diamonds ?? 0);
                       if (userDiamonds < diamondCost) {
@@ -29088,12 +29576,47 @@ RULES:
                         onOpenStore?.();
                         return;
                       }
-                      const contentKey = pageInfo?.pageLabel || reason;
-                      const updatedUnlocked = Array.from(new Set([...(freshU.unlockedContent || []), contentKey]));
+
+                      let updatedUnlocked = Array.from(new Set(freshU.unlockedContent || []));
+                      if (hasPageInfo && selectedBulk) {
+                        // User unlocked ALL modes for this page!
+                        (pageInfo!.availableModes || []).forEach(m => {
+                          if (m.unlockAction) m.unlockAction();
+                        });
+
+                        const entryId = (lucentNoteViewer as any)?.id || '';
+                        const pageIdx = lucentPageIndex ?? 0;
+                        if (entryId) {
+                          try {
+                            localStorage.setItem(`nst_pg_r_${user.id}_${entryId}_${pageIdx}`, '1');
+                            localStorage.setItem(`nst_pg_w_${user.id}_${entryId}_${pageIdx}`, '1');
+                            localStorage.setItem(`nst_projector_${user.id}_${entryId}_${pageIdx}`, '1');
+                            localStorage.setItem(`nst_mcq_p_${user.id}_${entryId}_${pageIdx}`, '1');
+                            localStorage.setItem(`nst_fc_p_${user.id}_${entryId}_${pageIdx}`, '1');
+                            localStorage.setItem(`nst_pdf_unlocked_${user.id}_${entryId}_${pageIdx}`, '1');
+                            localStorage.setItem(`nst_pdf_unlocked_${user.id}_${entryId}`, '1');
+                            localStorage.setItem(`nst_video_unlocked_${user.id}_${entryId}_${pageIdx}`, '1');
+                            localStorage.setItem(`nst_video_unlocked_${user.id}_${entryId}`, '1');
+                          } catch {}
+                        }
+
+                        if (pageInfo?.pageLabel) {
+                          updatedUnlocked.push(`${pageInfo.pageLabel} (All Modes)`);
+                          updatedUnlocked.push(pageInfo.pageLabel);
+                        }
+                      } else {
+                        // User unlocked ONLY this single mode!
+                        if (pageInfo?.pageLabel) {
+                          updatedUnlocked.push(`${pageInfo.pageLabel} - ${reason}`);
+                        } else {
+                          updatedUnlocked.push(reason);
+                        }
+                      }
+
                       const updatedU = {
                         ...freshU,
                         diamonds: Math.max(0, userDiamonds - diamondCost),
-                        unlockedContent: updatedUnlocked,
+                        unlockedContent: Array.from(new Set(updatedUnlocked)),
                       };
                       handleUserUpdate(updatedU);
                       setCoinGate(null);
@@ -29103,9 +29626,11 @@ RULES:
                   >
                     <span>💎</span>
                     <span>
-                      {(user.diamonds ?? 0) >= (diamondCostOverride || getDiamondUnlockCost(activeCost, reason))
-                        ? `💎 ${diamondCostOverride || getDiamondUnlockCost(activeCost, reason)} Diamonds Se Permanent Unlock`
-                        : `💎 Store se Diamonds Lein (Need ${diamondCostOverride || getDiamondUnlockCost(activeCost, reason)} 💎)`}
+                      {(user.diamonds ?? 0) >= effectiveDiamondCost
+                        ? (hasPageInfo && selectedBulk
+                            ? `💎 ${effectiveDiamondCost} Diamonds Se Sabhi Modes Unlock (${allModesDiamondInfo.breakdown})`
+                            : `💎 ${effectiveDiamondCost} Diamonds Se Permanent Unlock (1 Mode)`)
+                        : `💎 Store se Diamonds Lein (Need ${effectiveDiamondCost} 💎)`}
                     </span>
                   </button>
                 )}
@@ -30350,6 +30875,7 @@ Explanation: Yahan explanation...`}</p>
       {showReferralPopup && (
         <ReferralPopup
           user={user}
+          settings={settings}
           onClose={() => setShowReferralPopup(false)}
           onUpdateUser={handleUserUpdate}
         />

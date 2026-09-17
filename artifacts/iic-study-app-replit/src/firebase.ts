@@ -6,14 +6,14 @@ import { storage } from "./utils/storage";
 
 // --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBEDKZVPgwOPCccjWdKSShfvSqC3REDa0c",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "iic-nst.firebaseapp.com",
-  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL || "https://iic-nst-default-rtdb.firebaseio.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "iic-nst",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "iic-nst.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "984309241322",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:984309241322:web:4dae35987732d630e64e93",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-QX0XT7RSQX"
+  apiKey: "AIzaSyBEDKZVPgwOPCccjWdKSShfvSqC3REDa0c",
+  authDomain: "iic-nst.firebaseapp.com",
+  databaseURL: "https://iic-nst-default-rtdb.firebaseio.com",
+  projectId: "iic-nst",
+  storageBucket: "iic-nst.firebasestorage.app",
+  messagingSenderId: "984309241322",
+  appId: "1:984309241322:web:4dae35987732d630e64e93",
+  measurementId: "G-QX0XT7RSQX"
 };
 
 // ── Stale IndexedDB guard ──────────────────────────────────────────────────
@@ -37,18 +37,15 @@ try { localStorage.setItem(_FSP_KEY, firebaseConfig.projectId); } catch {}
 // If the assertion error slips through (e.g. mid-session project switch),
 // delete all Firebase IndexedDB databases and hard-reload automatically.
 if (typeof window !== 'undefined') {
-  window.addEventListener('unhandledrejection', (event) => {
-    const msg = String(event?.reason?.message || event?.reason || '');
+  const handleQuotaOrNetwork = (msg: string, event: Event) => {
     if (msg.includes('analytics') || msg.includes('@firebase/analytics')) {
-      // Suppress benign Firebase Analytics fetch failures in sandboxed/restricted environments
       event.preventDefault();
-      return;
+      return true;
     }
-    if (msg.includes('resource-exhausted') || msg.includes('Write stream exhausted')) {
-      // Suppress benign Firestore write stream backpressure warnings; throttled writes will sync on backoff
+    if (msg.includes('resource-exhausted') || msg.includes('Quota exceeded') || msg.includes('Write stream exhausted')) {
       event.preventDefault();
-      console.warn('[IIC] Firestore write stream reached backpressure limit — throttled writes will sync on backoff.');
-      return;
+      console.warn('[IIC] Firestore write stream / quota limit — falling back to RTDB and local cache seamlessly.');
+      return true;
     }
     if (
       msg.includes('Could not reach Cloud Firestore backend') ||
@@ -57,6 +54,19 @@ if (typeof window !== 'undefined') {
     ) {
       event.preventDefault();
       console.warn('[IIC] Firestore operating in offline cache mode.');
+      return true;
+    }
+    return false;
+  };
+
+  window.addEventListener('error', (event) => {
+    const msg = String(event?.message || (event as any)?.error?.message || '');
+    handleQuotaOrNetwork(msg, event);
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const msg = String(event?.reason?.message || event?.reason || '');
+    if (handleQuotaOrNetwork(msg, event)) {
       return;
     }
     if (msg.includes('FIRESTORE') && msg.includes('INTERNAL ASSERTION FAILED')) {
@@ -87,7 +97,7 @@ let app;
 let db: any;
 
 try {
-  setLogLevel('error');
+  setLogLevel('silent');
 } catch {}
 
 if (!getApps().length) {
