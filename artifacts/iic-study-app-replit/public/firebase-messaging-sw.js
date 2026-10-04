@@ -29,7 +29,7 @@ try {
     return self.registration.showNotification(title, {
       body,
       icon: notification.icon || data.icon || data.senderPhoto || '/icons/icon-192.png',
-      badge: '/favicon.svg',
+      badge: '/icons/icon-192.png',
       tag: data.senderId ? `nsta-${type}-${data.senderId}` : `nsta-${type}-${Date.now()}`,
       renotify: urgent,
       requireInteraction: urgent,
@@ -39,6 +39,13 @@ try {
         { action: 'open', title: 'Open App' },
         { action: 'dismiss', title: 'Dismiss' },
       ],
+    }).catch(() => {
+      return self.registration.showNotification(title, {
+        body,
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-192.png',
+        data: { url, ...data },
+      });
     });
   });
 } catch (e) {
@@ -73,7 +80,7 @@ self.addEventListener('push', (event) => {
   const promise = self.registration.showNotification(title, {
     body,
     icon: data.icon || data.senderPhoto || '/icons/icon-192.png',
-    badge: '/favicon.svg',
+    badge: '/icons/icon-192.png',
     tag: data.senderId ? `nsta-${type}-${data.senderId}` : `nsta-${type}-${Date.now()}`,
     renotify: true,
     requireInteraction: urgent,
@@ -83,6 +90,13 @@ self.addEventListener('push', (event) => {
       { action: 'open', title: 'Open App' },
       { action: 'dismiss', title: 'Dismiss' },
     ],
+  }).catch(() => {
+    return self.registration.showNotification(title, {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      data: { url: data.url || '/', ...data },
+    });
   });
 
   event.waitUntil(promise);

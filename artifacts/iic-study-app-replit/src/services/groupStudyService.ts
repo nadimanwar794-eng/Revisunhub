@@ -109,6 +109,7 @@ export interface McqAnswerOutcome {
   maxStreak: number;
   streakBrokenAt?: number;
   earnedPoints: number;
+  timeTakenSec?: number;
 }
 
 export interface GroupStudyRoom {
@@ -142,6 +143,8 @@ export interface GroupStudyRoom {
     isPaused: boolean;
     remainingSeconds: number;
   };
+  preloadedTitle?: string;
+  preloadedQuestions?: GroupStudyMcqQuestion[];
   liveClass?: {
     isActive: boolean;
     title: string;
@@ -158,6 +161,12 @@ export interface GroupStudyRoom {
     autoAdvanceSeconds?: number;
     questionStartTime: number;
     durationPerQuestion: number;
+    timerMode?: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX';
+    totalTestDurationMinutes?: number;
+    testStartTime?: number;
+    testEndTime?: number;
+    targetPaceSeconds?: number;
+    vibrateOnPaceAlert?: boolean;
     status: 'WAITING' | 'QUESTION' | 'REVEAL' | 'ENDED';
     questions: GroupStudyMcqQuestion[];
     scores?: Record<string, {
@@ -1230,9 +1239,18 @@ export const startLiveMcqBattle = async (
   quizTitle: string,
   questions: GroupStudyMcqQuestion[],
   durationPerQuestion: number = 20,
-  autoAdvance: boolean = true
+  autoAdvance: boolean = true,
+  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'PER_QUESTION',
+  totalTestDurationMinutes: number = 15,
+  targetPaceSeconds: number = 20,
+  vibrateOnPaceAlert: boolean = true
 ): Promise<void> => {
   const now = Date.now();
+  const isSelfPaced = timerMode === 'TOTAL_TEST' || timerMode === 'MIX';
+  const effectiveAutoAdvance = isSelfPaced ? false : autoAdvance;
+  const testStartTime = now;
+  const testEndTime = now + (totalTestDurationMinutes || 15) * 60 * 1000;
+
   const safeQuestions = (questions || []).map((q, idx) => {
     const rawStmts = (q as any)?.statements ?? (q as any)?.statement ?? (q as any)?.mcqStatements;
     let statements: string[] | undefined = undefined;
@@ -1261,7 +1279,13 @@ export const startLiveMcqBattle = async (
     totalQuestions: safeQuestions.length,
     questionStartTime: now,
     durationPerQuestion,
-    autoAdvance,
+    autoAdvance: effectiveAutoAdvance,
+    timerMode,
+    totalTestDurationMinutes,
+    testStartTime,
+    testEndTime,
+    targetPaceSeconds,
+    vibrateOnPaceAlert,
     status: 'QUESTION' as const,
     questions: safeQuestions,
   };
@@ -1332,6 +1356,9 @@ export const scheduleRoomWithQuestions = async (
     statements: q.statements || [],
   }));
 
+  const isSelfPaced = timerMode === 'TOTAL_TEST' || timerMode === 'MIX';
+  const effectiveAutoAdvance = isSelfPaced ? false : autoAdvance;
+
   const liveMcqData: any = {
     isActive: false,
     status: 'WAITING',
@@ -1340,7 +1367,7 @@ export const scheduleRoomWithQuestions = async (
     currentQuestionIndex: 0,
     questionStartTime: 0,
     durationPerQuestion,
-    autoAdvance,
+    autoAdvance: effectiveAutoAdvance,
     timerMode,
     totalTestDurationMinutes,
     targetPaceSeconds,

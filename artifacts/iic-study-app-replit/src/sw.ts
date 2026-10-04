@@ -34,10 +34,13 @@ const showNstaNotification = (payload: NstaPushPayload) => {
   const url = data.url || '/';
   const urgent = type === 'CHAT' || type === 'FRIEND_REQUEST' || type === 'DIRECT_MESSAGE';
 
+  const rawIcon = notification.icon || data.icon || data.senderPhoto;
+  const icon = (rawIcon && !rawIcon.endsWith('.svg')) ? rawIcon : '/icons/icon-192.png';
+
   const options = {
     body,
-    icon: notification.icon || data.icon || data.senderPhoto || '/favicon.svg',
-    badge: '/favicon.svg',
+    icon,
+    badge: '/icons/icon-192.png',
     tag: data.senderId ? `nsta-${type}-${data.senderId}` : `nsta-${type}-${Date.now()}`,
     renotify: urgent,
     requireInteraction: urgent,
@@ -52,7 +55,15 @@ const showNstaNotification = (payload: NstaPushPayload) => {
     vibrate?: number[];
   };
 
-  return self.registration.showNotification(title, options);
+  return self.registration.showNotification(title, options).catch(() => {
+    // Graceful fallback for mobile browsers that reject actions/vibrate
+    return self.registration.showNotification(title, {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      data: { url, ...data },
+    });
+  });
 };
 
 // Handle all background push notifications (Web Push + Firebase Cloud Messaging)

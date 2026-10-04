@@ -851,7 +851,7 @@ export const subscribeToUserNotifications = (
           reg.showNotification(item.title, {
             body: item.body,
             icon: item.icon || item.senderPhoto || '/icons/icon-192.png',
-            badge: '/favicon.svg',
+            badge: '/icons/icon-192.png',
             tag: item.senderId ? `nst-${item.type}-${item.senderId}` : `nst-${item.type}-${item.id}`,
             vibrate: isUrgent ? [250, 100, 250] : [100, 50, 100],
             renotify: true,
