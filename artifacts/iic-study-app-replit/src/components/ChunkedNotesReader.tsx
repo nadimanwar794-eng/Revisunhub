@@ -1,9 +1,12 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Volume2, Square, BookOpen, Star, Palette, Check, Type, RotateCcw, Search, Monitor, X, LayoutGrid, MoreVertical, ChevronRight, WifiOff, Flame, Lightbulb, Pencil, Presentation, Copy, Users } from 'lucide-react';
 import { AdminWhiteBoard } from './AdminWhiteBoard';
-import { rotateScreen, isDesktopModeOn, setDesktopMode } from '../utils/displayPrefs';
+import { rotateScreen, isDesktopModeOn, setDesktopMode, exitFullscreenSafe } from '../utils/displayPrefs';
+import { resolveTelegramUrl } from '../services/telegramStorageService';
 import { saveSuggestion, auth, findDuplicateSuggestionByPoint, incrementSuggestionReportCount, updateSuggestionLeaderboard } from '../firebase';
+import { FREE_DAILY_FIX_LIMIT, getFreeDailyFixUsedCount, getFreeDailyFixRemaining, incrementFreeDailyFixCount } from '../utils/freeFixLimit';
 import { speakText, stopSpeech } from '../utils/textToSpeech';
 import { splitIntoTopics, splitNoteSections, NotesTopic as Topic } from '../utils/notesSplitter';
 import { READING_FONTS, TOP_10_READING_FONTS, ensureReadingFontLoaded, getReadingFontById, ReadingFont } from '../utils/notesFonts';
@@ -12,6 +15,7 @@ import { ReadingScoreSession, ReadingScoreState, ReadingScoreConfig } from '../u
 import { ReadingScoreHUD } from './ReadingScoreHUD';
 import { getLevelInfo, LEVEL_INFO } from '../utils/levelSystem';
 import { renderMathInHtml } from '../utils/mathUtils';
+import { PremiumUpgradeModal } from './PremiumUpgradeModal';
 
 const FONT_SIZES = [13, 15, 17, 20, 24, 28, 32, 36, 40] as const;
 const FONT_SIZE_KEY = 'nst_reading_font_size';
@@ -231,6 +235,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasLongPressRef = useRef(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const NOTE_PAGES = useMemo(() => {
     if (!noteSections) return [] as { key: 'book' | 'smart' | 'explain'; label: string; badge?: string; badgeColor?: string; locked: boolean; text: string }[];
@@ -276,6 +281,14 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
       return `\x00M${saved.length - 1}\x00`;
     });
     r = r
+      .replace(/!\[([\s\S]*?)\]\(([\s\S]*?)\)/g, (_, alt, url) => {
+        const titleText = (alt || '').trim();
+        const resolvedSrc = resolveTelegramUrl(url.trim());
+        const captionHtml = titleText
+          ? `<figcaption class="text-[12px] font-bold text-slate-500 dark:text-slate-400 mt-1.5 text-center select-none">${titleText}</figcaption>`
+          : '';
+        return `<figure class="my-3 text-center select-none inline-block max-w-full"><img src="${resolvedSrc}" alt="${titleText || 'Notes Picture'}" class="max-w-full h-auto rounded-xl mx-auto border border-slate-200/80 dark:border-slate-700 shadow-xs max-h-[420px] object-contain" loading="lazy" onerror="this.style.display='none'" />${captionHtml}</figure>`;
+      })
       .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/(?<![*])\*(?![*\s])([^*\n]+?)(?<!\s)\*(?![*])/g, '<em>$1</em>')
@@ -627,6 +640,17 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   // Reset submitted set when the note identity changes (component reused across different notes)
   useEffect(() => { setSubmittedPointIndices(new Set()); }, [noteKey]);
 
+  // 💡 Fix / Correction Daily Free Limit tracking (2 uses/day for free users, unlimited for Basic/Ultra/Admin)
+  const effectiveUserId = readingScoreConfig?.userId || auth.currentUser?.uid || 'guest';
+  const [freeFixUsedToday, setFreeFixUsedToday] = useState<number>(() => getFreeDailyFixUsedCount(effectiveUserId));
+
+  useEffect(() => {
+    setFreeFixUsedToday(getFreeDailyFixUsedCount(effectiveUserId));
+  }, [effectiveUserId]);
+
+  const freeFixRemaining = Math.max(0, FREE_DAILY_FIX_LIMIT - freeFixUsedToday);
+  const canAccessFix = _canAccessSmart || freeFixRemaining > 0;
+
   // Smart TTS suggestion — detect rapid manual tapping
   const TTS_SUGGEST_KEY = 'iic_tts_suggest_seen';
   const [showTtsSuggestPopup, setShowTtsSuggestPopup] = useState(false);
@@ -755,6 +779,32 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   // Fallback order: explicit userLevel prop → readingScoreConfig.userLevel → 5 (safe/unlocked).
   const _effectiveUserLevel = userLevel ?? readingScoreConfig?.userLevel ?? 5;
   const freeStarLocked = false;
+
+  // Central Star / Save Important handler — used by both Long Press (Hold) and Star Button
+  const executeStarToggle = useCallback((topicText: string) => {
+    if (freeStarLocked) {
+      if (onUpgradeClick) onUpgradeClick();
+      return;
+    }
+    try { if (navigator.vibrate) navigator.vibrate([40, 40, 60]); } catch {}
+    if (onStarToggle && !(isAdmin && useImportantMark2)) {
+      onStarToggle(topicText);
+    } else if (isAdmin && useImportantMark2 && onMark2Toggle) {
+      onMark2Toggle(topicText);
+    } else {
+      try {
+        const raw = localStorage.getItem('nst_starred_notes_v1');
+        const list = raw ? JSON.parse(raw) : [];
+        const exists = list.some((n: any) => n.topicText === topicText);
+        const updated = exists
+          ? list.filter((n: any) => n.topicText !== topicText)
+          : [...list, { id: Date.now().toString(), noteKey: noteKey || 'reading_note', topicText: topicText, savedAt: new Date().toISOString() }];
+        localStorage.setItem('nst_starred_notes_v1', JSON.stringify(updated));
+        window.dispatchEvent(new Event('nst_notes_updated'));
+      } catch {}
+    }
+  }, [freeStarLocked, onUpgradeClick, onStarToggle, isAdmin, useImportantMark2, onMark2Toggle, noteKey]);
+
   const lastScrollY = useRef(0);
   const [toolbarHidden, setToolbarHidden] = useState(false);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
@@ -848,7 +898,12 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
     };
   }, [showScoreInfo, showReadingActiveInfo, showControls]);
 
-  // Re-apply desktop mode on orientation/resize changes so it survives rotation
+  // Dismiss any lingering browser fullscreen on notes mount to avoid system notification banner
+  useEffect(() => {
+    exitFullscreenSafe();
+  }, []);
+
+  // Re-apply desktop mode on orientation change only (NOT on every resize)
   useEffect(() => {
     const reapply = () => {
       setTimeout(() => {
@@ -858,20 +913,19 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
       }, 400);
     };
     window.addEventListener('orientationchange', reapply);
-    window.addEventListener('resize', reapply);
     return () => {
       window.removeEventListener('orientationchange', reapply);
-      window.removeEventListener('resize', reapply);
     };
   }, []);
 
   const handleRotate = async () => {
-    const newVal = !isDesktopMode;
-    setDesktopMode(newVal);
-    setIsDesktopModeLocal(newVal);
-    onDesktopModeChange?.(newVal);
-    setRotateToast(newVal ? '💻 Desktop Mode: ON (Compact Layout)' : '📱 Mobile Mode: ON');
-    setTimeout(() => setRotateToast(null), 2200);
+    const newOri = await rotateScreen();
+    if (newOri) {
+      setRotateToast(newOri === 'landscape' ? '🔄 Landscape Mode' : '📱 Portrait Mode');
+    } else {
+      setRotateToast('🔄 Screen Rotate');
+    }
+    setTimeout(() => setRotateToast(null), 2000);
   };
 
   const toggleDesktopMode = () => {
@@ -984,8 +1038,15 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
     setTimeout(() => {
       itemRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 60);
+    const cleanTextToSpeak = (activeTopicList[idx]?.text || '')
+      .replace(/!\[.*?\]\(.*?\)/g, '')
+      .trim();
+    if (!cleanTextToSpeak) {
+      if (isReadingRef.current) playFrom(idx + 1);
+      return;
+    }
     speakText(
-      activeTopicList[idx].text,
+      cleanTextToSpeak,
       undefined,
       VOICE_SPEEDS[speedIdxRef.current] ?? 1.0,
       language,
@@ -1370,16 +1431,35 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <span style={{ fontSize: 14, lineHeight: 1 }}>🛡️</span>
               </button>
             )}
-            {/* Admin Edit button — only for admin/subadmin when onAdminEdit provided */}
+            {/* Screen Rotate button directly in slim bar */}
+            <button
+              type="button"
+              onClick={handleRotate}
+              className="w-7 h-7 flex items-center justify-center rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 active:scale-90 transition shrink-0"
+              title="Screen Rotate"
+            >
+              <RotateCcw size={12} />
+            </button>
+            {/* Admin Edit & Add Pic buttons — only for admin/subadmin when onAdminEdit provided */}
             {isAdmin && onAdminEdit && (
-              <button
-                type="button"
-                onClick={onAdminEdit}
-                className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-300 text-orange-600 active:scale-90 transition shrink-0"
-                title="Edit / Delete Notes (Admin)"
-              >
-                <Pencil size={13} />
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={onAdminEdit}
+                  className="w-7 h-7 flex items-center justify-center rounded-lg bg-orange-50 border border-orange-300 text-orange-600 hover:bg-orange-100 active:scale-90 transition shrink-0"
+                  title="Edit Notes (Admin)"
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={onAdminEdit}
+                  className="px-2 py-1 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 active:scale-90 transition shrink-0 text-[10px] font-bold"
+                  title="Notes ke bich Photo / Pic Jodein (Admin)"
+                >
+                  <span>📷 Pic</span>
+                </button>
+              </>
             )}
             {/* 📋 Copy All Notes — Admin only */}
             {isAdmin && activeTopicList.length > 0 && (
@@ -1427,18 +1507,6 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <Presentation size={14} />
               </button>
             )}
-            {/* 👥 Live Group Study Room */}
-            {onOpenGroupStudy && (
-              <button
-                type="button"
-                onClick={onOpenGroupStudy}
-                className="h-7 px-2 flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-700 active:scale-90 transition shrink-0"
-                title="Group Study / Live Room"
-              >
-                <Users size={12} className="text-emerald-600" />
-                <span className="text-[10px] font-black uppercase tracking-wider">Live</span>
-              </button>
-            )}
             {/* 3-dot icon — opens full controls panel */}
             <button
               type="button"
@@ -1455,7 +1523,10 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
             <div style={{ borderTop: '2px solid #f59e0b', background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 12px', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ fontSize: 12 }}>✏️</span>
-                <span style={{ fontSize: 9, fontWeight: 900, color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Correction Mode — Kisi bhi point ke samne ✏️ tap karo</span>
+                <span style={{ fontSize: 9, fontWeight: 900, color: '#92400e', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                  Correction Mode — Kisi bhi point ke samne ✏️ tap karo
+                  {!_canAccessSmart && ` (Free: ${freeFixRemaining}/${FREE_DAILY_FIX_LIMIT} bache)`}
+                </span>
               </div>
               <button type="button" onClick={() => { setShowSuggestionPanel(false); setInlineCorrectionIdx(null); setInlineCorrectionText(''); setInlineCorrectionDone(false); setInlineCorrectionError(false); }} style={{ background: 'rgba(146,64,14,0.1)', border: 'none', borderRadius: 6, width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#92400e', fontSize: 11, fontWeight: 900 }}>✕</button>
             </div>
@@ -1609,7 +1680,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
               <button type="button" onClick={handleRotate}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
                 <RotateCcw size={12} style={{ color: '#64748b' }} />
-                <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Reset</span>
+                <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Rotate</span>
               </button>
               {/* Offline Save */}
               {onSaveOffline && (
@@ -1632,21 +1703,35 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   </span>
                 </button>
               )}
-              {/* 💡 Suggestion/Correction — hidden in school mode */}
+              {/* 💡 Suggestion/Correction — free users get 2 daily uses, Basic/Ultra unlimited */}
               {!hideFix && (
                 <button type="button" onClick={() => {
-                  if (!_canAccessSmart) {
-                    alert('🔒 Correction Mode feature Basic aur Ultra members ke liye hai. Upgrade karein!');
+                  if (!_canAccessSmart && freeFixRemaining <= 0) {
+                    alert(`🔒 Aaj ka Free Fix limit (${FREE_DAILY_FIX_LIMIT}/${FREE_DAILY_FIX_LIMIT}) pura ho gaya hai!\n\nKal aapko dobara 2 free fixes milenge, ya Unlimited access ke liye Basic ya Ultra plan upgrade karein.`);
                     return;
                   }
                   setShowSuggestionPanel(s => !s);
                   setShowControls(false);
                 }}
-                  title={!_canAccessSmart ? "🔒 Correction Mode (Basic+ Required)" : "Correction / Fix"}
-                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: showSuggestionPanel ? '#fef3c7' : 'transparent', cursor: 'pointer', border: 'none', borderLeft: '1px solid #e2e8f0', opacity: !_canAccessSmart ? 0.75 : 1 }}>
+                  title={
+                    _canAccessSmart
+                      ? "Correction / Fix (Unlimited)"
+                      : freeFixRemaining > 0
+                        ? `Correction / Fix (Aaj ${freeFixRemaining}/${FREE_DAILY_FIX_LIMIT} Free bache hain)`
+                        : "🔒 Aaj ka Free Fix limit pura (2/2) — Basic/Ultra required"
+                  }
+                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: showSuggestionPanel ? '#fef3c7' : 'transparent', cursor: 'pointer', border: 'none', borderLeft: '1px solid #e2e8f0', opacity: (!canAccessFix) ? 0.75 : 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                     <Lightbulb size={12} style={{ color: showSuggestionPanel ? '#d97706' : '#64748b' }} />
-                    {!_canAccessSmart && <span style={{ fontSize: 9 }}>🔒</span>}
+                    {!_canAccessSmart && (
+                      freeFixRemaining > 0 ? (
+                        <span style={{ fontSize: 7, fontWeight: 900, color: '#15803d', background: '#dcfce7', padding: '0px 3px', borderRadius: 4, lineHeight: 1 }}>
+                          {freeFixRemaining}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 9 }}>🔒</span>
+                      )
+                    )}
                   </div>
                   <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: showSuggestionPanel ? '#d97706' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Fix</span>
                 </button>
@@ -1661,19 +1746,14 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
               {/* Font Style */}
               <button type="button"
                 onClick={() => {
-                  if (!_canAccessSmart) {
-                    alert('🔒 Text Style Customization feature Basic aur Ultra members ke liye hai. Upgrade karein!');
-                    return;
-                  }
                   setShowFontFamilyMenu(true);
                   setShowControls(false);
                   TOP_10_READING_FONTS.forEach(f => ensureReadingFontLoaded(f.gfontParam));
                 }}
-                title={!_canAccessSmart ? "🔒 Text Style Customization (Basic+ Required)" : "Style"}
-                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: activeFont ? '#eef2ff' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0', opacity: !_canAccessSmart ? 0.75 : 1 }}>
+                title="Style"
+                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: activeFont ? '#eef2ff' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Type size={12} style={{ color: activeFont ? '#6366f1' : '#64748b' }} />
-                  {!_canAccessSmart && <span style={{ fontSize: 9 }}>🔒</span>}
                 </div>
                 <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: activeFont ? '#6366f1' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Style</span>
               </button>
@@ -1682,18 +1762,13 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
               {!textColorOverride ? (
                 <div style={{ flex: 1, position: 'relative', borderRight: '1px solid #e2e8f0' }}>
                   <button type="button" onClick={() => {
-                    if (!_canAccessSmart) {
-                      alert('🔒 Text Color Customization feature Basic aur Ultra members ke liye hai. Upgrade karein!');
-                      return;
-                    }
                     setShowColorMenu(s => !s);
                   }}
-                    title={!_canAccessSmart ? "🔒 Text Color Customization (Basic+ Required)" : "Color"}
-                    style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: 'transparent', cursor: 'pointer', border: 'none', opacity: !_canAccessSmart ? 0.75 : 1 }}>
+                    title="Color"
+                    style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: 'transparent', cursor: 'pointer', border: 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <Palette size={10} style={{ color: '#64748b' }} />
                       <span style={{ width: 10, height: 10, borderRadius: '50%', border: '2px solid #cbd5e1', backgroundColor: textColor, display: 'inline-block' }} />
-                      {!_canAccessSmart && <span style={{ fontSize: 9 }}>🔒</span>}
                     </div>
                     <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Color</span>
                   </button>
@@ -1774,52 +1849,24 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
             </div>
           )}
 
-          {/* Ultra unlock prompt (portal-style) */}
-          {showHtmlUnlockPrompt && (
-            <div
-              className="fixed inset-0 z-[9999] flex items-center justify-center px-4"
-              style={{ background: 'rgba(15,23,42,0.65)', backdropFilter: 'blur(8px)' }}
-              onClick={() => setShowHtmlUnlockPrompt(false)}
-            >
-              <div
-                className="bg-white w-full max-w-sm rounded-3xl overflow-hidden shadow-2xl"
-                style={{ boxShadow: '0 32px 64px -12px rgba(0,0,0,0.35)' }}
-                onClick={e => e.stopPropagation()}
-              >
-                <div className="bg-gradient-to-br from-violet-600 to-purple-700 px-6 pt-7 pb-5 text-center">
-                  <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3 text-3xl">👑</div>
-                  <h3 className="text-white font-black text-lg leading-tight">Ultra Plan Required</h3>
-                  <p className="text-white/80 text-xs mt-1 font-medium">Styled HTML notes sirf Ultra subscribers ke liye hain</p>
-                </div>
-                <div className="px-6 py-5">
-                  <div className="space-y-2.5 mb-5">
-                    {['Beautifully styled notes with formatting', 'Diagrams, tables & rich content', 'Unlimited daily access'].map((f, i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <div className="w-5 h-5 rounded-full bg-violet-100 flex items-center justify-center shrink-0">
-                          <span className="text-violet-600 text-[10px] font-black">✓</span>
-                        </div>
-                        <p className="text-slate-600 text-xs font-medium">{f}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => { setShowHtmlUnlockPrompt(false); onUpgradeClick?.(); }}
-                      className="flex-1 py-3 bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-2xl font-black text-sm active:scale-95 transition shadow-md shadow-violet-200"
-                    >
-                      ⚡ Upgrade to Ultra
-                    </button>
-                    <button
-                      onClick={() => setShowHtmlUnlockPrompt(false)}
-                      className="px-5 py-3 bg-slate-100 text-slate-500 rounded-2xl font-black text-sm active:scale-95 transition"
-                    >
-                      No
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          {/* Ultra unlock prompt */}
+          <PremiumUpgradeModal
+            isOpen={showHtmlUnlockPrompt}
+            onClose={() => setShowHtmlUnlockPrompt(false)}
+            featureName="Ultra Styled Notes"
+            requiredTier="ULTRA"
+            description="Styled HTML notes, rich visual diagrams aur formulas sirf Ultra subscribers ke liye hain."
+            perks={[
+              "Rich Visual Formatting & color concept blocks",
+              "Diagrams & high-yield structured notes",
+              "Unlimited Daily Reading access without deductions",
+              "Priority Ultra doubt support & dark glassmorphic study"
+            ]}
+            onUpgrade={() => {
+              setShowHtmlUnlockPrompt(false);
+              onUpgradeClick?.();
+            }}
+          />
         </div>
       )}
 
@@ -1847,11 +1894,11 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <span style={{ fontSize: 14, fontWeight: 900, color: '#334155', lineHeight: 1 }}>A+</span>
                 <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Size</span>
               </button>
-              {/* Reset */}
+              {/* Rotate */}
               <button type="button" onClick={handleRotate}
                 style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
                 <RotateCcw size={14} style={{ color: '#64748b' }} />
-                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Reset</span>
+                <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Rotate</span>
               </button>
               {onSaveOffline && (
                 <button type="button" onClick={() => {
@@ -1871,21 +1918,35 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: isSavedOffline ? '#16a34a' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>{isSavedOffline ? 'Saved' : 'Save'}</span>
                 </button>
               )}
-              {/* Fix — school mode mein chhupa */}
+              {/* Fix — free users get 2 daily uses, Basic/Ultra unlimited */}
               {!hideFix && (
                 <button type="button" onClick={() => {
-                  if (!_canAccessSmart) {
-                    alert('🔒 Correction Mode feature Basic aur Ultra members ke liye hai. Upgrade karein!');
+                  if (!_canAccessSmart && freeFixRemaining <= 0) {
+                    alert(`🔒 Aaj ka Free Fix limit (${FREE_DAILY_FIX_LIMIT}/${FREE_DAILY_FIX_LIMIT}) pura ho gaya hai!\n\nKal aapko dobara 2 free fixes milenge, ya Unlimited access ke liye Basic ya Ultra plan upgrade karein.`);
                     return;
                   }
                   setShowSuggestionPanel(s => !s);
                   setShowControls(false);
                 }}
-                  title={!_canAccessSmart ? "🔒 Correction Mode (Basic+ Required)" : "Correction / Fix"}
-                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: showSuggestionPanel ? '#fef3c7' : 'transparent', cursor: 'pointer', border: 'none', borderLeft: onSaveOffline ? '1px solid #e2e8f0' : 'none', opacity: !_canAccessSmart ? 0.75 : 1 }}>
+                  title={
+                    _canAccessSmart
+                      ? "Correction / Fix (Unlimited)"
+                      : freeFixRemaining > 0
+                        ? `Correction / Fix (Aaj ${freeFixRemaining}/${FREE_DAILY_FIX_LIMIT} Free bache hain)`
+                        : "🔒 Aaj ka Free Fix limit pura (2/2) — Basic/Ultra required"
+                  }
+                  style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: showSuggestionPanel ? '#fef3c7' : 'transparent', cursor: 'pointer', border: 'none', borderLeft: onSaveOffline ? '1px solid #e2e8f0' : 'none', opacity: (!canAccessFix) ? 0.75 : 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                     <Lightbulb size={14} style={{ color: showSuggestionPanel ? '#d97706' : '#64748b' }} />
-                    {!_canAccessSmart && <span style={{ fontSize: 9 }}>🔒</span>}
+                    {!_canAccessSmart && (
+                      freeFixRemaining > 0 ? (
+                        <span style={{ fontSize: 8, fontWeight: 900, color: '#15803d', background: '#dcfce7', padding: '0px 4px', borderRadius: 4, lineHeight: 1 }}>
+                          {freeFixRemaining}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 9 }}>🔒</span>
+                      )
+                    )}
                   </div>
                   <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: showSuggestionPanel ? '#d97706' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Fix</span>
                 </button>
@@ -1895,19 +1956,14 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
             <div style={{ borderTop: '1px solid #e2e8f0', background: 'linear-gradient(180deg, #e8edf3 0%, #f1f5f9 100%)', display: 'flex', alignItems: 'stretch', boxShadow: 'inset 0 -2px 0 #d1d9e0' }}>
               <button type="button"
                 onClick={() => {
-                  if (!_canAccessSmart) {
-                    alert('🔒 Text Style Customization feature Basic aur Ultra members ke liye hai. Upgrade karein!');
-                    return;
-                  }
                   setShowFontFamilyMenu(true);
                   setShowControls(false);
                   TOP_10_READING_FONTS.forEach(f => ensureReadingFontLoaded(f.gfontParam));
                 }}
-                title={!_canAccessSmart ? "🔒 Text Style Customization (Basic+ Required)" : "Style"}
-                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: activeFont ? '#eef2ff' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0', opacity: !_canAccessSmart ? 0.75 : 1 }}>
+                title="Style"
+                style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: activeFont ? '#eef2ff' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                   <Type size={14} style={{ color: activeFont ? '#6366f1' : '#64748b' }} />
-                  {!_canAccessSmart && <span style={{ fontSize: 9 }}>🔒</span>}
                 </div>
                 <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: activeFont ? '#6366f1' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Style</span>
               </button>
@@ -1915,18 +1971,13 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
               {!textColorOverride ? (
                 <div style={{ flex: 1, position: 'relative', borderRight: '1px solid #e2e8f0' }}>
                   <button type="button" onClick={() => {
-                    if (!_canAccessSmart) {
-                      alert('🔒 Text Color Customization feature Basic aur Ultra members ke liye hai. Upgrade karein!');
-                      return;
-                    }
                     setShowColorMenu(s => !s);
                   }}
-                    title={!_canAccessSmart ? "🔒 Text Color Customization (Basic+ Required)" : "Color"}
-                    style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none', opacity: !_canAccessSmart ? 0.75 : 1 }}>
+                    title="Color"
+                    style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: 'transparent', cursor: 'pointer', border: 'none' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <Palette size={12} style={{ color: '#64748b' }} />
                       <span style={{ width: 8, height: 8, borderRadius: '50%', border: '2px solid #cbd5e1', backgroundColor: textColor, display: 'inline-block' }} />
-                      {!_canAccessSmart && <span style={{ fontSize: 9 }}>🔒</span>}
                     </div>
                     <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Color</span>
                   </button>
@@ -2324,30 +2375,71 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
               )}
               <button
                 type="button"
-                onPointerDown={(e) => {
+                onTouchStart={(e) => {
+                  if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                  wasLongPressRef.current = false;
+                  if (e.touches && e.touches.length > 0) {
+                    touchStartPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                  }
+                  longPressTimerRef.current = setTimeout(() => {
+                    wasLongPressRef.current = true;
+                    executeStarToggle(topic.text);
+                  }, 420);
+                }}
+                onTouchMove={(e) => {
+                  if (longPressTimerRef.current && touchStartPosRef.current && e.touches && e.touches.length > 0) {
+                    const dx = e.touches[0].clientX - touchStartPosRef.current.x;
+                    const dy = e.touches[0].clientY - touchStartPosRef.current.y;
+                    // Finger tremor tolerance: only cancel if movement exceeds 14px (real scroll)
+                    if (Math.hypot(dx, dy) > 14) {
+                      clearTimeout(longPressTimerRef.current);
+                      longPressTimerRef.current = null;
+                    }
+                  }
+                }}
+                onTouchEnd={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                  if (wasLongPressRef.current) {
+                    // Suppress subsequent synthetic click from touch
+                    setTimeout(() => { wasLongPressRef.current = false; }, 350);
+                  }
+                }}
+                onTouchCancel={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                }}
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return;
                   if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
                   wasLongPressRef.current = false;
                   longPressTimerRef.current = setTimeout(() => {
                     wasLongPressRef.current = true;
-                    if (onStarToggle && !(isAdmin && useImportantMark2)) {
-                      if (freeStarLocked) {
-                        if (onUpgradeClick) onUpgradeClick();
-                      } else {
-                        try { if (navigator.vibrate) navigator.vibrate([30, 30, 50]); } catch {}
-                        onStarToggle(topic.text);
-                      }
-                    } else if (isAdmin && useImportantMark2 && onMark2Toggle) {
-                      try { if (navigator.vibrate) navigator.vibrate([30, 30, 50]); } catch {}
-                      onMark2Toggle(topic.text);
-                    }
-                  }, 500);
+                    executeStarToggle(topic.text);
+                  }, 450);
                 }}
-                onPointerUp={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
-                onPointerLeave={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
-                onPointerCancel={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
+                onMouseUp={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                }}
                 onContextMenu={(e) => e.preventDefault()}
                 onClick={(e) => {
-                  if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+                  if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
                   if (wasLongPressRef.current) {
                     wasLongPressRef.current = false;
                     e.preventDefault();
@@ -2368,10 +2460,10 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     startFromIndex(idx);
                   }
                 }}
-                aria-label={isActive ? 'Stop reading this line' : 'Read from this line'}
-                title={isActive ? 'Tap to stop' : 'Tap to read from here'}
-                className="w-full text-left pl-4 pr-10 py-2 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
-                style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
+                aria-label={isActive ? 'Stop reading this line' : 'Read from this line (tap) or Save Important (hold)'}
+                title={isActive ? 'Tap to stop' : 'Tap: Read | Hold: Save Important ⭐'}
+                className="w-full text-left pl-4 pr-10 py-2 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 select-none"
+                style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', touchAction: 'pan-y' }}
               >
                 <p
                   className={`leading-relaxed ${isActive ? 'text-yellow-900' : ''}`}
@@ -2382,13 +2474,40 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     fontFamily: activeFont?.family,
                   }}
                 >
-                  <span className={`font-bold mr-1.5 ${starred ? 'text-amber-400' : 'text-indigo-400'}`}>•</span>
+                  {!/!\[.*?\]\(.*?\)/.test(topic.text) && !/<(?:img|figure)\b/i.test(topic.text) && (
+                    <span className={`font-bold mr-1.5 ${starred ? 'text-amber-400' : 'text-indigo-400'}`}>•</span>
+                  )}
                   <span dangerouslySetInnerHTML={{ __html: renderMathInHtml(inlineMd(topic.text)) }} />
                 </p>
                 {/* Save count badge intentionally hidden here — yeh ab sirf
                     "Important / Starred Notes" ke Global tab page par dikhega taa ki
                     reading view clean rahe. */}
               </button>
+
+              {/* ⭐ Visible Star / Save Note button — always easily tappable */}
+              {!isActive && !showSuggestionPanel && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    executeStarToggle(topic.text);
+                  }}
+                  onPointerDown={(e) => { e.stopPropagation(); }}
+                  onTouchStart={(e) => { e.stopPropagation(); }}
+                  onMouseDown={(e) => { e.stopPropagation(); }}
+                  style={{ width: '28px', height: '28px', padding: 0 }}
+                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full inline-flex items-center justify-center transition-all z-20 cursor-pointer ${
+                    starred
+                      ? 'bg-amber-100 text-amber-500 border border-amber-300 shadow-sm opacity-100 scale-105'
+                      : 'text-slate-400 hover:text-amber-500 hover:bg-amber-50 border border-slate-200/60 hover:border-amber-300 opacity-60 sm:opacity-40 group-hover:opacity-100'
+                  }`}
+                  title={starred ? 'Important Notes me saved hai (Tap to remove)' : 'Important Notes me save karein ⭐ (Tap karein ya Hold karein)'}
+                >
+                  <Star size={13} className={starred ? 'fill-amber-400 text-amber-500' : 'text-slate-400 hover:text-amber-500'} />
+                </button>
+              )}
+
               {/* TTS active indicator */}
               {isActive && (
                 <span
@@ -2428,10 +2547,6 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   onPointerDown={(e) => { e.stopPropagation(); }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (!_canAccessSmart) {
-                      alert('🔒 Correction Mode feature Basic aur Ultra members ke liye hai. Upgrade karein!');
-                      return;
-                    }
                     try { if (navigator.vibrate) navigator.vibrate(30); } catch {}
                     if (inlineCorrectionIdx === idx) {
                       setInlineCorrectionIdx(null);
@@ -2474,7 +2589,14 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     <div style={{ textAlign: 'center', padding: '6px 0' }}>
                       <div style={{ fontSize: 22, marginBottom: 4 }}>✅</div>
                       <p style={{ fontSize: 11, fontWeight: 900, color: '#15803d', marginBottom: 2 }}>Report bhej diya!</p>
-                      <p style={{ fontSize: 10, color: '#78350f' }}>Admin review karega aur galti theek karega.</p>
+                      <p style={{ fontSize: 10, color: '#78350f' }}>
+                        Admin review karega aur galti theek karega.
+                        {!_canAccessSmart && (
+                          <span style={{ display: 'block', marginTop: 3, fontWeight: 700, color: '#b45309' }}>
+                            (Aaj ke Free Fixes: {Math.max(0, FREE_DAILY_FIX_LIMIT - freeFixUsedToday)}/{FREE_DAILY_FIX_LIMIT} bache hain)
+                          </span>
+                        )}
+                      </p>
                       <button
                         type="button"
                         onClick={() => { setInlineCorrectionIdx(null); setInlineCorrectionText(''); setInlineCorrectionDone(false); setInlineCorrectionError(false); }}
@@ -2514,6 +2636,11 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                             setInlineCorrectionDone(true);
                             return;
                           }
+                          // Guard: daily limit for free users
+                          if (!_canAccessSmart && getFreeDailyFixRemaining(effectiveUserId) <= 0) {
+                            alert(`🔒 Aaj ka Free Fix limit (${FREE_DAILY_FIX_LIMIT}/${FREE_DAILY_FIX_LIMIT}) pura ho gaya hai!\n\nKal aapko dobara 2 free fixes milenge, ya Unlimited access ke liye Basic ya Ultra plan upgrade karein.`);
+                            return;
+                          }
                           setInlineCorrectionSubmitting(true);
                           setInlineCorrectionError(false);
                           try {
@@ -2528,6 +2655,10 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                                 const dupUid = firebaseUser?.uid || readingScoreConfig?.userId || 'anonymous';
                                 const dupName = firebaseUser?.displayName || firebaseUser?.email?.split('@')[0] || 'Student';
                                 updateSuggestionLeaderboard(dupUid, dupName, 'reported').catch(() => {});
+                                if (!_canAccessSmart) {
+                                  const updatedUsed = incrementFreeDailyFixCount(effectiveUserId);
+                                  setFreeFixUsedToday(updatedUsed);
+                                }
                                 setSubmittedPointIndices(prev => new Set(prev).add(idx));
                                 setInlineCorrectionDone(true);
                                 return;
@@ -2552,6 +2683,10 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                             });
                             // Update permanent leaderboard record
                             updateSuggestionLeaderboard(reporterUid, reporterName, 'reported').catch(() => {});
+                            if (!_canAccessSmart) {
+                              const updatedUsed = incrementFreeDailyFixCount(effectiveUserId);
+                              setFreeFixUsedToday(updatedUsed);
+                            }
                             setSubmittedPointIndices(prev => new Set(prev).add(idx));
                             setInlineCorrectionDone(true);
                           } catch (e) {

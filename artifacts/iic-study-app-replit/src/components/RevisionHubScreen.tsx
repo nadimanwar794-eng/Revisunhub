@@ -21,9 +21,15 @@ import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
 import { CreditConfirmationModal } from './CreditConfirmationModal';
 import { renderMathInHtml } from '../utils/mathUtils';
 import { UNLOCK_COSTS } from '../utils/limits';
+import { isSubjectMatch } from '../constants';
+import { isSequentialLearningCompletedForLesson } from '../utils/routineAutoTrack';
+import { loadRoutineData } from '../utils/routineStorage';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import McqPracticeCard from './McqPracticeCard';
 import McqQuestionNavigator from './McqQuestionNavigator';
+import { hapticMedium } from '../utils/haptic';
+import { getMcqStatements } from '../utils/mcqStructure';
+import { extractStatements } from '../utils/mcqParser';
 
 type HubTab = 'MCQ' | 'REVISION' | 'PERFORMANCE';
 
@@ -41,10 +47,14 @@ interface Props {
   onNavigateContent?: (type: 'PDF' | 'MCQ', chapterId: string, topicName?: string, subjectName?: string) => void;
   onUpdateUser?: (user: User) => void;
   onMcqAnswer?: (isCorrect: boolean) => boolean;
-  onSendToMcqCommunity?: (draft: { question: string; options: [string,string,string,string]; correctAnswer: number; explanation: string }) => void;
+  onSendToMcqCommunity?: (draft: { question: string; statements?: string[]; options: [string,string,string,string]; correctAnswer: number; explanation: string }) => void;
   /** If set, auto-navigate to this lesson's MCQ on open — matched by lessonTitle (Routine / Daily Event shortcut, coins already paid by caller) */
   initialLessonTitle?: string | null;
   autoStartMcq?: boolean;
+  appName?: string;
+  appLogo?: string;
+  onRestoreBottomNav?: (explicitState?: boolean) => void;
+  isBottomNavVisible?: boolean;
 }
 
 const TABS: { id: HubTab; label: string; icon: React.ReactNode }[] = [
@@ -88,11 +98,43 @@ const TIER_STYLES: Record<string, { bg: string; text: string; label: string }> =
 
 export const RevisionHubScreen: React.FC<Props> = ({
   user, settings, onBack, onTabChange, onNavigateContent, onUpdateUser, onMcqAnswer, onSendToMcqCommunity,
-  initialLessonTitle, autoStartMcq
+  initialLessonTitle, autoStartMcq,
+  appName, appLogo, onRestoreBottomNav, isBottomNavVisible
 }) => {
   const theme = useAppTheme();
   const primary = theme.primary || '#6366f1';
   const [activeTab, setActiveTab]           = useState<HubTab>(autoStartMcq ? 'REVISION' : 'MCQ');
+  const [showTopBar, setShowTopBar]                 = useState(true);
+  const [localBottomNavVisible, setLocalBottomNavVisible] = useState(false);
+  const activeBottomNavVisible = typeof isBottomNavVisible === 'boolean' ? isBottomNavVisible : localBottomNavVisible;
+
+  const officialNstaLogo = (appLogo && !appLogo.includes('placeholder'))
+    ? appLogo
+    : (settings?.appLogo && !settings.appLogo.includes('placeholder'))
+      ? settings.appLogo
+      : '/branding/nsta-logo.svg';
+
+  const handleToggleNavBars = () => {
+    try { hapticMedium(); } catch (_) {}
+    if (showTopBar && activeBottomNavVisible) {
+      // Second tap: Hide BOTH top bar and bottom navigation!
+      setShowTopBar(false);
+      onRestoreBottomNav?.(false);
+      setLocalBottomNavVisible(false);
+    } else if (!showTopBar && !activeBottomNavVisible) {
+      // Tap to restore: Bring back BOTH top bar and bottom navigation!
+      setShowTopBar(true);
+      onRestoreBottomNav?.(true);
+      setLocalBottomNavVisible(true);
+    } else {
+      // First tap (top bar is visible, bottom nav was hidden):
+      // Show navigation bar!
+      setShowTopBar(true);
+      onRestoreBottomNav?.(true);
+      setLocalBottomNavVisible(true);
+    }
+  };
+
   const [mcqSelectedClass, setMcqSelectedClass]     = useState<string | null>(null);
   const [mcqSelectedSubject, setMcqSelectedSubject] = useState<string | null>(null);
   const [mcqSelectedLesson, setMcqSelectedLesson]   = useState<any | null>(null);
@@ -100,6 +142,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
   const [showMonthlySheet, setShowMonthlySheet]     = useState(false);
 
   const [sessionActive, setSessionActive]   = useState(false);
+  const [sessionSeconds, setSessionSeconds] = useState(0);
   const [sessionQIndex, setSessionQIndex]   = useState(0);
   const [sessionAnswers, setSessionAnswers] = useState<(number | null)[]>([]);
   const [sessionDone, setSessionDone]       = useState(false);
@@ -143,26 +186,26 @@ export const RevisionHubScreen: React.FC<Props> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialLessonTitle, allLessons]);
 
-  // Helper: returns true if this MCQ has a real topic (non-empty, non-"General").
-  // "General" is the default label mcqParser assigns to MCQs pasted without
-  // <TOPIC: ...> tags — it effectively means "no topic" and must be treated
-  // the same as a blank topic throughout Revision Hub.
+  // Helper: excludes blank-topic MCQs and "General" MCQs (only real topic-wise MCQs allowed in Revision Hub)
   const isRealTopicMcq = (q: any) => {
-    const t = String(q?.topic ?? '').trim();
-    return t !== '' && t.toLowerCase() !== 'general';
+    if (!q || (!q.question && !q.id)) return false;
+    const topic = String(q.topic || '').trim();
+    if (!topic) return false;
+    const lower = topic.toLowerCase();
+    return lower !== 'general' && lower !== 'सामान्य' && lower !== 'general mcq' && lower !== 'general mcqs';
   };
 
-  // Only show lessons that have at least one real topic-wise MCQ.
-  // This cleanly excludes:
-  //   • Pure page-sync lessons (all MCQs are "General" / no-topic)
-  //   • Draft/incomplete lessons with no lessonTitle
-  // Lessons that mix page MCQs ("General") with proper topic MCQs are still
-  // shown — the "General" MCQs are filtered out below in classMcqs.
+  const getValidMcqs = (lesson: any): any[] => {
+    if (!lesson || !Array.isArray(lesson.mcqs)) return [];
+    return lesson.mcqs.filter(isRealTopicMcq);
+  };
+
+  // Only include lessons that actually have Revision Hub MCQs (> 0).
+  // Chapters/lessons with 0 MCQs (Pending / Coming Soon) are completely hidden.
   const hubLessons = useMemo(
     () => allLessons.filter(l => {
       if (!l.lessonTitle || !String(l.lessonTitle).trim()) return false;
-      const mcqs: any[] = Array.isArray(l.mcqs) ? l.mcqs : [];
-      return mcqs.some(isRealTopicMcq);
+      return getValidMcqs(l).length > 0;
     }),
     [allLessons],
   );
@@ -186,7 +229,10 @@ export const RevisionHubScreen: React.FC<Props> = ({
 
   // Lessons available for current class + subject
   const subjectLessons = hubLessons.filter(
-    l => l.classLevel === mcqSelectedClass && l.subject === mcqSelectedSubject
+    l => l.classLevel === mcqSelectedClass && (
+      l.subject === mcqSelectedSubject ||
+      isSubjectMatch(l.subject, mcqSelectedSubject, mcqSelectedClass, settings)
+    )
   );
 
   // MCQs from the selected lesson — only real topic-wise MCQs.
@@ -280,15 +326,53 @@ export const RevisionHubScreen: React.FC<Props> = ({
   }
 
   function handleLessonClick(lesson: any) {
-    if (!onUpdateUser) { setMcqSelectedLesson(lesson); return; }
+    const validMcqs = getValidMcqs(lesson);
+    if (validMcqs.length === 0) {
+      alert(`⏳ "${lesson.lessonTitle}"\n\nIs lesson mein abhi Topic-wise MCQs upload nahi huye hain (Coming Soon).\nAdmin jald hi questions add karenge.`);
+      return;
+    }
+
+    const _isAdm = user?.role === 'ADMIN' || user?.role === 'SUB_ADMIN';
+    if (_isAdm && user?.studyMode !== 'CREDIT') {
+      setMcqSelectedLesson(lesson);
+      return;
+    }
+
+    const lessonTarget = lesson.lessonId || lesson.id || lesson.lessonTitle;
+    const isSeqDone = isSequentialLearningCompletedForLesson(lessonTarget);
+    const isCreditOff = user?.studyMode !== 'CREDIT';
+
+    // Rule 3: Free ONLY if user is in Credit-Off mode AND has completed Sequential Learning (Notes + MCQ)
+    if (isCreditOff && isSeqDone) {
+      setMcqSelectedLesson(lesson);
+      return;
+    }
+
+    // Check if lesson is part of user's routine for 50% discount
+    const routineData = loadRoutineData();
+    const isRoutineLesson = Boolean(
+      initialLessonTitle === lesson.lessonTitle ||
+      (routineData?.subjects && routineData.subjects.some((s: any) => s.name === lesson.subject || s.id === lesson.subject))
+    );
+
+    const costCredits = isRoutineLesson ? 50 : 100;
+    const costDiamonds = isRoutineLesson ? 12 : 25; // 1 diamond = 4 credits
+
+    const unlockTitle = isRoutineLesson
+      ? `⚡ ${lesson.lessonTitle || 'Lesson'} (Routine 50% OFF)`
+      : `⚡ ${lesson.lessonTitle || 'Lesson'} MCQ Access (100 Coins)`;
+
     setPendingLesson(lesson);
     setCoinModal({
-      title: '📖 Lesson MCQ Access',
-      cost: LESSON_OPEN_COST,
-      diamondCost: LESSON_OPEN_DIAMOND_COST,
+      title: unlockTitle,
+      cost: costCredits,
+      diamondCost: costDiamonds,
       onConfirmCredits: () => {
-        const updated = applyDeduction(user, LESSON_OPEN_COST);
-        if (updated) { onUpdateUser(updated); saveUserToLive(updated); }
+        const updated = applyDeduction(user, costCredits);
+        if (updated) {
+          onUpdateUser?.(updated);
+          saveUserToLive(updated);
+        }
         setCoinModal(null);
         setMcqSelectedLesson(lesson);
         setPendingLesson(null);
@@ -297,9 +381,9 @@ export const RevisionHubScreen: React.FC<Props> = ({
         const curDiamonds = user.diamonds || 0;
         const updated: User = {
           ...user,
-          diamonds: Math.max(0, curDiamonds - LESSON_OPEN_DIAMOND_COST),
+          diamonds: Math.max(0, curDiamonds - costDiamonds),
         };
-        onUpdateUser(updated);
+        onUpdateUser?.(updated);
         try {
           localStorage.setItem("nst_current_user", JSON.stringify(updated));
           if (updated?.id) {
@@ -443,21 +527,31 @@ export const RevisionHubScreen: React.FC<Props> = ({
         saveTestResult(user.id, newEntry);
         saveUserHistory(user.id, newEntry);
       } catch (_) {}
-      // ── Pts: +2 sahi jawab, +1 galat jawab ──────────────────────────────
-      const ptsEarned = (totalCorrect * 2) + ((totalAnswered - totalCorrect) * 1);
+      // ── Pts: +5 sahi jawab, -2 galat jawab ──────────────────────────────
+      const wrongCount = Math.max(0, totalAnswered - totalCorrect);
+      const ptsEarned = (totalCorrect * 5) - (wrongCount * 2);
       const updatedUser = {
         ...user,
         mcqHistory: [...(user.mcqHistory || []), newEntry],
-        totalScore: (user.totalScore || 0) + ptsEarned,
+        totalScore: Math.max(0, (user.totalScore || 0) + ptsEarned),
       };
       onUpdateUser(updatedUser);
       try { saveUserToLive(updatedUser); } catch (_) {}
     }
   }
 
+  useEffect(() => {
+    if (!sessionActive || sessionDone) return;
+    const interval = setInterval(() => {
+      setSessionSeconds(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sessionActive, sessionDone]);
+
   function resetSession() {
     setSessionActive(false);
     setSessionDone(false);
+    setSessionSeconds(0);
     setSessionQIndex(0);
     setSessionAnswers([]);
     setSessionMcqs([]);
@@ -496,47 +590,53 @@ export const RevisionHubScreen: React.FC<Props> = ({
     : 0;
 
   return (
-    <div className="fixed inset-0 z-[150] flex flex-col bg-white" style={{ height: '100dvh' }}>
+    <div className="fixed inset-0 z-[350] flex flex-col bg-white" style={{ height: '100dvh' }}>
 
-      {/* ── Top Bar ── */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-100 shadow-sm shrink-0">
-        <button
-          onClick={handleBack}
-          className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
-          aria-label="Back"
-        >
-          <ArrowLeft size={18} className="text-slate-700" />
-        </button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-base font-black text-slate-800 leading-none truncate">{titleText}</h1>
-          <p className="text-[11px] text-slate-500 mt-0.5">
-            {sessionActive
-              ? `Topic: ${currentQ?.topic || 'General'}`
-              : (mcqSelectedClass && activeTab === 'MCQ')
-                ? 'MCQ Practice'
-                : 'MCQ · Revision · History · Performance'}
-          </p>
+      {/* ── Top Bar (can be toggled / hidden) ── */}
+      {showTopBar && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-white border-b border-slate-100 shadow-sm shrink-0">
+          <button
+            id="revision-hub-back-btn"
+            onClick={handleBack}
+            className="p-2 rounded-full bg-slate-100 hover:bg-slate-200 active:scale-95 transition-all"
+            aria-label="Back"
+          >
+            <ArrowLeft size={18} className="text-slate-700" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-base font-black text-slate-800 leading-none truncate">{titleText}</h1>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {sessionActive
+                ? `Topic: ${currentQ?.topic || 'Topic Practice'}`
+                : (mcqSelectedClass && activeTab === 'MCQ')
+                  ? 'MCQ Practice'
+                  : 'MCQ · Revision · History · Performance'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {sessionActive && (
+              <button
+                type="button"
+                onClick={() => setShowSessionNavigator(prev => !prev)}
+                aria-label={showSessionNavigator ? 'Hide question switcher' : 'Show question switcher'}
+                aria-expanded={showSessionNavigator}
+                className={`shrink-0 p-2 rounded-xl border transition-all ${
+                  showSessionNavigator
+                    ? 'bg-indigo-100 border-indigo-300 text-indigo-700'
+                    : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <List size={18} />
+              </button>
+            )}
+          </div>
         </div>
-         {sessionActive && (
-           <button
-             type="button"
-             onClick={() => setShowSessionNavigator(prev => !prev)}
-             aria-label={showSessionNavigator ? 'Hide question switcher' : 'Show question switcher'}
-             aria-expanded={showSessionNavigator}
-             className={`shrink-0 p-2 rounded-xl border transition-all ${
-               showSessionNavigator
-                 ? 'bg-indigo-100 border-indigo-300 text-indigo-700'
-                 : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
-             }`}
-           >
-             <List size={18} />
-           </button>
-         )}
-      </div>
+      )}
 
       {/* Progress bar (session only) */}
       {sessionActive && (
-        <div className="h-1 bg-slate-100 shrink-0">
+        <div className={`h-1 bg-slate-100 shrink-0 ${!showTopBar ? 'fixed top-0 left-0 right-0 z-[400]' : ''}`}>
           <div
             className="h-1 transition-all duration-300"
             style={{ width: `${progress}%`, background: primary }}
@@ -544,14 +644,27 @@ export const RevisionHubScreen: React.FC<Props> = ({
         </div>
       )}
 
-      {/* ── Tabs (hidden during session / results) ── */}
-      {!sessionActive && !sessionDone && (
+      {/* ── Minimalist Back button when Top Bar is hidden ── */}
+      {!showTopBar && (
+        <button
+          onClick={handleBack}
+          className="fixed top-3 left-3 z-[450] p-2 rounded-full bg-slate-900/80 hover:bg-slate-900 text-white backdrop-blur shadow-lg active:scale-95 transition-all cursor-pointer"
+          aria-label="Back"
+          title="Back"
+        >
+          <ArrowLeft size={16} className="text-white" />
+        </button>
+      )}
+
+      {/* ── Tabs (hidden during session / results, and hidden when showTopBar is false) ── */}
+      {showTopBar && !sessionActive && !sessionDone && (
         <div className="flex items-center bg-white border-b border-slate-100 shrink-0 overflow-x-auto">
           {TABS.map((tab) => {
             const isActive = activeTab === tab.id;
             return (
               <button
                 key={tab.id}
+                id={`revision-hub-tab-${tab.id.toLowerCase()}`}
                 onClick={() => handleTabChange(tab.id)}
                 className={`flex-1 min-w-[80px] flex flex-col items-center gap-1 py-2.5 text-[11px] font-bold transition-all relative ${
                   isActive ? '' : 'text-slate-400 hover:text-slate-600'
@@ -570,7 +683,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
       )}
 
       {/* ── Content ── */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden pb-20">
+      <div className={`flex-1 overflow-y-auto overflow-x-hidden ${!showTopBar ? 'pt-4' : ''} ${activeBottomNavVisible ? 'pb-[88px]' : 'pb-20'}`}>
 
         {sessionActive && showSessionNavigator && (
           <div className="px-4 pt-3 max-w-xl mx-auto w-full">
@@ -607,13 +720,15 @@ export const RevisionHubScreen: React.FC<Props> = ({
            const canGoForward = isAnswered || (sessionQIndex > 0 && sessionQIndex < totalQuestions - 1);
 
           return (
-          <div className="p-4 max-w-xl mx-auto space-y-4">
+          <div className="p-4 max-w-xl mx-auto space-y-4 pb-32">
 
             {/* Running score counter */}
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
-                {currentQ.topic || 'General'}
-              </span>
+              {currentQ?.topic && (
+                <span className="text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                  {currentQ.topic}
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -630,6 +745,10 @@ export const RevisionHubScreen: React.FC<Props> = ({
                 <Slash size={10} /> 50:50
               </button>
               <span className="text-[10px] text-slate-400 ml-auto">{sessionQIndex + 1}/{sessionMcqs.length}</span>
+              <div className="flex items-center gap-1 font-mono font-black text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0" title="Practice Timer">
+                <Clock size={10} className="text-indigo-600 animate-pulse" />
+                <span>{Math.floor(sessionSeconds / 60).toString().padStart(2, '0')}:{(sessionSeconds % 60).toString().padStart(2, '0')}</span>
+              </div>
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full flex items-center gap-1">
                   <CheckCircle size={10} /> {correct}
@@ -676,7 +795,23 @@ export const RevisionHubScreen: React.FC<Props> = ({
                      const opts = (currentQ.options || []).length === 4
                        ? currentQ.options as [string,string,string,string]
                        : ([...(currentQ.options || []), '', '', '', ''].slice(0, 4) as [string,string,string,string]);
-                     onSendToMcqCommunity({ question: currentQ.question, options: opts, correctAnswer: currentQ.correctAnswer ?? 0, explanation: currentQ.explanation || '' });
+                     const stmts = getMcqStatements(currentQ);
+                     let finalStmts = stmts;
+                     let cleanQ = (currentQ.question || '').replace(/<br\s*\/?>/gi, '\n').trim();
+                     if (finalStmts.length === 0) {
+                       const ext = extractStatements(cleanQ);
+                       if (ext.statements.length > 0) {
+                         finalStmts = ext.statements;
+                         cleanQ = ext.cleanedQuestion.replace(/<br\s*\/?>/gi, '\n').trim();
+                       }
+                     }
+                     onSendToMcqCommunity({
+                       question: cleanQ,
+                       statements: finalStmts.length > 0 ? finalStmts : undefined,
+                       options: opts,
+                       correctAnswer: currentQ.correctAnswer ?? 0,
+                       explanation: currentQ.explanation || '',
+                     });
                    }}
                    className="w-7 h-7 rounded-full flex items-center justify-center active:scale-90 transition-all bg-indigo-100 text-indigo-600"
                    title="MCQ Community mein bhejo"
@@ -686,8 +821,8 @@ export const RevisionHubScreen: React.FC<Props> = ({
                ) : undefined}
              />
 
-             {/* Bottom navigation row */}
-            <div className="space-y-2 pt-1">
+             {/* Fixed Bottom navigation row */}
+            <div className="fixed bottom-0 left-0 right-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 px-4 py-2.5 shadow-xl max-w-xl mx-auto space-y-2">
               <div className="flex gap-2">
                 {/* Prev button */}
                 <button
@@ -803,7 +938,9 @@ export const RevisionHubScreen: React.FC<Props> = ({
                           {isCorrect ? '✅' : '❌'}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-[10px] font-black text-slate-400 mb-0.5">Q{qi + 1} · {q.topic || 'General'}</p>
+                          <p className="text-[10px] font-black text-slate-400 mb-0.5">
+                            Q{qi + 1}{q.topic ? ` · ${q.topic}` : ''}
+                          </p>
                           <p className="text-xs font-bold text-slate-800 leading-relaxed line-clamp-2"
                             dangerouslySetInnerHTML={{ __html: renderMathInHtml((q.question || '').replace(/<br\/?>/g, ' ')) }}
                           />
@@ -851,8 +988,9 @@ export const RevisionHubScreen: React.FC<Props> = ({
             </div>
 
             {(() => {
-              const _c612Bg  = (settings as any)?.homeClass612CardBg     || (theme as any).profileCardBg || '#ffffff';
-              const _c612Bdr = (settings as any)?.homeClass612CardBorder  || primary;
+              const _isDark = theme.isDarkMode;
+              const _c612Bg  = (settings as any)?.homeClass612CardBg     || (theme as any).cardBg || (theme as any).profileCardBg || '#ffffff';
+              const _c612Bdr = (settings as any)?.homeClass612CardBorder  || (theme as any).primary || primary;
               const _card3D  = (settings as any)?.homeAllCards3D || (settings as any)?.homeClass612Card3D || false;
               const boardClasses = ['10', '11', '12'];
 
@@ -864,7 +1002,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
               } : {
                 background: _c612Bg,
                 border: `2px solid ${_c612Bdr}`,
-                boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                boxShadow: _isDark ? `0 4px 16px ${_c612Bdr}20` : '0 2px 8px rgba(0,0,0,0.05)',
               };
 
               const ClassBtn = ({ c }: { c: string }) => {
@@ -876,23 +1014,23 @@ export const RevisionHubScreen: React.FC<Props> = ({
                   <button
                     key={c}
                     onClick={() => setMcqSelectedClass(c)}
-                    className="relative flex flex-col p-2.5 rounded-xl active:scale-95 transition-all text-left"
+                    className="relative flex flex-col p-2.5 rounded-xl active:scale-95 transition-all text-left group"
                     style={cardStyle3D}
                   >
                     {isBoard ? (
-                      <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-full text-[7px] font-black bg-amber-400 text-amber-900 leading-none">👑</span>
+                      <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-full text-[7px] font-black bg-amber-400 text-amber-900 leading-none shadow-xs">👑</span>
                     ) : (
-                      <span className="absolute top-1.5 right-1.5 text-sm leading-none select-none opacity-60">{CLASS_EMOJIS[c]}</span>
+                      <span className="absolute top-1.5 right-1.5 text-sm leading-none select-none opacity-70 group-hover:scale-110 transition-transform">{CLASS_EMOJIS[c]}</span>
                     )}
-                    <p className="text-[7px] font-black text-slate-400 uppercase tracking-widest mb-0.5">CLASS</p>
+                    <p className="text-[7px] font-black uppercase tracking-widest mb-0.5" style={{ color: _isDark ? '#94a3b8' : theme.textSecondary || '#64748b' }}>CLASS</p>
                     <p className="text-2xl font-black leading-none mb-1" style={{ color: _c612Bdr }}>{c}</p>
-                    <p className="text-[9px] font-bold text-slate-500 leading-tight">{subjCount} Subj.</p>
+                    <p className="text-[9px] font-bold leading-tight" style={{ color: _isDark ? '#cbd5e1' : theme.textPrimary || '#334155' }}>{subjCount} Subj.</p>
                   </button>
                 );
               };
 
-              const _cmpBg  = (settings as any)?.homeCompetitionCardBg     || (theme as any).profileCardBg || '#ffffff';
-              const _cmpBdr = (settings as any)?.homeCompetitionCardBorder  || primary;
+              const _cmpBg  = (settings as any)?.homeCompetitionCardBg     || (theme as any).cardBg || (theme as any).profileCardBg || '#ffffff';
+              const _cmpBdr = (settings as any)?.homeCompetitionCardBorder  || (theme as any).primary || primary;
               const _cmp3D  = (settings as any)?.homeAllCards3D || (settings as any)?.homeCompetitionCard3D || false;
 
               return (
@@ -909,7 +1047,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
                   {/* Competition card — matches home page big banner style */}
                   <button
                     onClick={() => setMcqSelectedClass('COMPETITION')}
-                    className="w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all"
+                    className="w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all group"
                     style={_cmp3D ? {
                       background: _cmpBg,
                       border: `2px solid ${_cmpBdr}`,
@@ -918,21 +1056,36 @@ export const RevisionHubScreen: React.FC<Props> = ({
                     } : {
                       background: _cmpBg,
                       border: `2px solid ${_cmpBdr}`,
-                      boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                      boxShadow: _isDark ? `0 4px 20px ${_cmpBdr}20` : '0 2px 10px rgba(0,0,0,0.06)',
                     }}
                   >
                     <div className="flex items-center justify-between px-4 py-4">
                       <div className="flex-1 min-w-0 pr-2">
-                        <p className="text-[10px] font-black uppercase tracking-wider mb-1" style={{ color: _cmpBdr }}>Competitive Mode</p>
-                        <h3 className="text-[22px] font-black leading-tight mb-1 text-slate-800">Govt. Exams</h3>
-                        <div className="mb-3">
-                          <span className="text-[10px] text-slate-400">SSC · UPSC · Railway · Police</span>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span
+                            className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0"
+                            style={{
+                              background: `${_cmpBdr}18`,
+                              color: _cmpBdr,
+                              border: `1px solid ${_cmpBdr}35`
+                            }}
+                          >
+                            Competitive Mode
+                          </span>
                         </div>
-                        <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-black text-white" style={{ background: _cmpBdr }}>
-                          Tap to open →
+                        <h3 className="text-[22px] font-black leading-tight mb-1" style={{ color: _isDark ? '#f8fafc' : theme.textPrimary || '#1e293b' }}>Govt. Exams</h3>
+                        <div className="mb-3 flex items-center flex-wrap gap-1.5">
+                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${_isDark ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-700'}`}>
+                            📚 7 Books
+                          </span>
+                          <span className="text-[10px] font-medium" style={{ color: _isDark ? '#94a3b8' : theme.textSecondary || '#64748b' }}>SSC · UPSC · Railway · Police</span>
+                        </div>
+                        <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-[11px] font-black text-white shadow-xs group-hover:translate-x-0.5 transition-transform" style={{ background: theme.btnGrad || _cmpBdr }}>
+                          <span>Tap to open</span>
+                          <span>→</span>
                         </span>
                       </div>
-                      <div className="text-[52px] leading-none shrink-0 select-none">🏛️</div>
+                      <div className="text-[52px] leading-none shrink-0 select-none group-hover:scale-105 transition-transform">🏛️</div>
                     </div>
                   </button>
                 </>
@@ -947,33 +1100,41 @@ export const RevisionHubScreen: React.FC<Props> = ({
             <p className="text-[11px] font-black uppercase tracking-widest text-center py-2 text-slate-400">
               Subject Choose Karein
             </p>
-            {mcqSubjects.map((sub: any) => {
-              const lessonCount = hubLessons.filter(l => l.classLevel === mcqSelectedClass && l.subject === sub.name).length;
-              return (
-                <button
-                  key={sub.id}
-                  onClick={() => setMcqSelectedSubject(sub.name)}
-                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-white active:scale-[0.99] active:translate-y-0.5 transition-all"
-                  style={{ border: `1.5px solid #e2e8f0`, boxShadow: `0 4px 0 0 #cbd5e1, 0 4px 12px rgba(0,0,0,0.05)` }}
-                >
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: `${primary}18` }}>
-                    📚
-                  </div>
-                  <div className="flex-1 text-left">
-                    <p className="font-bold text-slate-800 text-sm">{sub.name}</p>
-                    <p className="text-[10px] text-slate-400">
-                      {lessonCount > 0 ? `${lessonCount} lessons` : 'Lesson abhi nahi hai'}
-                    </p>
-                  </div>
-                  {lessonCount > 0 && (
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${primary}18`, color: primary }}>
-                      {lessonCount}
-                    </span>
-                  )}
-                  <ChevronRight size={16} className="text-slate-400" />
-                </button>
-              );
-            })}
+            {mcqSubjects.length === 0 ? (
+              <div className="text-center py-14">
+                <div className="text-5xl mb-3">📭</div>
+                <p className="text-slate-700 font-bold">Is class mein abhi koi Revision MCQ available nahi hai</p>
+                <p className="text-slate-400 text-sm mt-1">Admin jald hi questions add karenge</p>
+              </div>
+            ) : (
+              mcqSubjects.map((sub: any) => {
+                const lessonCount = hubLessons.filter(l => l.classLevel === mcqSelectedClass && l.subject === sub.name).length;
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => setMcqSelectedSubject(sub.name)}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl bg-white active:scale-[0.99] active:translate-y-0.5 transition-all"
+                    style={{ border: `1.5px solid #e2e8f0`, boxShadow: `0 4px 0 0 #cbd5e1, 0 4px 12px rgba(0,0,0,0.05)` }}
+                  >
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0" style={{ background: `${primary}18` }}>
+                      📚
+                    </div>
+                    <div className="flex-1 text-left">
+                      <p className="font-bold text-slate-800 text-sm">{sub.name}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {lessonCount} {lessonCount === 1 ? 'lesson' : 'lessons'}
+                      </p>
+                    </div>
+                    {lessonCount > 0 && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${primary}18`, color: primary }}>
+                        {lessonCount}
+                      </span>
+                    )}
+                    <ChevronRight size={16} className="text-slate-400" />
+                  </button>
+                );
+              })
+            )}
           </div>
         )}
 
@@ -986,7 +1147,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
             {subjectLessons.length === 0 ? (
               <div className="text-center py-14">
                 <div className="text-5xl mb-3">📭</div>
-                <p className="text-slate-700 font-bold">Is subject mein abhi koi lesson nahi</p>
+                <p className="text-slate-700 font-bold">Is subject mein abhi koi Revision MCQ nahi hai</p>
                 <p className="text-slate-400 text-sm mt-1">Admin jald hi MCQs add karenge</p>
               </div>
             ) : (
@@ -1001,17 +1162,61 @@ export const RevisionHubScreen: React.FC<Props> = ({
                   <div className="flex-1 text-left min-w-0">
                     <p className="font-bold text-slate-800 text-sm truncate">{lesson.lessonTitle}</p>
                     <div className="flex flex-wrap gap-1 mt-0.5">
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: `${primary}18`, color: primary }}>
-                        {(lesson.mcqs || []).filter((q: any) => q.topic && String(q.topic).trim() !== '').length} MCQs
-                      </span>
-                      {(lesson.topics || []).slice(0, 2).map((t: string) => (
-                        <span key={t} className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full truncate max-w-[90px]">
-                          {t}
-                        </span>
-                      ))}
-                      {(lesson.topics || []).length > 2 && (
-                        <span className="text-[9px] text-slate-400">+{lesson.topics.length - 2} more</span>
-                      )}
+                      {(() => {
+                        const cnt = getValidMcqs(lesson).length;
+                        return (
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: `${primary}18`, color: primary }}>
+                            {cnt} MCQs
+                          </span>
+                        );
+                      })()}
+                      {(() => {
+                        const lessonTarget = lesson.lessonId || lesson.id || lesson.lessonTitle;
+                        const isSeqDone = isSequentialLearningCompletedForLesson(lessonTarget);
+                        const isCreditOff = user?.studyMode !== 'CREDIT';
+                        if (isCreditOff && isSeqDone) {
+                          return (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                              ✓ Free (Sequential Done)
+                            </span>
+                          );
+                        }
+                        const routineData = loadRoutineData();
+                        const isRoutine = Boolean(
+                          initialLessonTitle === lesson.lessonTitle ||
+                          (routineData?.subjects && routineData.subjects.some((s: any) => s.name === lesson.subject || s.id === lesson.subject))
+                        );
+                        if (isRoutine) {
+                          return (
+                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                              ⚡ 50 🪙 (Routine 50% OFF)
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                            🔒 100 🪙
+                          </span>
+                        );
+                      })()}
+                      {(() => {
+                        const validTopics = (lesson.topics || []).filter((t: string) => {
+                          const s = String(t || '').trim().toLowerCase();
+                          return s && s !== 'general' && s !== 'सामान्य' && s !== 'general mcq' && s !== 'general mcqs';
+                        });
+                        return (
+                          <>
+                            {validTopics.slice(0, 2).map((t: string) => (
+                              <span key={t} className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full truncate max-w-[90px]">
+                                {t}
+                              </span>
+                            ))}
+                            {validTopics.length > 2 && (
+                              <span className="text-[9px] text-slate-400">+{validTopics.length - 2} more</span>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                   <ChevronRight size={16} className="text-slate-400 shrink-0" />
@@ -1035,7 +1240,7 @@ export const RevisionHubScreen: React.FC<Props> = ({
                     {classMcqs.length} Sawaal
                   </span>
                   <span className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 font-bold text-slate-600">
-                    {[...new Set(classMcqs.map((q: any) => q.topic || 'General'))].length} Topics
+                    {[...new Set(classMcqs.map((q: any) => String(q.topic || '').trim()).filter(Boolean))].length} Topics
                   </span>
                 </div>
               </div>
@@ -1043,8 +1248,8 @@ export const RevisionHubScreen: React.FC<Props> = ({
               {/* Topic preview */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-2">
                 <p className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-2">Topics in this lesson</p>
-                {[...new Set(classMcqs.map((q: any) => q.topic || 'General'))].map((t: any) => {
-                  const cnt = classMcqs.filter((q: any) => (q.topic || 'General') === t).length;
+                {[...new Set(classMcqs.map((q: any) => String(q.topic || '').trim()).filter(Boolean))].map((t: string) => {
+                  const cnt = classMcqs.filter((q: any) => String(q.topic || '').trim() === t).length;
                   return (
                     <div key={t} className="flex items-center justify-between text-sm">
                       <span className="text-slate-700 font-medium truncate flex-1">{t}</span>

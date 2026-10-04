@@ -24,6 +24,28 @@ export interface Feature {
 export const ALL_FEATURES: Feature[] = [
     // --- CORE (Layer 1: Daily Core Actions - Max 6) ---
     {
+        id: 'MATH_MANAGER',
+        label: 'Math Master Manager',
+        group: 'CONTENT',
+        surfaceLevel: 1,
+        adminVisible: true,
+        adminTab: 'MATH_MANAGER',
+        icon: 'Calculator',
+        color: 'blue',
+        description: 'Upload and manage Math Book Pages, Premium Notes, Solutions, and MCQs.'
+    },
+    {
+        id: 'PEDRO_MANAGER',
+        label: 'Pedro AI Robot Guide Master',
+        group: 'CORE',
+        surfaceLevel: 1,
+        adminVisible: true,
+        adminTab: 'PEDRO_MANAGER',
+        icon: 'Bot',
+        color: 'purple',
+        description: 'Control what Pedro says, where, and when across all app features.'
+    },
+    {
         id: 'START_STUDY',
         label: 'Start Study',
         group: 'CORE',
@@ -93,6 +115,7 @@ export const ALL_FEATURES: Feature[] = [
         group: 'TOOLS',
         surfaceLevel: 1,
         adminVisible: true,
+        requiredSubscription: 'BASIC',
         icon: 'Users',
         description: 'Live synchronized classrooms, interactive whiteboard and live MCQ battles.',
     },
@@ -448,7 +471,7 @@ export const ALL_FEATURES: Feature[] = [
     { id: 'TEXT_STYLE_CUSTOMIZATION', label: 'Text Style Customization', group: 'TOOLS', surfaceLevel: 2, requiredSubscription: 'BASIC', adminVisible: true, description: 'Customize reader fonts and typography.' },
     { id: 'TEXT_COLOR_CUSTOMIZATION', label: 'Text Color Customization', group: 'TOOLS', surfaceLevel: 2, requiredSubscription: 'BASIC', adminVisible: true, description: 'Customize reader text palette colors.' },
     { id: 'CORRECTION_MODE', label: 'Correction Mode', group: 'TOOLS', surfaceLevel: 2, requiredSubscription: 'BASIC', adminVisible: true, description: 'Submit error corrections in reading notes.' },
-    { id: 'SUGGESTIONS_PANEL', label: 'Suggestions Panel', group: 'TOOLS', surfaceLevel: 2, requiredSubscription: 'ULTRA', adminVisible: true, description: 'Exclusive feedback & suggestions portal for Ultra members.' },
+    { id: 'SUGGESTIONS_PANEL', label: 'Suggestions Panel', group: 'TOOLS', surfaceLevel: 2, requiredSubscription: 'BASIC', adminVisible: true, description: 'Feedback & suggestions portal for all members.' },
     { id: 'ULTRA_MODE', label: 'Ultra Mode (Chunk Notes)', group: 'CONTENT', surfaceLevel: 2, requiredSubscription: 'ULTRA', adminVisible: true, description: 'Exclusive HTML styled rich reader mode for Ultra members.' },
     { id: 'AI_STUDIO', label: 'AI Studio', group: 'SOUL', surfaceLevel: 2, adminVisible: true, description: 'Control AI Studio features.' },
 

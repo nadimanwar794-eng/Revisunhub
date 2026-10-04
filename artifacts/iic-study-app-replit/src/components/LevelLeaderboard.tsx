@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User, SystemSettings } from '../types';
-import { getLevelInfo, getLevelProgress, getNextLevelInfo, LEVEL_INFO } from '../utils/levelSystem';
+import { getLevelInfo, getLevelProgress, getNextLevelInfo, LEVEL_INFO, getSubTierInfoFromScore } from '../utils/levelSystem';
 import { Trophy, Medal, Star, ChevronRight, X, BarChart2, Video, FileText, Headphones, Edit3, Crown, Search, Users, EyeOff } from 'lucide-react';
 import { db, rtdb } from '../firebase';
 import { collection, getDocs } from 'firebase/firestore';
@@ -279,6 +279,36 @@ export const LevelLeaderboard: React.FC<Props> = ({ user, settings, onBack }) =>
       </div>
 
       <div className="px-4 py-4 space-y-4">
+        {/* Daily Challenge Yesterday Result & Prizes Quick Banner */}
+        <div 
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent('iic-open-daily-challenge-leaderboard'));
+          }}
+          className="bg-gradient-to-r from-amber-500/20 via-yellow-500/15 to-orange-500/20 border border-amber-500/40 rounded-2xl p-3.5 flex items-center justify-between gap-3 cursor-pointer hover:border-amber-400/60 transition-all active:scale-98 shadow-md"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-yellow-600 text-black flex items-center justify-center font-black text-lg shrink-0 shadow-sm">
+              🏆
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-black text-amber-300 uppercase tracking-tight">
+                  Daily Challenge: Kal Ka Leaderboard & Prizes
+                </h3>
+                <span className="px-1.5 py-0.2 bg-amber-400 text-black text-[9px] font-black rounded">
+                  NEW
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-300 mt-0.5">
+                Dekhein kal kiski kya rank aayi aur kitna % prize mila →
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-black text-amber-400 shrink-0 bg-amber-500/10 px-3 py-1.5 rounded-xl border border-amber-500/30">
+            Open ➔
+          </span>
+        </div>
+
         {/* Category Tabs */}
         <div className="flex flex-wrap gap-2">
           {tabs.map(t => (
@@ -402,9 +432,24 @@ export const LevelLeaderboard: React.FC<Props> = ({ user, settings, onBack }) =>
                         <span className="text-[8px] font-black bg-purple-500/20 text-purple-300 border border-purple-500/30 px-1 py-0.5 rounded shrink-0">⚡ULTRA</span>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5 mt-0.5">
+                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                       <span className="text-[9px]">{lvl.emoji}</span>
                       <span className="text-[9px] font-bold" style={{ color: lvl.color }}>L{lvl.level} · Class {u.classLevel || '10'}</span>
+                      {(() => {
+                        const st = getSubTierInfoFromScore(u.totalScore);
+                        return (
+                          <span
+                            className="text-[8px] font-black px-1.5 py-0.2 rounded"
+                            style={{
+                              background: st.bgColor,
+                              color: st.color,
+                              border: `1px solid ${st.borderColor}`,
+                            }}
+                          >
+                            {st.shortBadgeText}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -433,7 +478,24 @@ export const LevelLeaderboard: React.FC<Props> = ({ user, settings, onBack }) =>
               </div>
               <div>
                 <p className="text-2xl font-black text-white">{displayName(selectedUser)}</p>
-                <p className="text-xs text-slate-500">Level {selectedUser.level} · Class {selectedUser.classLevel || '10'}</p>
+                {(() => {
+                  const st = getSubTierInfoFromScore(selectedUser.totalScore);
+                  return (
+                    <div className="flex items-center justify-center gap-2 mt-1">
+                      <p className="text-xs text-slate-400">Level {selectedUser.level} · Class {selectedUser.classLevel || '10'}</p>
+                      <span
+                        className="text-[10px] font-black px-2 py-0.5 rounded-full"
+                        style={{
+                          background: st.bgColor,
+                          color: st.color,
+                          border: `1px solid ${st.borderColor}`,
+                        }}
+                      >
+                        {st.badgeText}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
               <div className="grid grid-cols-2 gap-2 mt-4 text-left">
                 <div className="bg-white/5 rounded-xl p-3 border border-white/10">

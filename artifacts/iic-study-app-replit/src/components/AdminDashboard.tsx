@@ -15,7 +15,8 @@ import { parseMCQText } from '../utils/mcqParser';
 import { saveTopicNotes } from '../utils/revisionTrackerV2';
 import { TOP_BAR_EFFECTS, EFFECT_CATEGORIES, TopBarEffectsLayer } from '../utils/topBarEffects';
 import { generateSecureRandomString, generateSecureRandomId } from '../utils/cryptoUtils';
-import { saveChapterData, bulkSaveLinks, checkFirebaseConnection, saveSystemSettings, subscribeToUsers, getUsersPage, subscribeToRecentUsers, rtdb, saveUserToLive, db, getChapterData, saveCustomSyllabus, deleteCustomSyllabus, subscribeToUniversalAnalysis, saveAiInteraction, saveSecureKeys, getSecureKeys, subscribeToApiUsage, subscribeToDrafts, resetAllContent, recoverContentFromCache, checkRecoveryStatus, backupAllContentToFirebase, restoreContentFromFirebaseBackup, rebuildContentIndex, deleteHomeworkEntry, deleteLucentEntry, subscribeToDemands, updateDemandStatus, subscribeGlobalChat, subscribeSupportChat, deleteGlobalMessage, deleteSupportMessage, subscribeAllSupportThreads, sendGlobalMessage, sendSupportMessage, subscribeToCompareAnalytics, deleteCompareAnalyticsByQuery, addCompreBookNote, deleteCompreBookNote, getCompreBookNotes, updateCompreBookNote, getAppFeedbacks, exportBackupAsJson, importBackupFromJson, subscribeSuggestions, adminReplySuggestion, deleteSuggestion, reactToSuggestion, resolvesuggestion, applyNoteCorrection, applyMcqCorrection, applyMcqFullEdit, saveMcqLesson, deleteMcqLesson, getUserByMobileOrId } from '../firebase'; // IMPORT FIREBASE
+import { saveChapterData, bulkSaveLinks, checkFirebaseConnection, saveSystemSettings, subscribeToUsers, getUsersPage, subscribeToRecentUsers, rtdb, saveUserToLive, db, getChapterData, saveCustomSyllabus, deleteCustomSyllabus, subscribeToUniversalAnalysis, saveAiInteraction, saveSecureKeys, getSecureKeys, subscribeToApiUsage, subscribeToDrafts, resetAllContent, recoverContentFromCache, checkRecoveryStatus, backupAllContentToFirebase, restoreContentFromFirebaseBackup, rebuildContentIndex, deleteHomeworkEntry, deleteLucentEntry, subscribeToDemands, updateDemandStatus, subscribeGlobalChat, subscribeSupportChat, deleteGlobalMessage, deleteSupportMessage, subscribeAllSupportThreads, sendGlobalMessage, sendSupportMessage, subscribeToCompareAnalytics, deleteCompareAnalyticsByQuery, addCompreBookNote, deleteCompreBookNote, getCompreBookNotes, updateCompreBookNote, getAppFeedbacks, exportBackupAsJson, importBackupFromJson, subscribeSuggestions, adminReplySuggestion, deleteSuggestion, reactToSuggestion, resolvesuggestion, applyNoteCorrection, applyMcqCorrection, applyMcqFullEdit, saveMcqLesson, fetchMcqLesson, deleteMcqLesson, getUserByMobileOrId, VAPID_KEY } from '../firebase'; // IMPORT FIREBASE
+import { getStoredFcmToken, getNotificationPermissionStatus, subscribeUserToPush, dispatchSmartNotification } from './NotificationManager';
 import { subscribeToMaintenance, saveMaintenance, clearMaintenance, markCrashFixed, MaintenanceState, MaintenanceTarget } from '../utils/maintenanceManager';
 import { ref, set, onValue, update, push, get, query as rtdbQueryAdmin, orderByChild as obcAdmin, limitToLast as ltlAdmin } from "firebase/database";
 import { doc, deleteDoc, setDoc, getDocs, collection, writeBatch, deleteField } from "firebase/firestore";
@@ -43,9 +44,17 @@ import { logAdminAction } from '../utils/adminAudit';
 import { ALL_FEATURES } from '../utils/featureRegistry';
 import { HOME_SECTION_REGISTRY } from '../utils/homeSections';
 import { SPLASH_FONTS, getSplashFontById, ensureGoogleFontLoaded } from '../utils/splashFonts';
+import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
+import { DirectUploadButton } from './DirectUploadButton';
+import { getVipPlusDiamondsPerDay, getVipPlusBasePrice, getVipPlusOriginalPrice, isVipPlusUser } from '../utils/vipPlusUtils';
+import { safeSaveUsersCache } from '../utils/safeUtils';
 import { NstaFeatureManager } from './admin/NstaFeatureManager';
 import { ReferralPrizesManager } from './admin/ReferralPrizesManager';
 import { PlanComparisonManager } from './admin/PlanComparisonManager';
+import { PedroAdminManager } from './admin/PedroAdminManager';
+import { AdminMathManager } from './AdminMathManager';
+import { AdminLucentMediaModal } from './AdminLucentMediaModal';
+import { getLocalErrors } from '../utils/errorLogger';
 // @ts-ignore
 import JSZip from 'jszip';
 import { Document, Page, pdfjs } from 'react-pdf';
@@ -169,7 +178,9 @@ type AdminTab =
   | 'COACHING_HOMEWORK' // Coaching Homework Manager
   | 'COACHING_MANAGER' // 🏫 Full Coaching School System
   | 'COACHING_CENTRES' // 🏫 Create/Assign/Subscription — Super Admin
-  | 'COMPETITION_MCQ_MANAGER'; // MCQ Practice Manager for Competition Books
+  | 'COMPETITION_MCQ_MANAGER' // MCQ Practice Manager for Competition Books
+  | 'MATH_MANAGER' // 📐 Math Master Manager (Book/Notes/Solution/MCQ)
+  | 'PEDRO_MANAGER'; // 🤖 Pedro AI Robot Guide Master
 
 interface ContentConfig {
     freeLink?: string;
@@ -435,18 +446,29 @@ const MODELS = [
 
 // Safe helper to get subject name for any class/competition to prevent ReferenceError
 const getSubjectNameSafe = (classLevel: string, subjectId: string, localSettings: any): string => {
+    if (!subjectId) return 'General';
     if (classLevel === 'COMPETITION') {
+        const lucentOpts = getLucentSubjectOptions(localSettings);
+        const match = lucentOpts.find(o => o.id === subjectId || o.name.trim().toLowerCase() === subjectId.trim().toLowerCase());
+        if (match) return match.name;
         return LUCENT_SUBJECT_OPTIONS_BASE.find(o => o.id === subjectId)?.name || subjectId;
     }
     try {
         const cn612Level = classLevel as any;
-        const seen = new Set<string>();
         let name = subjectId;
         (['Science', 'Commerce', 'Arts', null] as any[]).forEach((stream: string | null) => {
             getSubjectsList(cn612Level, stream, undefined, localSettings).forEach(s => {
-                if (s.id === subjectId) name = s.name;
+                if (s.id === subjectId || s.name.trim().toLowerCase() === subjectId.trim().toLowerCase()) name = s.name;
             });
         });
+        if (name === subjectId) {
+            const opts = getClassSubjectOptions(classLevel);
+            const found = opts.find(o => o.id === subjectId || o.name.trim().toLowerCase() === subjectId.trim().toLowerCase());
+            if (found) return found.name;
+            const lucentOpts = getLucentSubjectOptions(localSettings);
+            const lucentMatch = lucentOpts.find(o => o.id === subjectId || o.name.trim().toLowerCase() === subjectId.trim().toLowerCase());
+            if (lucentMatch) return lucentMatch.name;
+        }
         return name;
     } catch {
         return subjectId;
@@ -602,11 +624,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   // CONTENT HISTORY LOADER
   // Subscribe to error_logs for admin home notification + critical modal
   useEffect(() => {
-    const logsRef = rtdbQueryAdmin(ref(rtdb, 'error_logs'), obcAdmin('timestamp'), ltlAdmin(500));
-    const unsub = onValue(logsRef, snap => {
-      if (!snap.exists()) { setActiveErrorCount(0); setNewErrorCount(0); setCriticalErrorSummary(null); return; }
-      const items: any[] = [];
-      snap.forEach((child: any) => { items.push({ ...child.val(), id: child.key }); });
+    let rtdbItemsCache: any[] = [];
+
+    const recalculateCounts = () => {
+      const local = getLocalErrors();
+      const map = new Map<string, any>();
+      rtdbItemsCache.forEach(child => { if (child && child.id) map.set(child.id, child); });
+      local.forEach(child => {
+        if (!child || !child.id) return;
+        if (!map.has(child.id)) map.set(child.id, child);
+        else if (child.dismissed) map.get(child.id).dismissed = true;
+      });
+      const items = Array.from(map.values());
       const active = items.filter((e: any) => !e.dismissed);
       setActiveErrorCount(active.length);
       const stored = parseInt(localStorage.getItem('admin_last_seen_error_ts') || '0', 10);
@@ -622,8 +651,30 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       } else {
         setCriticalErrorSummary(null);
       }
-    }, () => {});
-    return unsub;
+    };
+
+    // Calculate initial metrics from local cache immediately
+    recalculateCounts();
+
+    const logsRef = rtdbQueryAdmin(ref(rtdb, 'error_logs'), obcAdmin('timestamp'), ltlAdmin(500));
+    const unsub = onValue(logsRef, snap => {
+      rtdbItemsCache = [];
+      if (snap.exists()) {
+        snap.forEach((child: any) => { rtdbItemsCache.push({ ...child.val(), id: child.key }); });
+      }
+      recalculateCounts();
+    }, () => {
+      recalculateCounts();
+    });
+
+    window.addEventListener('nsta-new-error', recalculateCounts);
+    window.addEventListener('storage', recalculateCounts);
+
+    return () => {
+      unsub();
+      window.removeEventListener('nsta-new-error', recalculateCounts);
+      window.removeEventListener('storage', recalculateCounts);
+    };
   }, []);
 
   useEffect(() => {
@@ -815,6 +866,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   const [mcqFixSuccess, setMcqFixSuccess] = useState<string|null>(null);
   const [mcqEditMode, setMcqEditMode] = useState(false);
   const [mcqEditQuestion, setMcqEditQuestion] = useState('');
+  const [mcqEditStatements, setMcqEditStatements] = useState('');
   const [mcqEditOptions, setMcqEditOptions] = useState<string[]>([]);
   const [chatDmMessages, setChatDmMessages] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -944,15 +996,20 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
     { id: '11', label: '📚 Class 11' },
     { id: '12', label: '📚 Class 12' },
   ];
-  const [newLucent, setNewLucent] = useState<{ subject: string; bookName: string; classLevel: 'COMPETITION' | '6' | '7' | '8' | '9' | '10' | '11' | '12'; board: '' | 'NCERT_EN' | 'NCERT_HI' | 'BSEB'; lessonTitle: string; pages: LucentPageNote[]; mcqOnly: boolean }>({
+  const [newLucent, setNewLucent] = useState<{ subject: string; bookName: string; classLevel: 'COMPETITION' | '6' | '7' | '8' | '9' | '10' | '11' | '12'; board: '' | 'NCERT_EN' | 'NCERT_HI' | 'BSEB'; lessonTitle: string; pages: LucentPageNote[]; mcqOnly: boolean; videoUrl?: string; pdfUrl?: string; audioUrl?: string }>({
     subject: 'biology',
     bookName: '',
     classLevel: 'COMPETITION',
     board: '',
     lessonTitle: '',
     mcqOnly: false,
+    videoUrl: '',
+    pdfUrl: '',
+    audioUrl: '',
     pages: [{ id: Date.now().toString(), pageNo: '1', content: '', chunkNotes: '', htmlNotes: '' }],
   });
+  const [adminLucentMediaModalEntry, setAdminLucentMediaModalEntry] = useState<LucentNoteEntry | null>(null);
+  const [adminLucentMediaModalPageIndex, setAdminLucentMediaModalPageIndex] = useState<number>(-1);
   // Per-page bulk MCQ paste: keyed by page id -> textarea content. When non-undefined the paste UI is open.
   const [cn612EditingId, setCn612EditingId] = useState<string | null>(null);
   const [cn612FilterClass, setCn612FilterClass] = useState<string>('ALL');
@@ -984,6 +1041,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   const [showAddBookUI, setShowAddBookUI] = useState(false);
   const [newBookInput, setNewBookInput] = useState('');
   const [expandedLucentPage, setExpandedLucentPage] = useState<Record<string, boolean>>({});
+  const [isUploadingSplashVideo, setIsUploadingSplashVideo] = useState(false);
+  const [splashVideoUploadProgress, setSplashVideoUploadProgress] = useState(0);
 
   // Normalize common Hindi / shorthand MCQ paste formats so they parse with parseMCQText().
   // Handles: **प्रश्न:**, **प्रश्न 1: text?**, **सही उत्तर:** B) ..., **सही उत्तर: B) ...**,
@@ -1214,7 +1273,19 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   // Dynamic subject options — changes based on which classLevel admin selected.
   // For COMPETITION: competition subjects (built-in + custom). For class 6-12: all subjects of that class.
   const activeLucentSubjectOptions: { id: string; name: string }[] = (() => {
-    if (newLucent.classLevel === 'COMPETITION') return [...LUCENT_SUBJECT_OPTIONS_BASE.filter(s => !hiddenLucentSubjectIds.has(s.id)), ...customLucentSubjectsList.filter(s => !(s as any).bookId), ...customBooksList.map(b => ({ id: b.id, name: `📗 ${b.name}` }))];
+    if (newLucent.classLevel === 'COMPETITION') {
+      const allComp = [
+        ...LUCENT_SUBJECT_OPTIONS_BASE.filter(s => !hiddenLucentSubjectIds.has(s.id)),
+        ...customLucentSubjectsList.filter(s => !(s as any).bookId),
+        ...customBooksList.map(b => ({ id: b.id, name: `📗 ${b.name}` })),
+      ];
+      const seen = new Set<string>();
+      return allComp.filter(s => {
+        if (!s || !s.id || seen.has(s.id)) return false;
+        seen.add(s.id);
+        return true;
+      });
+    }
     try {
       const seen = new Set<string>();
       const results: { id: string; name: string }[] = [];
@@ -1293,6 +1364,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   classLevel: entry.classLevel,
                   board: (entry as any).board || '',
                   lessonTitle: entry.lessonTitle,
+                  videoUrl: entry.videoUrl || '',
+                  pdfUrl: entry.pdfUrl || '',
+                  audioUrl: entry.audioUrl || '',
                   pages: (entry.pages || []).map((p: any) => ({ ...p })),
                   mcqOnly: entry.mcqOnly || false,
               });
@@ -1562,6 +1636,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   const [giftCreditsExpiry, setGiftCreditsExpiry] = useState(30); // Days until gifted credits expire
   const [editSubscriptionTier, setEditSubscriptionTier] = useState<'FREE' | 'WEEKLY' | 'MONTHLY' | '3_MONTHLY' | 'YEARLY' | 'LIFETIME' | 'CUSTOM'>('FREE');
   const [editSubscriptionLevel, setEditSubscriptionLevel] = useState<'BASIC' | 'ULTRA'>('BASIC');
+  const [editVipPlusTier, setEditVipPlusTier] = useState<'NONE' | 'PRO_PLUS' | 'MAX_PLUS'>('NONE');
+  const [selectedVipPlusGrantTier, setSelectedVipPlusGrantTier] = useState<'PRO_PLUS' | 'MAX_PLUS'>('PRO_PLUS');
+  const [selectedVipPlusGrantDuration, setSelectedVipPlusGrantDuration] = useState<'WEEKLY' | 'MONTHLY' | '3_MONTHLY' | 'YEARLY' | 'LIFETIME'>('MONTHLY');
   const [editSubscriptionYears, setEditSubscriptionYears] = useState(0);
   const [editSubscriptionMonths, setEditSubscriptionMonths] = useState(0);
   const [editSubscriptionDays, setEditSubscriptionDays] = useState(0);
@@ -1642,11 +1719,26 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       return start.toISOString();
   };
 
-  const updatePriceForSelection = (tier: typeof editSubscriptionTier, level: typeof editSubscriptionLevel) => {
+  const updatePriceForSelection = (
+      tier: typeof editSubscriptionTier,
+      level: typeof editSubscriptionLevel,
+      vipPlusOverride?: 'NONE' | 'PRO_PLUS' | 'MAX_PLUS'
+  ) => {
+      const activeVipPlus = vipPlusOverride !== undefined ? vipPlusOverride : editVipPlusTier;
       if (tier !== 'FREE' && tier !== 'CUSTOM' && editingUser) {
           const tierPrices = subPrices[tier as keyof typeof subPrices];
           if (tierPrices) {
               let basePrice = tierPrices[level];
+              if (activeVipPlus === 'PRO_PLUS' || activeVipPlus === 'MAX_PLUS') {
+                  const matchedPlan = (localSettings.subscriptionPlans || []).find(
+                      (p: any) => p.id?.toUpperCase() === tier || (tier === 'WEEKLY' && p.duration?.toLowerCase().includes('week')) || (tier === 'MONTHLY' && p.duration?.toLowerCase().includes('month') && !p.duration?.toLowerCase().includes('3')) || (tier === '3_MONTHLY' && (p.duration?.toLowerCase().includes('3') || p.duration?.toLowerCase().includes('quarter'))) || (tier === 'YEARLY' && p.duration?.toLowerCase().includes('year'))
+                  );
+                  if (matchedPlan) {
+                      basePrice = getVipPlusBasePrice(matchedPlan, activeVipPlus);
+                  } else {
+                      basePrice = Math.round(tierPrices[activeVipPlus === 'MAX_PLUS' ? 'ULTRA' : 'BASIC'] * 1.5);
+                  }
+              }
 
               // Apply Event Discount + Renewal Bonus Logic (Consistent with Store.tsx)
               const event = localSettings.specialDiscountEvent;
@@ -2147,7 +2239,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
               setUsersLastDoc(lastDoc);
               setUsersHasMore(hasMore);
               prevUsersRef.current = cloudUsers;
-              localStorage.setItem('nst_users', JSON.stringify(cloudUsers));
+              safeSaveUsersCache(cloudUsers);
           }
       }).catch(() => {
           // Fallback: use cached users from localStorage if network fails
@@ -2163,7 +2255,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       // New user detected — prepend to list
                       setUsers(prev => {
                           const merged = [...newUsers, ...prev.filter(p => !newUsers.some(n => n.id === p.id))];
-                          localStorage.setItem('nst_users', JSON.stringify(merged));
+                          safeSaveUsersCache(merged);
                           prevUsersRef.current = merged;
                           return merged;
                       });
@@ -2386,41 +2478,61 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
   // lesson save is never silently skipped. Shows a loading state while saving
   // and only shows success AFTER Firebase confirms the write.
   const [isSavingLucent, setIsSavingLucent] = useState(false);
-  // Class 6-12 Notes Manager entries can embed per-page MCQs. Whenever such an
-  // entry is saved, mirror its MCQs into a `mcq_lessons` doc (keyed off the
-  // Lucent entry's own id, prefixed so it never collides with a lesson
-  // authored directly in Revision Hub's Class MCQ Manager) so they
-  // automatically show up in Revision Hub / student MCQ practice — admin
-  // never has to re-enter the same MCQs in two places. Pure notes-only
-  // entries (the common case) have no MCQs and are left alone. If MCQs are
-  // later removed from an entry, the synced doc is deleted so it doesn't
-  // leave a dangling empty lesson behind.
-  const syncClassNotesMcqsToRevisionHub = async (entry: LucentNoteEntry, subjectName: string) => {
-    const syncedId = `clsnotes_${entry.id}`;
+  // When notes are added or updated in Class 6-12 Notes / Book Notes, ensure a
+  // corresponding lesson document exists in `mcq_lessons` so that:
+  // 1. That lesson title is saved in Revision Hub under the matching class & subject.
+  // 2. Admin can open Revision Hub, click that lesson title, and paste/manage MCQs for it anytime.
+  // 3. Any MCQs added separately by the admin in Revision Hub are preserved and never wiped out.
+  const syncClassNotesMcqsToRevisionHub = async (entry: LucentNoteEntry, subjectName?: string) => {
+    if (!entry || !entry.lessonTitle || !entry.lessonTitle.trim()) return;
+    const entryId = entry.id || Date.now().toString();
+    const syncedId = `clsnotes_${entryId}`;
+    const cleanClassLevel = (entry.classLevel && String(entry.classLevel).trim() && String(entry.classLevel).trim() !== 'ALL')
+      ? String(entry.classLevel).trim()
+      : 'COMPETITION';
+    const resolvedSubject = subjectName || getSubjectNameSafe(cleanClassLevel, entry.subject, localSettings) || entry.subject || 'General';
+
     try {
-      const mcqs = (entry.pages || []).flatMap((p: any) =>
-        (p.mcqs || []).filter((m: any) => m?.question?.trim())
+      const existing = await fetchMcqLesson(syncedId);
+
+      // Only include real topic MCQs (exclude blank topics and 'General' MCQs)
+      const isTopicMcq = (m: any) => {
+        if (!m?.question?.trim()) return false;
+        const t = String(m.topic || '').trim().toLowerCase();
+        return t !== '' && t !== 'general' && t !== 'सामान्य' && t !== 'general mcq' && t !== 'general mcqs';
+      };
+
+      const pageMcqs = (entry.pages || []).flatMap((p: any) =>
+        (p.mcqs || []).filter(isTopicMcq)
       );
-      if (mcqs.length === 0) {
-        await deleteMcqLesson(syncedId).catch(() => {});
-        return;
-      }
+
+      // Preserve MCQs added directly in Revision Hub (real topics only), or fallback to page-level MCQs
+      const rawMcqs = (existing && Array.isArray(existing.mcqs) && existing.mcqs.length > 0)
+        ? existing.mcqs
+        : pageMcqs;
+
+      const currentMcqs = rawMcqs.filter(isTopicMcq);
+
+      const topics = [...new Set(currentMcqs.map((q: any) => q.topic).filter(Boolean))] as string[];
+
       const lesson = {
         id: syncedId,
-        classLevel: entry.classLevel,
-        subject: subjectName,
-        board: (entry as any).board || null,
-        bookName: entry.bookName || null,
-        lessonTitle: entry.lessonTitle,
-        mcqs,
-        mcqCount: mcqs.length,
-        topics: [],
-        topicCount: 0,
-        createdAt: entry.createdAt || new Date().toISOString(),
+        classLevel: cleanClassLevel,
+        subject: resolvedSubject,
+        board: (entry as any).board || existing?.board || null,
+        bookName: entry.bookName || existing?.bookName || null,
+        lessonTitle: entry.lessonTitle.trim(),
+        mcqs: currentMcqs || [],
+        mcqCount: (currentMcqs || []).length,
+        topics,
+        topicCount: topics.length,
+        topicNotes: existing?.topicNotes || [],
+        createdAt: existing?.createdAt || entry.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         sourceClassNotesId: entry.id,
       };
       await saveMcqLesson(lesson);
+      console.log(`[RevisionHubSync] Synced "${lesson.lessonTitle}" (Class ${cleanClassLevel} / ${resolvedSubject}) -> mcq_lessons (${lesson.mcqCount} MCQs)`);
     } catch (e) {
       console.error('[syncClassNotesMcqsToRevisionHub] failed:', e);
     }
@@ -2474,6 +2586,19 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           if (onUpdateSettings) onUpdateSettings(toSave);
           localStorage.setItem('nst_system_settings', JSON.stringify(toSave));
           await saveSystemSettings(toSave);
+
+          // Guarantee that every note in updatedNotes is synced to mcq_lessons in Revision Hub
+          try {
+            for (const n of updatedNotes) {
+              if (n && n.lessonTitle && n.lessonTitle.trim()) {
+                const sName = getSubjectNameSafe(n.classLevel, n.subject, toSave);
+                await syncClassNotesMcqsToRevisionHub(n, sName);
+              }
+            }
+          } catch (syncErr) {
+            console.warn('[saveLucentEntryDirectly] revision hub sync warning:', syncErr);
+          }
+
           setAlertConfig({ isOpen: true, message: successMsg });
       } catch (e: any) {
           setAlertConfig({ isOpen: true, message: `❌ Save fail hua — dubara try karein. (${e?.message || 'Network error'})` });
@@ -2711,7 +2836,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           try { users = stored ? JSON.parse(stored) : []; } catch {}
           if (!users.some(u => u.id === item.data.id)) {
               users.push(item.data);
-              localStorage.setItem('nst_users', JSON.stringify(users));
+              safeSaveUsersCache(users);
           } else {
               alert("User ID already exists. Cannot restore.");
               return;
@@ -2789,7 +2914,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           // Local Update
           const updated = users.filter(u => u.id !== userId);
           setUsers(updated);
-          localStorage.setItem('nst_users', JSON.stringify(updated));
+          safeSaveUsersCache(updated);
           
           // Cloud Update
           if (isFirebaseConnected) {
@@ -2813,7 +2938,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           if (more.length > 0) {
               setUsers(prev => {
                   const merged = [...prev, ...more.filter(u => !prev.some(p => p.id === u.id))];
-                  localStorage.setItem('nst_users', JSON.stringify(merged));
+                  safeSaveUsersCache(merged);
                   return merged;
               });
               setUsersLastDoc(lastDoc);
@@ -2862,7 +2987,12 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       setEditUserScore(user.totalScore || 0);
       setEditUserPass(user.password);
       setEditSubscriptionTier(user.subscriptionTier || 'FREE');
-      setEditSubscriptionLevel(user.subscriptionLevel || 'BASIC');
+      const userVipPlus = user.vipPlusTier === 'PRO_PLUS' || user.vipPlusTier === 'MAX_PLUS' ? user.vipPlusTier : 'NONE';
+      setEditVipPlusTier(userVipPlus);
+      setEditSubscriptionLevel(userVipPlus === 'MAX_PLUS' ? 'ULTRA' : userVipPlus === 'PRO_PLUS' ? 'BASIC' : (user.subscriptionLevel || 'BASIC'));
+      if (userVipPlus !== 'NONE') {
+          setSelectedVipPlusGrantTier(userVipPlus);
+      }
       
       // Default customized values based on tier
       if (user.subscriptionTier === 'WEEKLY') setEditSubscriptionDays(7);
@@ -2880,6 +3010,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           const tierPrices = subPrices[user.subscriptionTier as keyof typeof subPrices];
           const level = user.subscriptionLevel || 'BASIC';
           let basePrice = tierPrices ? tierPrices[level as keyof typeof tierPrices] : 0;
+          if (userVipPlus === 'PRO_PLUS' || userVipPlus === 'MAX_PLUS') {
+              basePrice = Math.round((tierPrices ? tierPrices[userVipPlus === 'MAX_PLUS' ? 'ULTRA' : 'BASIC'] : basePrice) * 1.5);
+          }
 
           // Apply Event Discount + Renewal Bonus Logic (Same as Store.tsx)
           const event = localSettings.specialDiscountEvent;
@@ -3029,13 +3162,30 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
       const isoEndDate = endDate ? endDate.toISOString() : (endDate === null ? undefined : undefined);
 
+      const isVipPlusGrant = editSubscriptionTier !== 'FREE' && (editVipPlusTier === 'PRO_PLUS' || editVipPlusTier === 'MAX_PLUS');
+      const finalSubLevel: 'BASIC' | 'ULTRA' = isVipPlusGrant
+          ? (editVipPlusTier === 'MAX_PLUS' ? 'ULTRA' : 'BASIC')
+          : editSubscriptionLevel;
+
+      const durationDays = endDate
+          ? Math.max(1, Math.round((endDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
+          : 30;
+
+      const matchedPlan = (localSettings.subscriptionPlans || []).find(
+          (p: any) => p.id?.toUpperCase() === editSubscriptionTier || (editSubscriptionTier === 'WEEKLY' && p.duration?.toLowerCase().includes('week')) || (editSubscriptionTier === 'MONTHLY' && p.duration?.toLowerCase().includes('month') && !p.duration?.toLowerCase().includes('3')) || (editSubscriptionTier === '3_MONTHLY' && (p.duration?.toLowerCase().includes('3') || p.duration?.toLowerCase().includes('quarter'))) || (editSubscriptionTier === 'YEARLY' && p.duration?.toLowerCase().includes('year'))
+      ) || { duration: editSubscriptionTier === 'WEEKLY' ? '7 days' : editSubscriptionTier === '3_MONTHLY' ? '3 months' : editSubscriptionTier === 'YEARLY' || editSubscriptionTier === 'LIFETIME' ? '365 days' : '30 days' };
+
+      const vipPlusDailyDia = isVipPlusGrant
+          ? getVipPlusDiamondsPerDay(matchedPlan, editVipPlusTier as 'PRO_PLUS' | 'MAX_PLUS')
+          : undefined;
+
       // RECORD HISTORY
       let newHistory = editingUser.subscriptionHistory || [];
       if (editSubscriptionTier !== 'FREE') {
           const historyEntry: SubscriptionHistoryEntry = {
               id: `hist-${Date.now()}`,
               tier: editSubscriptionTier,
-              level: editSubscriptionLevel,
+              level: finalSubLevel,
               startDate: now.toISOString(),
               endDate: isoEndDate || 'LIFETIME',
               durationHours: endDate ? Math.round((endDate.getTime() - now.getTime()) / (1000 * 60 * 60)) : 999999,
@@ -3049,6 +3199,21 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           newHistory = [historyEntry, ...newHistory];
       }
 
+      const vipDiamondSub = isVipPlusGrant && vipPlusDailyDia
+          ? {
+              planId: `vipplus_${editVipPlusTier.toLowerCase()}_${Date.now()}`,
+              planName: `${editSubscriptionTier} (${editVipPlusTier === 'MAX_PLUS' ? 'MAX+' : 'PRO+'})`,
+              dailyDiamonds: vipPlusDailyDia,
+              totalDays: durationDays,
+              startDate: now.toISOString(),
+              endDate: isoEndDate || new Date(now.getTime() + durationDays * 86400000).toISOString(),
+              totalClaimedDays: 0,
+              totalDiamondsClaimed: 0,
+              pricePaid: mode === 'PAID' ? editSubscriptionPrice : 0,
+              status: 'ACTIVE' as const,
+          }
+          : editingUser.diamondSubscription;
+
       const updatedUser: User = { 
           ...editingUser, 
           credits: editUserCredits,
@@ -3056,7 +3221,10 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           totalScore: editUserScore,
           password: editUserPass,
           subscriptionTier: editSubscriptionTier,
-          subscriptionLevel: editSubscriptionLevel,
+          subscriptionLevel: finalSubLevel,
+          vipPlusTier: isVipPlusGrant ? (editVipPlusTier as 'PRO_PLUS' | 'MAX_PLUS') : undefined,
+          dailyVipDiamonds: isVipPlusGrant ? vipPlusDailyDia : undefined,
+          diamondSubscription: vipDiamondSub,
           subscriptionEndDate: isoEndDate,
           subscriptionPrice: editSubscriptionPrice,
           grantedByAdmin: mode === 'FREE',
@@ -3078,10 +3246,11 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       if (!await saveUserToLive(updatedUser)) throw new Error('User account could not be saved to the backend.');
       const updatedList = users.map(u => u.id === editingUser.id ? updatedUser : u);
       setUsers(updatedList);
-      localStorage.setItem('nst_users', JSON.stringify(updatedList));
+      safeSaveUsersCache(updatedList);
 
       setEditingUser(null);
-      alert(`✅ ${editingUser.name} subscription updated! (${mode} Grant)`);
+      const planDesc = isVipPlusGrant ? `${editSubscriptionTier} ${editVipPlusTier === 'MAX_PLUS' ? 'MAX+ (VIP+)' : 'PRO+ (VIP+)'}` : `${editSubscriptionTier} ${finalSubLevel}`;
+      alert(`✅ ${editingUser.name} subscription updated to ${planDesc}! (${mode} Grant)`);
   };
 
   const sendDirectMessage = async () => {
@@ -3143,7 +3312,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       if (!await saveUserToLive(updatedUser)) throw new Error('User account could not be saved to the backend.');
       const updatedList = users.map(u => u.id === dmUser.id ? updatedUser : u);
       setUsers(updatedList);
-      localStorage.setItem('nst_users', JSON.stringify(updatedList));
+      safeSaveUsersCache(updatedList);
 
       setDmUser(null);
       setDmText('');
@@ -4385,7 +4554,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       if (!await saveUserToLive(updatedUser)) throw new Error('User account could not be saved to the backend.');
       const updatedList = users.map(u => u.id === user.id ? updatedUser : u);
       setUsers(updatedList);
-      localStorage.setItem('nst_users', JSON.stringify(updatedList));
+      safeSaveUsersCache(updatedList);
       
       alert(`✅ ${user.name} promoted to Sub-Admin!`);
       setNewSubAdminId('');
@@ -4407,7 +4576,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       if (!await saveUserToLive(updatedUser)) throw new Error('User account could not be saved to the backend.');
       const updatedList = users.map(u => u.id === user.id ? updatedUser : u);
       setUsers(updatedList);
-      localStorage.setItem('nst_users', JSON.stringify(updatedList));
+      safeSaveUsersCache(updatedList);
       
       alert(`ℹ️ ${user.name} is now a Student.`);
   };
@@ -4904,6 +5073,20 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       {/* System links — always outside the feature categories below */}
                       <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-2xl p-1.5 flex-wrap justify-center">
                           <button
+                              onClick={() => setActiveTab('MATH_MANAGER')}
+                              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-blue-600 to-indigo-700 shadow-md shadow-blue-600/25 hover:from-blue-500 hover:to-indigo-600 transition-all cursor-pointer"
+                          >
+                              <span className="text-sm leading-none">📐</span> Math Manager (Book / Notes / Solution / MCQ)
+                          </button>
+
+                          <button
+                              onClick={() => setActiveTab('PEDRO_MANAGER')}
+                              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-purple-600 to-indigo-700 shadow-md shadow-purple-600/25 hover:from-purple-500 hover:to-indigo-600 transition-all cursor-pointer"
+                          >
+                              <Bot size={14} /> Pedro AI Voice & Feature Master
+                          </button>
+
+                          <button
                               onClick={() => onNavigate('SCHOOL_ECOSYSTEM' as any)}
                               className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-emerald-600 to-emerald-700 shadow-md shadow-emerald-600/25 hover:from-emerald-500 hover:to-emerald-600 transition-all"
                           >
@@ -4913,7 +5096,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                           {currentUser?.role === 'ADMIN' && (
                               <button
                                   onClick={() => setActiveTab('COACHING_CENTRES')}
-                                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-violet-600 to-violet-700 shadow-md shadow-violet-600/25 hover:from-violet-500 hover:to-violet-600 transition-all"
+                                  className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black text-white bg-gradient-to-b from-violet-600 to-violet-700 shadow-md shadow-violet-600/25 hover:from-violet-500 hover:to-violet-600 transition-all cursor-pointer"
                               >
                                   <Building2 size={14} /> Coaching Super Admin
                               </button>
@@ -5067,6 +5250,157 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       >
                           <SlidersHorizontal size={15} /> Open Compare Manager
                       </button>
+                  </div>
+
+                  {/* STORE TABS & SECTIONS VISIBILITY CONTROLS (NEW) */}
+                  <div className="mb-6 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                      <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-bold text-slate-800 flex items-center gap-2">
+                              <EyeOff size={18} className="text-indigo-600" /> Store Tabs & Sections Visibility (Hide / Show)
+                          </h4>
+                          <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200">
+                              Student App Control
+                          </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mb-4">
+                          Admin yahan se Student app ke Store mein kisi bhi tab ya section (Credits, Diamonds, Subscriptions/VIP, Passes, Exchange) ko chupa (hide) ya dikha sakte hain.
+                      </p>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {/* Hide VIP Subscriptions Store */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>👑</span> Hide VIP Subscriptions Tab
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">VIP Plans & Compare tab hide ho jayega</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.hideSubscriptionsStore || false}
+                                      onChange={e => setLocalSettings({...localSettings, hideSubscriptionsStore: e.target.checked})}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Credits Store Tab (Default OFF, Admin can turn ON/OFF) */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>🪙</span> Credits Store Tab (Packages & Buy)
+                                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${localSettings.showCreditsStore === true ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                          {localSettings.showCreditsStore === true ? 'ON' : 'OFF (Default)'}
+                                      </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Default me OFF rehta hai. Jab ON karenge tabhi Store me Credits tab & packs dikhenge.</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.showCreditsStore === true}
+                                      onChange={e => {
+                                          const isChecked = e.target.checked;
+                                          setLocalSettings({
+                                              ...localSettings,
+                                              showCreditsStore: isChecked,
+                                              hideCreditsStore: !isChecked
+                                          });
+                                      }}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Diamonds Store Tab (Default OFF, Admin can turn ON/OFF) */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>💎</span> Diamonds Store Tab (Packages & Buy)
+                                      <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${localSettings.showDiamondsStore === true ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                          {localSettings.showDiamondsStore === true ? 'ON' : 'OFF (Default)'}
+                                      </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Default me OFF rehta hai. Jab ON karenge tabhi Store me Diamonds tab & packs dikhenge.</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.showDiamondsStore === true}
+                                      onChange={e => {
+                                          const isChecked = e.target.checked;
+                                          setLocalSettings({
+                                              ...localSettings,
+                                              showDiamondsStore: isChecked,
+                                              hideDiamondsStore: !isChecked
+                                          });
+                                      }}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Hide Daily Passes */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>⚡</span> Hide Daily Passes
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Daily Credit Pass & Diamond Subscription hide honge</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.hidePassesStore || false}
+                                      onChange={e => setLocalSettings({...localSettings, hidePassesStore: e.target.checked})}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Hide Exchange Tab */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>🔄</span> Hide Exchange Tab
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">Coins se Diamonds exchange tab hide karein</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.hideExchangeStore || false}
+                                      onChange={e => setLocalSettings({...localSettings, hideExchangeStore: e.target.checked})}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                              </label>
+                          </div>
+
+                          {/* Hide VIP Subscriptions Tab */}
+                          <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-sm">
+                              <div>
+                                  <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                                      <span>👑</span> Hide VIP Subscriptions Tab
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 mt-0.5">VIP Plans / VIP+ Plans tab ko hide karein</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.hideSubscriptionsStore || false}
+                                      onChange={e => setLocalSettings({...localSettings, hideSubscriptionsStore: e.target.checked})}
+                                      className="sr-only peer"
+                                  />
+                                  <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500"></div>
+                              </label>
+                          </div>
+                      </div>
                   </div>
 
                   {/* STORE EVENTS & POPUPS */}
@@ -5440,6 +5774,103 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                               <div className="mt-2">
                                                   <label className="text-[9px] font-bold text-amber-700 block">🪙 Max Credit Price (CR)</label>
                                                   <input type="number" placeholder="Default duration price use hogi" value={plan.creditPriceUltra ?? ''} onChange={e => updatePlan('creditPriceUltra', e.target.value === '' ? undefined : Number(e.target.value))} className="w-full p-1.5 border border-amber-300 rounded text-xs font-bold text-amber-900 bg-amber-50/70" />
+                                              </div>
+                                          </div>
+                                      </div>
+
+                                      {/* VIP+ TIERS (PRO+ & MAX+) CONFIG (NEW) */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3 pt-3 border-t border-slate-200">
+                                          {/* PRO+ (VIP+) TIER */}
+                                          <div className="bg-gradient-to-br from-cyan-50/80 to-blue-50/70 p-3 rounded-xl border border-cyan-200">
+                                              <div className="flex items-center justify-between mb-2">
+                                                  <h5 className="text-xs font-black text-cyan-900 flex items-center gap-1.5">
+                                                      <span>⭐💎</span> PRO+ (VIP+) TIER
+                                                  </h5>
+                                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-800 border border-cyan-300">
+                                                      1.5x Pro
+                                                  </span>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                  <div className="flex-1">
+                                                      <label className="text-[9px] font-bold text-slate-600 block">Dummy Price (₹)</label>
+                                                      <input
+                                                          type="number"
+                                                          placeholder={String(Math.round((plan.basicOriginalPrice || 199) * 1.5))}
+                                                          value={plan.proPlusOriginalPrice ?? ''}
+                                                          onChange={e => updatePlan('proPlusOriginalPrice', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                          className="w-full p-1.5 border rounded text-xs line-through text-slate-500 bg-white"
+                                                      />
+                                                  </div>
+                                                  <div className="flex-1">
+                                                      <label className="text-[9px] font-bold text-cyan-800 block">Selling Price (₹)</label>
+                                                      <input
+                                                          type="number"
+                                                          placeholder={String(Math.round((plan.basicPrice || 99) * 1.5))}
+                                                          value={plan.proPlusPrice ?? ''}
+                                                          onChange={e => updatePlan('proPlusPrice', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                          className="w-full p-1.5 border border-cyan-300 rounded text-xs font-bold text-cyan-800 bg-white"
+                                                      />
+                                                  </div>
+                                              </div>
+                                              <div className="mt-2">
+                                                  <label className="text-[9px] font-bold text-cyan-900 block flex items-center justify-between">
+                                                      <span>💎 Daily Diamonds/Day</span>
+                                                      <span className="text-[8px] font-normal text-slate-500">(W:10, M:25, 3M:40, Y:60)</span>
+                                                  </label>
+                                                  <input
+                                                      type="number"
+                                                      placeholder={String(getVipPlusDiamondsPerDay(plan, 'PRO_PLUS'))}
+                                                      value={plan.proPlusDailyDiamonds ?? ''}
+                                                      onChange={e => updatePlan('proPlusDailyDiamonds', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                      className="w-full p-1.5 border border-cyan-300 rounded text-xs font-bold text-cyan-900 bg-white"
+                                                  />
+                                              </div>
+                                          </div>
+
+                                          {/* MAX+ (VIP+) TIER */}
+                                          <div className="bg-gradient-to-br from-pink-50/80 to-purple-50/70 p-3 rounded-xl border border-pink-200">
+                                              <div className="flex items-center justify-between mb-2">
+                                                  <h5 className="text-xs font-black text-purple-900 flex items-center gap-1.5">
+                                                      <span>👑💎</span> MAX+ (VIP+) TIER
+                                                  </h5>
+                                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-800 border border-pink-300">
+                                                      1.5x Max
+                                                  </span>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                  <div className="flex-1">
+                                                      <label className="text-[9px] font-bold text-slate-600 block">Dummy Price (₹)</label>
+                                                      <input
+                                                          type="number"
+                                                          placeholder={String(Math.round((plan.ultraOriginalPrice || 299) * 1.5))}
+                                                          value={plan.maxPlusOriginalPrice ?? ''}
+                                                          onChange={e => updatePlan('maxPlusOriginalPrice', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                          className="w-full p-1.5 border rounded text-xs line-through text-slate-500 bg-white"
+                                                      />
+                                                  </div>
+                                                  <div className="flex-1">
+                                                      <label className="text-[9px] font-bold text-purple-800 block">Selling Price (₹)</label>
+                                                      <input
+                                                          type="number"
+                                                          placeholder={String(Math.round((plan.ultraPrice || 149) * 1.5))}
+                                                          value={plan.maxPlusPrice ?? ''}
+                                                          onChange={e => updatePlan('maxPlusPrice', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                          className="w-full p-1.5 border border-purple-300 rounded text-xs font-bold text-purple-800 bg-white"
+                                                      />
+                                                  </div>
+                                              </div>
+                                              <div className="mt-2">
+                                                  <label className="text-[9px] font-bold text-purple-900 block flex items-center justify-between">
+                                                      <span>💎 Daily Diamonds/Day</span>
+                                                      <span className="text-[8px] font-normal text-slate-500">(W:35, M:50, 3M:70, Y:100)</span>
+                                                  </label>
+                                                  <input
+                                                      type="number"
+                                                      placeholder={String(getVipPlusDiamondsPerDay(plan, 'MAX_PLUS'))}
+                                                      value={plan.maxPlusDailyDiamonds ?? ''}
+                                                      onChange={e => updatePlan('maxPlusDailyDiamonds', e.target.value === '' ? undefined : Number(e.target.value))}
+                                                      className="w-full p-1.5 border border-purple-300 rounded text-xs font-bold text-purple-900 bg-white"
+                                                  />
                                               </div>
                                           </div>
                                       </div>
@@ -5970,17 +6401,22 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                   <Trash2 size={16} />
                                               </button>
                                           </div>
-                                          <input
-                                              type="text"
-                                              value={vid.url}
-                                              onChange={(e) => {
-                                                  const updated = [...premiumVideoPlaylist];
-                                                  updated[idx].url = e.target.value;
-                                                  setPremiumVideoPlaylist(updated);
-                                              }}
-                                              placeholder="Google Drive Link / YouTube URL"
-                                              className="w-full p-2 border border-slate-200 rounded text-xs font-mono text-blue-600 bg-white ml-8"
-                                          />
+                                          <div className="ml-8 space-y-1.5">
+
+                                              <DirectUploadButton
+                                                  kind="video"
+                                                  compact
+                                                  currentUrl={vid.url}
+                                                  onUploaded={(url, file) => {
+                                                      const updated = [...premiumVideoPlaylist];
+                                                      updated[idx].url = url;
+                                                      if (!updated[idx].title) {
+                                                          updated[idx].title = file.name.replace(/\.[^/.]+$/, '');
+                                                      }
+                                                      setPremiumVideoPlaylist(updated);
+                                                  }}
+                                              />
+                                          </div>
                                       </div>
                                   ))}
                               </div>
@@ -6123,16 +6559,19 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                   className="w-full p-2 border border-slate-200 rounded text-xs font-mono text-slate-600 bg-white ml-8 h-20"
                                               />
                                           ) : (
-                                              <input
-                                                  type="text"
-                                                  value={note.url}
-                                                  onChange={(e) => {
-                                                      const updated = universalNotes.map(n => n === note ? { ...n, url: e.target.value } : n);
-                                                      setUniversalNotes(updated);
-                                                  }}
-                                                  placeholder="PDF URL"
-                                                  className="w-full p-2 border border-slate-200 rounded text-xs font-mono text-blue-600 bg-white ml-8"
-                                              />
+                                              <div className="ml-8 space-y-1.5">
+
+                                                  <DirectUploadButton
+                                                      kind="pdf"
+                                                      compact
+                                                      currentUrl={note.url}
+                                                      onUploaded={(url, file) => {
+                                                          const autoTitle = note.title || file.name.replace(/\.[^/.]+$/, '');
+                                                          const updated = universalNotes.map(n => n === note ? { ...n, url, title: autoTitle, topic: autoTitle } : n);
+                                                          setUniversalNotes(updated);
+                                                      }}
+                                                  />
+                                              </div>
                                           )}
                                       </div>
                                   ))}
@@ -6197,11 +6636,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       <button
                           onClick={() => {
                               // Manual Add (Legacy / Global)
-                              const title = prompt("Note Title");
-                              if(!title) return;
-                              const url = prompt("PDF URL");
-                              if(!url) return;
-                              setUniversalNotes([...universalNotes, { title, url, access: 'FREE' }]);
+                              const title = "Note " + (universalNotes.length + 1);
+                              setUniversalNotes([...universalNotes, { title, url: '', access: 'FREE' }]);
                           }}
                           className="flex-1 py-3 bg-white border border-blue-200 text-blue-600 font-bold rounded-xl hover:bg-blue-50 transition dashed"
                       >
@@ -7063,6 +7499,56 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   </button>
               </div>
 
+              {/* HOME SCREEN ASSEMBLY ANIMATION TOGGLE */}
+              <div id="setting-home-assembly-animation" className="mt-4 p-4 rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50/70 to-indigo-50/70 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-lg shrink-0 shadow-sm shadow-indigo-300">
+                          ✨
+                      </div>
+                      <div>
+                          <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                              Home Screen 10-15s Cinematic Assembly Animation
+                              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${localSettings.enableHomeAssemblyAnimation ? 'bg-indigo-100 text-indigo-800 border border-indigo-300' : 'bg-slate-100 text-slate-600 border border-slate-300'}`}>
+                                  {localSettings.enableHomeAssemblyAnimation ? 'ENABLED (ACTIVE)' : 'DISABLED (OFF)'}
+                              </span>
+                          </h4>
+                          <p className="text-[11px] text-slate-600 mt-0.5">
+                              Pehle screen blank rahegi, phir NSTA Logo aur 10 Tools Orbit assemble hoga, phir baaki Home Page cards assemble honge (Global On/Off).
+                          </p>
+                      </div>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      id="btn-admin-reset-assembly-animation"
+                      onClick={() => {
+                        try {
+                          localStorage.removeItem('nsta_first_assembly_seen');
+                          sessionStorage.removeItem('nsta_home_assembly_seen');
+                        } catch (_) {}
+                        setLocalSettings({ ...localSettings, enableHomeAssemblyAnimation: true });
+                        alert('✅ Cinematic Assembly Animation reset ho gayi hai! Home tab par visit ya reload karte hi full animation chalegi.');
+                      }}
+                      className="px-2.5 py-1 text-xs font-bold rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 transition"
+                      title="Reset and force animation on next Home visit"
+                    >
+                      🔄 Reset / Play
+                    </button>
+                    <button
+                      type="button"
+                      id="toggle-home-assembly-animation"
+                      onClick={() => {
+                          const nextVal = !localSettings.enableHomeAssemblyAnimation;
+                          setLocalSettings({ ...localSettings, enableHomeAssemblyAnimation: nextVal });
+                      }}
+                      className={`w-12 h-6 rounded-full transition-colors relative shrink-0 p-0.5 ${localSettings.enableHomeAssemblyAnimation ? 'bg-indigo-600' : 'bg-slate-300'}`}
+                      title={localSettings.enableHomeAssemblyAnimation ? 'Click to Disable Assembly Animation' : 'Click to Enable Assembly Animation'}
+                    >
+                      <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${localSettings.enableHomeAssemblyAnimation ? 'translate-x-6' : 'translate-x-0'}`} />
+                    </button>
+                  </div>
+              </div>
+
               {/* STUDY ROOM CREATION VISIBILITY TOGGLE */}
               <div id="setting-study-room-creation-visibility" className="mt-4 p-4 rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-purple-50/70 flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3">
@@ -7178,10 +7664,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   <label className="text-[10px] font-bold text-slate-600 uppercase">Click URL (External Link)</label>
                                   <input type="url" value={localSettings.bannerConfig?.top?.clickUrl || ''} onChange={e => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), top: { ...(localSettings.bannerConfig?.top || {} as any), clickUrl: e.target.value } } })} className="w-full p-2 rounded-lg border border-red-200 text-sm text-slate-700" placeholder="https://..." />
                               </div>
-                              <div>
-                                  <label className="text-[10px] font-bold text-red-700 uppercase flex items-center gap-1">🔴 YouTube Live URL (App Player)</label>
-                                  <input type="url" value={localSettings.bannerConfig?.top?.liveVideoUrl || ''} onChange={e => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), top: { ...(localSettings.bannerConfig?.top || {} as any), liveVideoUrl: e.target.value } } })} className="w-full p-2 rounded-lg border border-red-300 text-sm text-slate-700" placeholder="https://youtube.com/live/..." />
-                                  <p className="text-[9px] text-red-400 mt-0.5">Set karne par banner tap karne se app ke video player mein live class khulegi.</p>
+                              <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <label className="text-[10px] font-bold text-red-700 uppercase flex items-center gap-1">🔴 Live / Video URL (App Player)</label>
+                                      <DirectUploadButton
+                                          kind="video"
+                                          compact
+                                          currentUrl={localSettings.bannerConfig?.top?.liveVideoUrl}
+                                          onUploaded={(url) => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), top: { ...(localSettings.bannerConfig?.top || {} as any), liveVideoUrl: url } } })}
+                                      />
+                                  </div>
+
+                                  <p className="text-[9px] text-red-400 mt-0.5">Set karne par banner tap karne se app ke video player mein video/live class khulegi.</p>
                               </div>
                           </div>
                       </div>
@@ -7219,10 +7713,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   <label className="text-[10px] font-bold text-slate-600 uppercase">Click URL (External Link)</label>
                                   <input type="url" value={localSettings.bannerConfig?.bottom?.clickUrl || ''} onChange={e => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), bottom: { ...(localSettings.bannerConfig?.bottom || {} as any), clickUrl: e.target.value } } })} className="w-full p-2 rounded-lg border border-blue-200 text-sm text-slate-700" placeholder="https://..." />
                               </div>
-                              <div>
-                                  <label className="text-[10px] font-bold text-red-700 uppercase flex items-center gap-1">🔴 YouTube Live URL (App Player)</label>
-                                  <input type="url" value={localSettings.bannerConfig?.bottom?.liveVideoUrl || ''} onChange={e => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), bottom: { ...(localSettings.bannerConfig?.bottom || {} as any), liveVideoUrl: e.target.value } } })} className="w-full p-2 rounded-lg border border-red-300 text-sm text-slate-700" placeholder="https://youtube.com/live/..." />
-                                  <p className="text-[9px] text-red-400 mt-0.5">Set karne par banner tap karne se app ke video player mein live class khulegi.</p>
+                              <div className="space-y-1.5">
+                                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                                      <label className="text-[10px] font-bold text-red-700 uppercase flex items-center gap-1">🔴 Live / Video URL (App Player)</label>
+                                      <DirectUploadButton
+                                          kind="video"
+                                          compact
+                                          currentUrl={localSettings.bannerConfig?.bottom?.liveVideoUrl}
+                                          onUploaded={(url) => setLocalSettings({ ...localSettings, bannerConfig: { ...(localSettings.bannerConfig || {} as any), bottom: { ...(localSettings.bannerConfig?.bottom || {} as any), liveVideoUrl: url } } })}
+                                      />
+                                  </div>
+
+                                  <p className="text-[9px] text-red-400 mt-0.5">Set karne par banner tap karne se app ke video player mein video/live class khulegi.</p>
                               </div>
                           </div>
                           <p className="text-[10px] text-blue-400 mt-2">* Auto-Hide 0 = hamesha dikhega. Click URL set karne par banner tap karke link khulega.</p>
@@ -7433,6 +7935,29 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           />
       )}
 
+      {/* --- PEDRO AI VOICE & FEATURE GUIDE CONTROLLER --- */}
+      {activeTab === 'PEDRO_MANAGER' && (
+          <PedroAdminManager
+              settings={localSettings}
+              onSave={async (updated) => {
+                  setLocalSettings(updated);
+                  await handleSaveSettings(updated);
+              }}
+              onBack={() => setActiveTab('DASHBOARD')}
+          />
+      )}
+
+      {/* --- MATH MASTER MANAGER (BOOK / NOTES / SOLUTION / MCQ) --- */}
+      {activeTab === 'MATH_MANAGER' && (
+          <AdminMathManager
+              onBack={() => setActiveTab('DASHBOARD')}
+              currentUser={currentUser}
+              settings={localSettings}
+              onUpdateSettings={setLocalSettings}
+              onSaveSettings={handleSaveSettings}
+          />
+      )}
+
       {/* 3-TIER POPUP CONFIG TAB */}
 
 
@@ -7567,8 +8092,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           className={`flex flex-col items-center gap-1 py-2.5 px-3 rounded-xl border-2 text-xs font-black transition-all ${newCustomBookType === 'single' ? 'bg-amber-600 text-white border-amber-600 shadow-md' : 'bg-white text-amber-700 border-amber-200 hover:border-amber-400'}`}
                                       >
                                           <span className="text-xl">📄</span>
-                                          <span>One Page Book</span>
-                                          <span className={`text-[9px] font-medium text-center leading-tight ${newCustomBookType === 'single' ? 'opacity-80' : 'opacity-60'}`}>Sar Sangrah jaisa — har baar ek page/notes add karo</span>
+                                          <span>One Subject Book</span>
+                                          <span className={`text-[9px] font-medium text-center leading-tight ${newCustomBookType === 'single' ? 'opacity-80' : 'opacity-60'}`}>Sar Sangrah / Speedy jaisa — Routine me nahi aayega</span>
                                       </button>
                                       <button
                                           type="button"
@@ -7576,8 +8101,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           className={`flex flex-col items-center gap-1 py-2.5 px-3 rounded-xl border-2 text-xs font-black transition-all ${newCustomBookType === 'multi' ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-indigo-700 border-indigo-200 hover:border-indigo-400'}`}
                                       >
                                           <span className="text-xl">📚</span>
-                                          <span>Multi Page Book</span>
-                                          <span className={`text-[9px] font-medium text-center leading-tight ${newCustomBookType === 'multi' ? 'opacity-80' : 'opacity-60'}`}>Class 6-12 jaisa — chapters + multiple pages + notes + MCQ</span>
+                                          <span>Multi Subject Book</span>
+                                          <span className={`text-[9px] font-medium text-center leading-tight ${newCustomBookType === 'multi' ? 'opacity-80' : 'opacity-60'}`}>Lucent / Class 6-12 jaisa — Routine me chalega</span>
                                       </button>
                                   </div>
                               </div>
@@ -7919,6 +8444,165 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               <p className="text-[10px] text-cyan-700 mt-2 leading-snug">
                                   💡 Tip: PNG transparent background ke saath best dikhta hai. Max 1 MB. Changes "Save Settings" press karne ke baad apply honge.
                               </p>
+                          </div>
+
+                          {/* ============================================ */}
+                          {/* SPLASH / LOADING SCREEN VIDEO (CLOUDINARY)   */}
+                          {/* ============================================ */}
+                          <div className="bg-gradient-to-br from-sky-50 to-indigo-50 border border-sky-200 rounded-xl p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                  <label className="text-xs font-bold uppercase text-sky-800 flex items-center gap-1.5">
+                                      <Video size={14} className="text-sky-600" />
+                                      <span>🎬 Loading Screen Video (Cloudinary)</span>
+                                  </label>
+                                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
+                                      localSettings.loadingScreenVideoEnabled !== false && localSettings.loadingScreenVideoUrl
+                                          ? 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                                          : 'text-slate-500 bg-slate-100 border-slate-200'
+                                  }`}>
+                                      {localSettings.loadingScreenVideoEnabled !== false && localSettings.loadingScreenVideoUrl ? 'Video ON' : 'Video OFF'}
+                                  </span>
+                              </div>
+                              <p className="text-[10px] font-bold text-sky-700 mb-3">
+                                  App khulne par Loading Screen me video chalayein. Aap Gallery se direct video upload (Cloudinary) kar sakte hain ya video link paste kar sakte hain.
+                              </p>
+
+                              {/* ON/OFF TOGGLE + PREVIEW */}
+                              <div className="flex items-center justify-between bg-white rounded-xl p-3 border border-sky-100 mb-3">
+                                  <div>
+                                      <p className="font-bold text-slate-800 text-xs">Enable Loading Screen Video</p>
+                                      <p className="text-[10px] text-slate-500">ON rehne par loading screen me video chalega.</p>
+                                  </div>
+                                  <input
+                                      type="checkbox"
+                                      checked={localSettings.loadingScreenVideoEnabled !== false}
+                                      onChange={() => {
+                                          const next = !(localSettings.loadingScreenVideoEnabled !== false);
+                                          setLocalSettings({ ...localSettings, loadingScreenVideoEnabled: next });
+                                          try { localStorage.setItem('nst_loading_screen_video_enabled', String(next)); } catch {}
+                                      }}
+                                      className="w-6 h-6 accent-sky-600 cursor-pointer shrink-0"
+                                  />
+                              </div>
+
+                              {/* VIDEO PREVIEW */}
+                              {localSettings.loadingScreenVideoUrl && (
+                                  <div className="mb-3 rounded-xl overflow-hidden bg-black border border-sky-200 relative aspect-video max-h-48 mx-auto">
+                                      <video
+                                          src={getOptimizedVideoUrl(localSettings.loadingScreenVideoUrl)}
+                                          controls
+                                          muted
+                                          playsInline
+                                          className="w-full h-full object-contain"
+                                      />
+                                  </div>
+                              )}
+
+                              {/* UPLOAD PROGRESS */}
+                              {isUploadingSplashVideo && (
+                                  <div className="mb-3 bg-white p-2.5 rounded-xl border border-sky-200">
+                                      <div className="flex justify-between text-[10px] font-black text-sky-700 mb-1">
+                                          <span>☁️ Uploading Video to Cloudinary...</span>
+                                          <span>{splashVideoUploadProgress}%</span>
+                                      </div>
+                                      <div className="w-full h-2 bg-sky-100 rounded-full overflow-hidden">
+                                          <div
+                                              className="h-full bg-gradient-to-r from-sky-500 to-indigo-600 transition-all duration-300"
+                                              style={{ width: `${splashVideoUploadProgress}%` }}
+                                          />
+                                      </div>
+                                  </div>
+                              )}
+
+                              {/* DIRECT VIDEO UPLOAD + REMOVE */}
+                              <div className="grid grid-cols-2 gap-2 mb-2.5">
+                                  <label className={`cursor-pointer ${isUploadingSplashVideo ? 'opacity-60 pointer-events-none' : ''}`}>
+                                      <input
+                                          type="file"
+                                          accept="video/*"
+                                          className="hidden"
+                                          disabled={isUploadingSplashVideo}
+                                          onChange={async (e) => {
+                                              const file = e.target.files?.[0];
+                                              if (!file) return;
+                                              setIsUploadingSplashVideo(true);
+                                              setSplashVideoUploadProgress(1);
+                                              try {
+                                                  const res = await uploadToCloudinary(file, 'video', (pct) => {
+                                                      setSplashVideoUploadProgress(pct);
+                                                  });
+                                                  const videoUrl = res.secure_url || res.url;
+                                                  const updated = {
+                                                      ...localSettings,
+                                                      loadingScreenVideoEnabled: true,
+                                                      loadingScreenVideoUrl: videoUrl,
+                                                  };
+                                                  setLocalSettings(updated);
+                                                  try {
+                                                      localStorage.setItem('nst_loading_screen_video_url', videoUrl);
+                                                      localStorage.setItem('nst_loading_screen_video_enabled', 'true');
+                                                  } catch {}
+                                                  await saveSystemSettings(updated);
+                                                  if (onUpdateSettings) onUpdateSettings(updated);
+                                                  logActivity('LOADING_VIDEO_UPLOADED', `Loading screen video uploaded to Cloudinary`);
+                                                  alert('✅ Loading Screen Video Cloudinary par upload aur save ho gaya!');
+                                              } catch (err: any) {
+                                                  alert('❌ Video upload fail ho gaya: ' + (err?.message || 'Unknown error'));
+                                              } finally {
+                                                  setIsUploadingSplashVideo(false);
+                                                  setSplashVideoUploadProgress(0);
+                                                  e.target.value = '';
+                                              }
+                                          }}
+                                      />
+                                      <div className="text-center text-[11px] font-black px-3 py-2.5 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 text-white hover:opacity-95 active:scale-[0.98] transition-all">
+                                          {isUploadingSplashVideo ? `⏳ Uploading ${splashVideoUploadProgress}%` : '📱 Upload Video (Gallery)'}
+                                      </div>
+                                  </label>
+                                  <button
+                                      type="button"
+                                      onClick={async () => {
+                                          const updated = {
+                                              ...localSettings,
+                                              loadingScreenVideoEnabled: false,
+                                              loadingScreenVideoUrl: '',
+                                          };
+                                          setLocalSettings(updated);
+                                          try {
+                                              localStorage.removeItem('nst_loading_screen_video_url');
+                                              localStorage.setItem('nst_loading_screen_video_enabled', 'false');
+                                          } catch {}
+                                          await saveSystemSettings(updated);
+                                          if (onUpdateSettings) onUpdateSettings(updated);
+                                      }}
+                                      className="text-[11px] font-black px-3 py-2.5 rounded-xl bg-white text-rose-600 border-2 border-rose-200 hover:bg-rose-50 active:scale-[0.98] transition-all"
+                                  >
+                                      🗑️ Remove Video
+                                  </button>
+                              </div>
+
+                              {/* DIRECT VIDEO URL INPUT */}
+                              <div className="bg-white rounded-xl p-2.5 border border-sky-100">
+                                  <label className="text-[10px] font-bold text-slate-600 block mb-1">Ya Direct Video URL (Cloudinary / MP4) Paste Karein:</label>
+                                  <input
+                                      type="url"
+                                      value={localSettings.loadingScreenVideoUrl || ''}
+                                      onChange={(e) => {
+                                          const val = e.target.value;
+                                          setLocalSettings({
+                                              ...localSettings,
+                                              loadingScreenVideoUrl: val,
+                                              loadingScreenVideoEnabled: val.trim() ? true : localSettings.loadingScreenVideoEnabled,
+                                          });
+                                          try {
+                                              localStorage.setItem('nst_loading_screen_video_url', val.trim());
+                                              if (val.trim()) localStorage.setItem('nst_loading_screen_video_enabled', 'true');
+                                          } catch {}
+                                      }}
+                                      placeholder="https://res.cloudinary.com/.../video.mp4"
+                                      className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg outline-none focus:border-sky-500"
+                                  />
+                              </div>
                           </div>
 
                           {/* ── Sequential Page Reading Setting ── */}
@@ -10851,48 +11535,53 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                       <p className="text-[8px] text-slate-400 mt-0.5">Dark + Blue mode dono mein apply hoga</p>
                                                     </div>
                                                   </div>
-                                                  <div className="bg-rose-50 border border-rose-200 rounded-lg p-2">
-                                                    <label className="text-[9px] font-black text-rose-700 uppercase block mb-1">🎬 Video Link (Google Drive / YouTube)</label>
-                                                    <input
-                                                      type="url"
-                                                      value={(pg as any).videoUrl || ''}
-                                                      onChange={e => {
-                                                        const updated = [...newLucent.pages];
-                                                        updated[pgIdx] = { ...updated[pgIdx], videoUrl: e.target.value } as any;
-                                                        setNewLucent({...newLucent, pages: updated});
-                                                      }}
-                                                      className="w-full p-2 border border-rose-200 rounded text-sm outline-none focus:border-rose-500 bg-white"
-                                                      placeholder="https://drive.google.com/file/d/FILE_ID/view  ya  YouTube link"
-                                                    />
-                                                    <p className="text-[9px] text-rose-600 mt-1">💡 Google Drive link: File ko &quot;Anyone with the link&quot; share karein — student ko Gmail login nahi maangega.</p>
+                                                  <div className="bg-rose-50 border border-rose-200 rounded-lg p-2 space-y-1.5">
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                      <label className="text-[9px] font-black text-rose-700 uppercase block">🎬 Video (Direct App Upload ya Link)</label>
+                                                      <DirectUploadButton
+                                                        kind="video"
+                                                        compact
+                                                        currentUrl={(pg as any).videoUrl}
+                                                        onUploaded={(url) => {
+                                                          const updated = [...newLucent.pages];
+                                                          updated[pgIdx] = { ...updated[pgIdx], videoUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: updated });
+                                                        }}
+                                                      />
+                                                    </div>
+
                                                   </div>
-                                                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-2">
-                                                    <label className="text-[9px] font-black text-blue-700 uppercase block mb-1">📄 PDF Link (Google Drive)</label>
-                                                    <input
-                                                      type="url"
-                                                      value={(pg as any).pdfUrl || ''}
-                                                      onChange={e => {
-                                                        const updated = [...newLucent.pages];
-                                                        updated[pgIdx] = { ...updated[pgIdx], pdfUrl: e.target.value || undefined } as any;
-                                                        setNewLucent({...newLucent, pages: updated});
-                                                      }}
-                                                      className="w-full p-2 border border-blue-200 rounded text-sm outline-none focus:border-blue-500 bg-white"
-                                                      placeholder="https://drive.google.com/file/d/FILE_ID/view"
-                                                    />
+                                                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 space-y-1.5">
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                      <label className="text-[9px] font-black text-blue-700 uppercase block">📄 PDF (Direct App Upload ya Link)</label>
+                                                      <DirectUploadButton
+                                                        kind="pdf"
+                                                        compact
+                                                        currentUrl={(pg as any).pdfUrl}
+                                                        onUploaded={(url) => {
+                                                          const updated = [...newLucent.pages];
+                                                          updated[pgIdx] = { ...updated[pgIdx], pdfUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: updated });
+                                                        }}
+                                                      />
+                                                    </div>
+
                                                   </div>
-                                                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-2">
-                                                    <label className="text-[9px] font-black text-purple-700 uppercase block mb-1">🎧 Audio Link</label>
-                                                    <input
-                                                      type="url"
-                                                      value={(pg as any).audioUrl || ''}
-                                                      onChange={e => {
-                                                        const updated = [...newLucent.pages];
-                                                        updated[pgIdx] = { ...updated[pgIdx], audioUrl: e.target.value || undefined } as any;
-                                                        setNewLucent({...newLucent, pages: updated});
-                                                      }}
-                                                      className="w-full p-2 border border-purple-200 rounded text-sm outline-none focus:border-purple-500 bg-white"
-                                                      placeholder="https://... audio file ya link"
-                                                    />
+                                                  <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 space-y-1.5">
+                                                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                      <label className="text-[9px] font-black text-purple-700 uppercase block">🎧 Audio (Direct App Upload ya Link)</label>
+                                                      <DirectUploadButton
+                                                        kind="audio"
+                                                        compact
+                                                        currentUrl={(pg as any).audioUrl}
+                                                        onUploaded={(url) => {
+                                                          const updated = [...newLucent.pages];
+                                                          updated[pgIdx] = { ...updated[pgIdx], audioUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: updated });
+                                                        }}
+                                                      />
+                                                    </div>
+
                                                   </div>
                                                   <details className="text-[9px]">
                                                     <summary className="text-slate-400 cursor-pointer hover:text-slate-600">Legacy content field (purana data ke liye)</summary>
@@ -11095,6 +11784,21 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           <div key={mcq.id} className="bg-white border border-emerald-100 rounded p-2 relative space-y-1.5">
                                               <button type="button" onClick={() => setNewHomeworkMcqs(prev => prev.filter((_, i) => i !== mIdx))} className="absolute top-1 right-1 p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2 size={11} /></button>
                                               <input type="text" value={mcq.question} onChange={e => setNewHomeworkMcqs(prev => prev.map((m, i) => i === mIdx ? { ...m, question: e.target.value } : m))} placeholder={`Q${mIdx + 1}: Question?`} className="w-full p-1.5 pr-6 border border-slate-200 rounded text-xs outline-none focus:border-emerald-500" />
+                                              <textarea
+                                                  value={Array.isArray(mcq.statements) ? mcq.statements.join('\n') : ((mcq as any).statement || '')}
+                                                  onChange={e => {
+                                                      const val = e.target.value;
+                                                      const arr = val.split('\n').map(s => s.trim()).filter(Boolean);
+                                                      setNewHomeworkMcqs(prev => prev.map((m, i) => i === mIdx ? {
+                                                          ...m,
+                                                          statements: arr.length > 0 ? arr : undefined,
+                                                          statement: val || undefined,
+                                                      } as any : m));
+                                                  }}
+                                                  rows={2}
+                                                  placeholder="Statements / कथन (Optional — Har statement nayi line me)"
+                                                  className="w-full p-1.5 border border-sky-200 bg-sky-50/50 rounded text-xs outline-none focus:border-sky-500 placeholder-slate-400 resize-none"
+                                              />
                                               <div className="grid grid-cols-2 gap-1">
                                                   {mcq.options.map((opt, oi) => (
                                                       <div key={oi} className="flex items-center gap-1">
@@ -11111,18 +11815,39 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           <textarea value={newHomework.mcqText} onChange={e => setNewHomework({...newHomework, mcqText: e.target.value})} className="w-full mt-1 p-2 border border-slate-200 rounded text-sm outline-none h-20 focus:border-indigo-500" placeholder="Enter MCQ text..." />
                                       </details>
                                   </div>
-                                  <div>
-                                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Audio URL (Optional)</label>
-                                      <input type="text" value={newHomework.audioUrl} onChange={e => setNewHomework({...newHomework, audioUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500" placeholder="Enter Audio Link" />
+                                  <div className="bg-purple-50/70 border border-purple-200 rounded-lg p-2.5 space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                          <label className="text-[10px] font-bold text-purple-700 uppercase block">🎧 Audio (Direct App Upload ya Link)</label>
+                                          <DirectUploadButton
+                                              kind="audio"
+                                              compact
+                                              currentUrl={newHomework.audioUrl}
+                                              onUploaded={(url) => setNewHomework({ ...newHomework, audioUrl: url })}
+                                          />
+                                      </div>
                                   </div>
-                                  <div>
-                                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Video URL (Optional)</label>
-                                      <input type="text" value={newHomework.videoUrl} onChange={e => setNewHomework({...newHomework, videoUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500" placeholder="Enter Video Link" />
+                                  <div className="bg-rose-50/70 border border-rose-200 rounded-lg p-2.5 space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                          <label className="text-[10px] font-bold text-rose-700 uppercase block">🎬 Video (Direct App Upload ya Link)</label>
+                                          <DirectUploadButton
+                                              kind="video"
+                                              compact
+                                              currentUrl={newHomework.videoUrl}
+                                              onUploaded={(url) => setNewHomework({ ...newHomework, videoUrl: url })}
+                                          />
+                                      </div>
                                   </div>
-                                  <div>
-                                      <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">PDF URL — Google Drive Link (Optional)</label>
-                                      <input type="text" value={newHomework.pdfUrl} onChange={e => setNewHomework({...newHomework, pdfUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500" placeholder="https://drive.google.com/file/d/..." />
-                                      <p className="text-[10px] text-slate-400 mt-1">Google Drive ka PDF link daalein — app ke andar khulega, download blocked rahega.</p>
+                                  <div className="bg-blue-50/70 border border-blue-200 rounded-lg p-2.5 space-y-1.5">
+                                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                                          <label className="text-[10px] font-bold text-blue-700 uppercase block">📄 PDF (Direct App Upload ya Google Drive Link)</label>
+                                          <DirectUploadButton
+                                              kind="pdf"
+                                              compact
+                                              currentUrl={newHomework.pdfUrl}
+                                              onUploaded={(url) => setNewHomework({ ...newHomework, pdfUrl: url })}
+                                          />
+                                      </div>
+                                      <p className="text-[10px] text-blue-600">Direct App se PDF upload karein ya Drive link daalein — app ke andar khulega.</p>
                                   </div>
                                   <div className="pt-2">
                                       <button onClick={() => {
@@ -11397,6 +12122,25 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                               updated[i] = { ...updated[i], parsedMcqs: mcqs };
                                                               setLocalSettings({...localSettings, homework: updated});
                                                           }} className="w-full p-1.5 pr-6 border border-slate-200 rounded text-xs outline-none focus:border-emerald-500" placeholder={`Q${mIdx + 1}: Question?`} />
+                                                          <textarea
+                                                              value={Array.isArray(mcq.statements) ? mcq.statements.join('\n') : ((mcq as any).statement || '')}
+                                                              onChange={e => {
+                                                                  const val = e.target.value;
+                                                                  const arr = val.split('\n').map(s => s.trim()).filter(Boolean);
+                                                                  const updated = [...(localSettings.homework || [])];
+                                                                  const mcqs = [...(updated[i].parsedMcqs || [])];
+                                                                  mcqs[mIdx] = {
+                                                                      ...mcqs[mIdx],
+                                                                      statements: arr.length > 0 ? arr : undefined,
+                                                                      statement: val || undefined,
+                                                                  };
+                                                                  updated[i] = { ...updated[i], parsedMcqs: mcqs };
+                                                                  setLocalSettings({...localSettings, homework: updated});
+                                                              }}
+                                                              rows={2}
+                                                              placeholder="Statements / कथन (Optional — Har statement nayi line me)"
+                                                              className="w-full p-1.5 border border-sky-200 bg-sky-50/50 rounded text-xs outline-none focus:border-sky-500 placeholder-slate-400 resize-none"
+                                                          />
                                                           <div className="grid grid-cols-2 gap-1">
                                                               {(mcq.options || ['', '', '', '']).map((opt, oi) => (
                                                                   <div key={oi} className="flex items-center gap-1">
@@ -11430,31 +12174,52 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                       </div>
                                                   ))}
                                               </div>
-                                              <div className="grid grid-cols-2 gap-2">
-                                                <div>
-                                                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Audio URL</label>
-                                                    <input type="text" value={hw.audioUrl || ''} onChange={e => {
-                                                        const updated = [...(localSettings.homework || [])];
-                                                        updated[i] = { ...updated[i], audioUrl: e.target.value };
-                                                        setLocalSettings({...localSettings, homework: updated});
-                                                    }} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-slate-50" />
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center justify-between gap-1 flex-wrap">
+                                                        <label className="text-[10px] font-bold text-slate-500 uppercase block">🎧 Audio URL / Upload</label>
+                                                        <DirectUploadButton
+                                                            kind="audio"
+                                                            compact
+                                                            currentUrl={hw.audioUrl}
+                                                            onUploaded={(url) => {
+                                                                const updated = [...(localSettings.homework || [])];
+                                                                updated[i] = { ...updated[i], audioUrl: url };
+                                                                setLocalSettings({ ...localSettings, homework: updated });
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Video URL</label>
-                                                    <input type="text" value={hw.videoUrl || ''} onChange={e => {
-                                                        const updated = [...(localSettings.homework || [])];
-                                                        updated[i] = { ...updated[i], videoUrl: e.target.value };
-                                                        setLocalSettings({...localSettings, homework: updated});
-                                                    }} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-slate-50" />
+                                                <div className="space-y-1">
+                                                    <div className="flex items-center justify-between gap-1 flex-wrap">
+                                                        <label className="text-[10px] font-bold text-slate-500 uppercase block">🎬 Video URL / Upload</label>
+                                                        <DirectUploadButton
+                                                            kind="video"
+                                                            compact
+                                                            currentUrl={hw.videoUrl}
+                                                            onUploaded={(url) => {
+                                                                const updated = [...(localSettings.homework || [])];
+                                                                updated[i] = { ...updated[i], videoUrl: url };
+                                                                setLocalSettings({ ...localSettings, homework: updated });
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </div>
                                               </div>
-                                              <div>
-                                                  <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">PDF URL (Google Drive)</label>
-                                                  <input type="text" value={hw.pdfUrl || ''} onChange={e => {
-                                                      const updated = [...(localSettings.homework || [])];
-                                                      updated[i] = { ...updated[i], pdfUrl: e.target.value || undefined };
-                                                      setLocalSettings({...localSettings, homework: updated});
-                                                  }} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500 bg-slate-50" placeholder="https://drive.google.com/file/d/..." />
+                                              <div className="space-y-1">
+                                                  <div className="flex items-center justify-between gap-1 flex-wrap">
+                                                      <label className="text-[10px] font-bold text-slate-500 uppercase block">📄 PDF URL / Upload</label>
+                                                      <DirectUploadButton
+                                                          kind="pdf"
+                                                          compact
+                                                          currentUrl={hw.pdfUrl}
+                                                          onUploaded={(url) => {
+                                                              const updated = [...(localSettings.homework || [])];
+                                                              updated[i] = { ...updated[i], pdfUrl: url };
+                                                              setLocalSettings({ ...localSettings, homework: updated });
+                                                          }}
+                                                      />
+                                                  </div>
                                               </div>
                                           </div>
                                       </div>
@@ -13183,16 +13948,17 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                             })()}
                           </div>
 
-                          <div className="md:col-span-2">
-                              <label className="text-xs font-bold text-slate-600 uppercase block mb-1">Custom Page Video URL</label>
-                              <input
-                                  type="text"
-                                  placeholder="Paste Google Drive video URL here"
-                                  value={localSettings.customBloggerVideoUrl || ''}
-                                  onChange={(e) => setLocalSettings({...localSettings, customBloggerVideoUrl: e.target.value})}
-                                  className="w-full p-2 bg-slate-50 border rounded-lg text-sm"
-                              />
-                              <p className="text-[10px] text-slate-500 mt-1">This video will play in the Custom Page. (Google Drive link)</p>
+                          <div className="md:col-span-2 space-y-1.5">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <label className="text-xs font-bold text-slate-600 uppercase block">Custom Page Video (Direct Upload ya URL)</label>
+                                  <DirectUploadButton
+                                      kind="video"
+                                      compact
+                                      currentUrl={localSettings.customBloggerVideoUrl}
+                                      onUploaded={(url) => setLocalSettings({ ...localSettings, customBloggerVideoUrl: url })}
+                                  />
+                              </div>
+                              <p className="text-[10px] text-slate-500">This video will play in the Custom Page.</p>
                           </div>
                       </div>
                   </div>
@@ -13847,7 +14613,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
       {activeTab === 'BOOK_NOTES_MANAGER' && (
           <ErrorBoundary fallbackLabel="Book Notes Manager" compact>
           {(() => {
-          const BOOK_TYPES = [
+          const rawBookTypes = [
               { id: 'lucent',              label: '📘 Lucent GK',         sub: 'Multi-page entries (Competition)',  active: 'bg-indigo-600 text-white border-indigo-600',   idle: 'bg-white text-indigo-700 border-indigo-200 hover:border-indigo-400' },
               { id: 'sarSangrah',          label: '📒 Sar Sangrah',       sub: 'Page-wise notes + MCQ',            active: 'bg-amber-600 text-white border-amber-600',     idle: 'bg-white text-amber-700 border-amber-200 hover:border-amber-400' },
               { id: 'speedyScience',       label: '🔬 Speedy Science',    sub: 'Page-wise notes + MCQ',            active: 'bg-emerald-600 text-white border-emerald-600', idle: 'bg-white text-emerald-700 border-emerald-200 hover:border-emerald-400' },
@@ -13860,6 +14626,12 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                   idle: 'bg-white text-teal-700 border-teal-200 hover:border-teal-400',
               })),
           ];
+          const seenBtIds = new Set<string>();
+          const BOOK_TYPES = rawBookTypes.filter(b => {
+              if (!b || !b.id || seenBtIds.has(b.id)) return false;
+              seenBtIds.add(b.id);
+              return true;
+          });
           const BOOK_IDS = new Set(BOOK_TYPES.map(b => b.id));
           const isCustomBook = customBooksList.some(b => b.id === newBookNote.targetSubject);
           // Auto-apply stored type from book definition (set at creation time in Settings)
@@ -13880,20 +14652,26 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
               return pa !== pb ? pa - pb : new Date(b.date).getTime() - new Date(a.date).getTime();
           });
 
-          const CN_BOOK_TYPES = [
+          const rawCnBookTypes = [
               { id: 'lucent',              label: '📘 Lucent GK',         active: 'bg-indigo-600 text-white border-indigo-600',   idle: 'bg-white text-indigo-700 border-indigo-200 hover:border-indigo-400' },
               { id: 'sarSangrah',          label: '📒 Sar Sangrah',       active: 'bg-amber-600 text-white border-amber-600',     idle: 'bg-white text-amber-700 border-amber-200 hover:border-amber-400' },
               { id: 'speedyScience',       label: '🔬 Speedy Science',    active: 'bg-emerald-600 text-white border-emerald-600', idle: 'bg-white text-emerald-700 border-emerald-200 hover:border-emerald-400' },
               { id: 'speedySocialScience', label: '🌍 Speedy Social Sci', active: 'bg-rose-600 text-white border-rose-600',       idle: 'bg-white text-rose-700 border-rose-200 hover:border-rose-400' },
               ...((localSettings.lucentNotes || []) as any[]).reduce((acc: {id:string;label:string;active:string;idle:string}[], entry: any) => {
                   const name = (entry.bookName?.trim()) || '';
-                  if (!name || name === 'Lucent GK') return acc;
+                  if (!name || name === 'Lucent GK' || name.toLowerCase() === 'lucent' || name.toLowerCase() === 'lucent gk') return acc;
                   const id = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
                   if (!acc.find(b => b.id === id)) acc.push({ id, label: `📘 ${name}`, active: 'bg-indigo-600 text-white border-indigo-600', idle: 'bg-white text-indigo-700 border-indigo-200 hover:border-indigo-400' });
                   return acc;
               }, []),
               ...customBooksList.map(b => ({ id: b.id, label: `📗 ${b.name}`, active: 'bg-teal-600 text-white border-teal-600', idle: 'bg-white text-teal-700 border-teal-200 hover:border-teal-400' })),
           ];
+          const seenCnIds = new Set<string>();
+          const CN_BOOK_TYPES = rawCnBookTypes.filter(b => {
+              if (!b || !b.id || seenCnIds.has(b.id)) return false;
+              seenCnIds.add(b.id);
+              return true;
+          });
 
           const handleCnLoadAll = async () => {
               setCnNotesLoading(true);
@@ -14895,6 +15673,97 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Lesson Name / Title</label>
                                           <input type="text" value={newLucent.lessonTitle} onChange={e => setNewLucent({...newLucent, lessonTitle: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-indigo-500" placeholder="e.g. Chapter 1: मौलिक अधिकार" />
                                       </div>
+
+                                      {/* ── Lesson-Wide Media (Video / PDF / Audio) ── */}
+                                      <div className="bg-gradient-to-r from-rose-50 via-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-3.5 space-y-3">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <p className="text-[11px] font-black uppercase text-indigo-900 flex items-center gap-1.5">
+                                                  <span>🎬 📄 🎵</span> Lesson-Wide Media (Pura Lesson Video / PDF / Audio)
+                                              </p>
+                                              <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                      const dummyEntry: LucentNoteEntry = {
+                                                          id: cn612EditingId || 'temp_lucent_media',
+                                                          subject: newLucent.subject,
+                                                          lessonTitle: newLucent.lessonTitle.trim() || 'Lucent Lesson',
+                                                          classLevel: newLucent.classLevel,
+                                                          pages: newLucent.pages,
+                                                          videoUrl: newLucent.videoUrl,
+                                                          pdfUrl: newLucent.pdfUrl,
+                                                          audioUrl: newLucent.audioUrl,
+                                                      };
+                                                      setAdminLucentMediaModalEntry(dummyEntry);
+                                                      setAdminLucentMediaModalPageIndex(-1);
+                                                  }}
+                                                  className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black shadow active:scale-95 transition flex items-center gap-1"
+                                              >
+                                                  <Sparkles size={11} /> Open Media Vault Modal
+                                              </button>
+                                          </div>
+                                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                              {/* Video URL + Upload */}
+                                              <div className="space-y-1 bg-white p-2 rounded-lg border border-rose-200">
+                                                  <div className="flex items-center justify-between gap-1">
+                                                      <label className="text-[9px] font-black text-rose-700 uppercase">🎬 Video</label>
+                                                      <DirectUploadButton
+                                                          kind="video"
+                                                          compact
+                                                          currentUrl={newLucent.videoUrl}
+                                                          onUploaded={(url) => setNewLucent(prev => ({ ...prev, videoUrl: url }))}
+                                                      />
+                                                  </div>
+                                                  <input
+                                                      type="text"
+                                                      value={newLucent.videoUrl || ''}
+                                                      onChange={e => setNewLucent({ ...newLucent, videoUrl: e.target.value })}
+                                                      placeholder="YouTube / Drive / MP4 URL..."
+                                                      className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-400 bg-white"
+                                                  />
+                                              </div>
+
+                                              {/* PDF URL + Upload */}
+                                              <div className="space-y-1 bg-white p-2 rounded-lg border border-blue-200">
+                                                  <div className="flex items-center justify-between gap-1">
+                                                      <label className="text-[9px] font-black text-blue-700 uppercase">📄 PDF</label>
+                                                      <DirectUploadButton
+                                                          kind="pdf"
+                                                          compact
+                                                          currentUrl={newLucent.pdfUrl}
+                                                          onUploaded={(url) => setNewLucent(prev => ({ ...prev, pdfUrl: url }))}
+                                                      />
+                                                  </div>
+                                                  <input
+                                                      type="text"
+                                                      value={newLucent.pdfUrl || ''}
+                                                      onChange={e => setNewLucent({ ...newLucent, pdfUrl: e.target.value })}
+                                                      placeholder="Google Drive PDF / direct link..."
+                                                      className="w-full p-1.5 border border-blue-200 rounded text-xs outline-none focus:border-blue-400 bg-white"
+                                                  />
+                                              </div>
+
+                                              {/* Audio URL + Upload */}
+                                              <div className="space-y-1 bg-white p-2 rounded-lg border border-purple-200">
+                                                  <div className="flex items-center justify-between gap-1">
+                                                      <label className="text-[9px] font-black text-purple-700 uppercase">🎵 Audio</label>
+                                                      <DirectUploadButton
+                                                          kind="audio"
+                                                          compact
+                                                          currentUrl={newLucent.audioUrl}
+                                                          onUploaded={(url) => setNewLucent(prev => ({ ...prev, audioUrl: url }))}
+                                                      />
+                                                  </div>
+                                                  <input
+                                                      type="text"
+                                                      value={newLucent.audioUrl || ''}
+                                                      onChange={e => setNewLucent({ ...newLucent, audioUrl: e.target.value })}
+                                                      placeholder="MP3 / Audio URL..."
+                                                      className="w-full p-1.5 border border-purple-200 rounded text-xs outline-none focus:border-purple-400 bg-white"
+                                                  />
+                                              </div>
+                                          </div>
+                                      </div>
+
                                       <div className="space-y-3">
                                           <div className="flex items-center justify-between">
                                               <label className="text-[10px] font-bold text-slate-500 uppercase">Pages ({newLucent.pages.length})</label>
@@ -14962,6 +15831,93 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                         </details>
                                                       </div>
                                                   </div>
+                                                  {/* ── Media URLs & Uploads (Video, PDF, Audio) for this Lucent page ── */}
+                                                  <div className="border border-indigo-100 rounded-lg p-2.5 bg-indigo-50/40 space-y-2">
+                                                    <p className="text-[9px] font-black uppercase text-indigo-800 flex items-center gap-1">
+                                                      <span>🎬 📄 🎵</span> Attach Media for Page {pg.pageNo || pgIdx + 1} (Video / PDF / Audio)
+                                                    </p>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                                      <div>
+                                                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                                                          <label className="text-[8px] font-black text-rose-700 uppercase block">🎬 Video</label>
+                                                          <DirectUploadButton
+                                                            kind="video"
+                                                            compact
+                                                            currentUrl={(pg as any).videoUrl}
+                                                            onUploaded={(url) => {
+                                                              const u = [...newLucent.pages];
+                                                              u[pgIdx] = { ...u[pgIdx], videoUrl: url };
+                                                              setNewLucent({ ...newLucent, pages: u });
+                                                            }}
+                                                          />
+                                                        </div>
+                                                        <input
+                                                          type="text"
+                                                          value={(pg as any).videoUrl || ""}
+                                                          onChange={e => {
+                                                            const u = [...newLucent.pages];
+                                                            u[pgIdx] = { ...u[pgIdx], videoUrl: e.target.value };
+                                                            setNewLucent({ ...newLucent, pages: u });
+                                                          }}
+                                                          placeholder="YouTube / Drive / MP4..."
+                                                          className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-400 bg-white"
+                                                        />
+                                                      </div>
+                                                      <div>
+                                                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                                                          <label className="text-[8px] font-black text-blue-700 uppercase block">📄 PDF</label>
+                                                          <DirectUploadButton
+                                                            kind="pdf"
+                                                            compact
+                                                            currentUrl={(pg as any).pdfUrl}
+                                                            onUploaded={(url) => {
+                                                              const u = [...newLucent.pages];
+                                                              u[pgIdx] = { ...u[pgIdx], pdfUrl: url };
+                                                              setNewLucent({ ...newLucent, pages: u });
+                                                            }}
+                                                          />
+                                                        </div>
+                                                        <input
+                                                          type="text"
+                                                          value={(pg as any).pdfUrl || ""}
+                                                          onChange={e => {
+                                                            const u = [...newLucent.pages];
+                                                            u[pgIdx] = { ...u[pgIdx], pdfUrl: e.target.value };
+                                                            setNewLucent({ ...newLucent, pages: u });
+                                                          }}
+                                                          placeholder="Drive PDF / direct URL..."
+                                                          className="w-full p-1.5 border border-blue-200 rounded text-xs outline-none focus:border-blue-400 bg-white"
+                                                        />
+                                                      </div>
+                                                      <div>
+                                                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                                                          <label className="text-[8px] font-black text-violet-700 uppercase block">🎵 Audio</label>
+                                                          <DirectUploadButton
+                                                            kind="audio"
+                                                            compact
+                                                            currentUrl={(pg as any).audioUrl}
+                                                            onUploaded={(url) => {
+                                                              const u = [...newLucent.pages];
+                                                              u[pgIdx] = { ...u[pgIdx], audioUrl: url };
+                                                              setNewLucent({ ...newLucent, pages: u });
+                                                            }}
+                                                          />
+                                                        </div>
+                                                        <input
+                                                          type="text"
+                                                          value={(pg as any).audioUrl || ""}
+                                                          onChange={e => {
+                                                            const u = [...newLucent.pages];
+                                                            u[pgIdx] = { ...u[pgIdx], audioUrl: e.target.value };
+                                                            setNewLucent({ ...newLucent, pages: u });
+                                                          }}
+                                                          placeholder="MP3 / Audio URL..."
+                                                          className="w-full p-1.5 border border-violet-200 rounded text-xs outline-none focus:border-violet-400 bg-white"
+                                                        />
+                                                      </div>
+                                                    </div>
+                                                  </div>
+
                                                   <div className="border-t border-slate-200 pt-2">
                                                       <CoachingMcqEditor
                                                           value={(pg.mcqs || []) as any}
@@ -14978,7 +15934,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       </div>
                                       <button onClick={() => {
                                           if (!newLucent.lessonTitle.trim()) return alert('Lesson name nahi diya.');
-                                          const validPages = newLucent.pages.filter(p => p.pageNo.trim() && (p.chunkNotes?.trim() || p.htmlNotes?.trim() || p.content?.trim() || (p.mcqs && p.mcqs.length > 0)));
+                                          const validPages = newLucent.pages.filter(p => p.pageNo.trim() && (p.chunkNotes?.trim() || p.htmlNotes?.trim() || p.content?.trim() || (p.mcqs && p.mcqs.length > 0) || (p as any).videoUrl?.trim() || (p as any).pdfUrl?.trim() || (p as any).audioUrl?.trim()));
                                           if (validPages.length === 0) return alert('Kam se kam ek page ke notes ya MCQ add karein.');
                                           const target2 = LUCENT_CLASS_TARGETS.find(t => t.id === newLucent.classLevel)?.label || newLucent.classLevel;
                                           let bnLucentUpdated: LucentNoteEntry[];
@@ -15305,13 +16261,38 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           value={newBookNoteMcqs}
                                           onChange={setNewBookNoteMcqs}
                                       />
-                                      <div>
-                                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">🎬 Video URL (Optional)</label>
-                                          <input type="text" value={newBookNote.videoUrl} onChange={e => setNewBookNote({...newBookNote, videoUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-amber-500" placeholder="Video link" />
+                                      <div className="bg-rose-50/70 border border-rose-200 rounded-lg p-2.5 space-y-1.5">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <label className="text-[10px] font-bold text-rose-700 uppercase block">🎬 Video (Direct App Upload ya Link)</label>
+                                              <DirectUploadButton
+                                                  kind="video"
+                                                  compact
+                                                  currentUrl={newBookNote.videoUrl}
+                                                  onUploaded={(url) => setNewBookNote({ ...newBookNote, videoUrl: url })}
+                                              />
+                                          </div>
                                       </div>
-                                      <div>
-                                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">🎙️ Audio URL (Optional)</label>
-                                          <input type="text" value={newBookNote.audioUrl} onChange={e => setNewBookNote({...newBookNote, audioUrl: e.target.value})} className="w-full p-2 border border-slate-200 rounded text-sm outline-none focus:border-amber-500" placeholder="Audio link" />
+                                      <div className="bg-purple-50/70 border border-purple-200 rounded-lg p-2.5 space-y-1.5">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <label className="text-[10px] font-bold text-purple-700 uppercase block">🎙️ Audio (Direct App Upload ya Link)</label>
+                                              <DirectUploadButton
+                                                  kind="audio"
+                                                  compact
+                                                  currentUrl={newBookNote.audioUrl}
+                                                  onUploaded={(url) => setNewBookNote({ ...newBookNote, audioUrl: url })}
+                                              />
+                                          </div>
+                                      </div>
+                                      <div className="bg-blue-50/70 border border-blue-200 rounded-lg p-2.5 space-y-1.5">
+                                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                                              <label className="text-[10px] font-bold text-blue-700 uppercase block">📄 PDF (Direct App Upload ya Link)</label>
+                                              <DirectUploadButton
+                                                  kind="pdf"
+                                                  compact
+                                                  currentUrl={newBookNote.pdfUrl}
+                                                  onUploaded={(url) => setNewBookNote({ ...newBookNote, pdfUrl: url })}
+                                              />
+                                          </div>
                                       </div>
                                       <button onClick={() => {
                                           const pg = newBookNote.pageNo.trim();
@@ -15339,6 +16320,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                               parsedMcqs: structuredMcqs,
                                               audioUrl: newBookNote.audioUrl,
                                               videoUrl: newBookNote.videoUrl,
+                                              pdfUrl: newBookNote.pdfUrl || undefined,
                                               targetSubject: newBookNote.targetSubject,
                                               pageNo: pg,
                                               board: newBookNote.board || undefined,
@@ -15530,8 +16512,19 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                       <span className="shrink-0 text-[10px] text-indigo-600 font-bold">
                                                           {entry.pages.length} pg{entry.pages.reduce((s: number, p: any) => s + ((p.mcqs || []).length), 0) > 0 ? ` · ${entry.pages.reduce((s: number, p: any) => s + ((p.mcqs || []).length), 0)} MCQ` : ''}
                                                       </span>
+                                                      {((entry.videoUrl || entry.pages?.some((p: any) => p.videoUrl)) || (entry.pdfUrl || entry.pages?.some((p: any) => p.pdfUrl)) || (entry.audioUrl || entry.pages?.some((p: any) => p.audioUrl))) && (
+                                                          <span className="flex items-center gap-1 text-[10px] font-black text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full shrink-0">
+                                                              {(entry.videoUrl || entry.pages?.some((p: any) => p.videoUrl)) && <span title="Video available">🎬</span>}
+                                                              {(entry.pdfUrl || entry.pages?.some((p: any) => p.pdfUrl)) && <span title="PDF available">📄</span>}
+                                                              {(entry.audioUrl || entry.pages?.some((p: any) => p.audioUrl)) && <span title="Audio available">🎵</span>}
+                                                          </span>
+                                                      )}
                                                       <button onClick={() => {
-                                                          setNewLucent({ subject: entry.subject, bookName: entry.bookName || '', classLevel: entry.classLevel, board: (entry as any).board || '', lessonTitle: entry.lessonTitle, pages: entry.pages.map((p: any) => ({ ...p })), mcqOnly: entry.mcqOnly || false });
+                                                          setAdminLucentMediaModalEntry(entry);
+                                                          setAdminLucentMediaModalPageIndex(-1);
+                                                      }} className="p-1 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded transition-colors flex items-center gap-0.5 text-xs font-black" title="Manage Video / PDF / Audio Media"><Video size={13}/><span className="hidden sm:inline text-[10px]">Media</span></button>
+                                                      <button onClick={() => {
+                                                          setNewLucent({ subject: entry.subject, bookName: entry.bookName || '', classLevel: entry.classLevel, board: (entry as any).board || '', lessonTitle: entry.lessonTitle, videoUrl: entry.videoUrl || '', pdfUrl: entry.pdfUrl || '', audioUrl: entry.audioUrl || '', pages: entry.pages.map((p: any) => ({ ...p })), mcqOnly: entry.mcqOnly || false });
                                                           setNewBookNote((prev: any) => ({ ...prev, targetSubject: 'lucent' }));
                                                           setCn612EditingId(entry.id);
                                                           setBookNotesTab('ADD');
@@ -15813,7 +16806,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           mcqText: hw.mcqText || '',
                                           audioUrl: hw.audioUrl || '',
                                           videoUrl: hw.videoUrl || '',
-                                          pdfUrl: '',
+                                          pdfUrl: (hw as any).pdfUrl || '',
                                           targetSubject: hw.targetSubject || 'sarSangrah',
                                           pageNo: (hw as any).pageNo || '',
                                           topicName: '',
@@ -16086,21 +17079,54 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           <textarea value={pg.htmlNotes || ''} onChange={e => { const u=[...newLucent.pages]; u[pgIdx]={...u[pgIdx], htmlNotes: e.target.value}; setNewLucent({...newLucent, pages: u}); }} className="w-full p-2 border border-teal-200 rounded text-sm outline-none min-h-[110px] resize-y focus:border-teal-500 bg-white font-mono" placeholder="<h2>Topic</h2><p>HTML formatted notes — bold, tables, colors sab supported hai.</p>" />
                                       </div>
                                       {/* Media Links */}
-                                      <div className="bg-rose-50 border border-rose-200 rounded-lg p-2 space-y-2">
-                                          <p className="text-[9px] font-black text-rose-700 uppercase">🎬 Media Links (Google Drive ya YouTube)</p>
-                                          <div>
-                                              <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">▶ Video URL</label>
-                                              <input type="url" value={(pg as any).videoUrl || ''} onChange={e => { const u=[...newLucent.pages]; u[pgIdx]={...u[pgIdx], videoUrl: e.target.value}; setNewLucent({...newLucent, pages: u}); }} className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-500 bg-white" placeholder="https://drive.google.com/file/d/... ya YouTube link" />
+                                      <div className="bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-2.5">
+                                          <p className="text-[9px] font-black text-rose-700 uppercase">🎬 Media (Direct App se Upload karein ya Link daalein)</p>
+                                          <div className="space-y-1">
+                                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                  <label className="text-[9px] font-bold text-slate-600 uppercase block">▶ Video (App Upload ya Link)</label>
+                                                  <DirectUploadButton
+                                                      kind="video"
+                                                      compact
+                                                      currentUrl={(pg as any).videoUrl}
+                                                      onUploaded={(url) => {
+                                                          const u = [...newLucent.pages];
+                                                          u[pgIdx] = { ...u[pgIdx], videoUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: u });
+                                                      }}
+                                                  />
+                                              </div>
                                           </div>
-                                          <div>
-                                              <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">🎵 Audio URL</label>
-                                              <input type="url" value={(pg as any).audioUrl || ''} onChange={e => { const u=[...newLucent.pages]; u[pgIdx]={...u[pgIdx], audioUrl: e.target.value}; setNewLucent({...newLucent, pages: u}); }} className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-500 bg-white" placeholder="https://drive.google.com/file/d/... (audio file)" />
+                                          <div className="space-y-1">
+                                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                  <label className="text-[9px] font-bold text-slate-600 uppercase block">🎵 Audio (App Upload ya Link)</label>
+                                                  <DirectUploadButton
+                                                      kind="audio"
+                                                      compact
+                                                      currentUrl={(pg as any).audioUrl}
+                                                      onUploaded={(url) => {
+                                                          const u = [...newLucent.pages];
+                                                          u[pgIdx] = { ...u[pgIdx], audioUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: u });
+                                                      }}
+                                                  />
+                                              </div>
                                           </div>
-                                          <div>
-                                              <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">📄 PDF URL</label>
-                                              <input type="url" value={(pg as any).pdfUrl || ''} onChange={e => { const u=[...newLucent.pages]; u[pgIdx]={...u[pgIdx], pdfUrl: e.target.value}; setNewLucent({...newLucent, pages: u}); }} className="w-full p-1.5 border border-rose-200 rounded text-xs outline-none focus:border-rose-500 bg-white" placeholder="https://drive.google.com/file/d/... (PDF file)" />
+                                          <div className="space-y-1">
+                                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                                  <label className="text-[9px] font-bold text-slate-600 uppercase block">📄 PDF (App Upload ya Link)</label>
+                                                  <DirectUploadButton
+                                                      kind="pdf"
+                                                      compact
+                                                      currentUrl={(pg as any).pdfUrl}
+                                                      onUploaded={(url) => {
+                                                          const u = [...newLucent.pages];
+                                                          u[pgIdx] = { ...u[pgIdx], pdfUrl: url } as any;
+                                                          setNewLucent({ ...newLucent, pages: u });
+                                                      }}
+                                                  />
+                                              </div>
                                           </div>
-                                          <p className="text-[8px] text-rose-600">💡 Google Drive links: File ko "Anyone with the link" se share karein. App ke andar hi play hoga — user bahar nahi jayega.</p>
+                                          <p className="text-[8px] text-rose-600">💡 Direct App se Video, Audio ya PDF upload kar sakte hain — ya Google Drive / YouTube link bhi daal sakte hain.</p>
                                       </div>
                                       <div className="border-t border-slate-200 pt-2">
                                           <CoachingMcqEditor
@@ -16122,7 +17148,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                       <button
                           onClick={() => {
                               if (!newLucent.lessonTitle.trim()) return alert('Chapter / Lesson title daalein.');
-                              const validPages = newLucent.pages.filter(p => p.pageNo.trim() && (p.chunkNotes?.trim() || p.htmlNotes?.trim() || (p.mcqs && p.mcqs.length > 0)));
+                              const validPages = newLucent.pages.filter(p => p.pageNo.trim() && (p.chunkNotes?.trim() || p.htmlNotes?.trim() || (p.mcqs && p.mcqs.length > 0) || (p as any).videoUrl?.trim() || (p as any).pdfUrl?.trim() || (p as any).audioUrl?.trim()));
                               if (validPages.length === 0) return alert('Kam se kam ek page ke notes ya MCQ add karein.');
                               const effectiveClass = (newLucent.classLevel === 'COMPETITION' ? '6' : newLucent.classLevel) as any;
                               const classLabel = CLASS_ONLY_TARGETS.find(t => t.id === effectiveClass)?.label || `Class ${effectiveClass}`;
@@ -16143,6 +17169,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       board: newLucent.board || undefined,
                                       lessonTitle: titleTrimmed,
                                       pages: validPages,
+                                      videoUrl: newLucent.videoUrl?.trim() || undefined,
+                                      pdfUrl: newLucent.pdfUrl?.trim() || undefined,
+                                      audioUrl: newLucent.audioUrl?.trim() || undefined,
                                       updatedAt: new Date().toISOString(),
                                   } as LucentNoteEntry;
                                   updated = (localSettings.lucentNotes || []).map((n: LucentNoteEntry) =>
@@ -16161,6 +17190,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       board: newLucent.board || undefined,
                                       lessonTitle: titleTrimmed,
                                       pages: validPages,
+                                      videoUrl: newLucent.videoUrl?.trim() || undefined,
+                                      pdfUrl: newLucent.pdfUrl?.trim() || undefined,
+                                      audioUrl: newLucent.audioUrl?.trim() || undefined,
                                       createdAt: new Date().toISOString(),
                                   };
                                   updated = [...(localSettings.lucentNotes || []), entry];
@@ -16302,6 +17334,14 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                               <div className="flex gap-1 shrink-0">
                                                   <button
                                                       onClick={() => {
+                                                          setAdminLucentMediaModalEntry(entry);
+                                                          setAdminLucentMediaModalPageIndex(-1);
+                                                      }}
+                                                      className="p-1.5 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-lg"
+                                                      title="Media (Video/PDF/Audio)"
+                                                  ><Video size={14}/></button>
+                                                  <button
+                                                      onClick={() => {
                                                           // Load this entry into the form for editing
                                                           setCn612EditingId(entry.id);
                                                           setNewLucent({
@@ -16310,6 +17350,9 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                               classLevel: (entry.classLevel && entry.classLevel !== 'COMPETITION' ? entry.classLevel : '6') as any,
                                                               board: (entry as any).board || '',
                                                               lessonTitle: entry.lessonTitle,
+                                                              videoUrl: entry.videoUrl || '',
+                                                              pdfUrl: entry.pdfUrl || '',
+                                                              audioUrl: entry.audioUrl || '',
                                                               pages: entry.pages || [],
                                                           });
                                                           // Scroll to top of form
@@ -16728,6 +17771,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                               setMcqFixSuccess(null);
                                                               setMcqEditMode(false);
                                                               setMcqEditQuestion(s.mcqQuestion || '');
+                                                              setMcqEditStatements(Array.isArray((s as any).mcqStatements) ? (s as any).mcqStatements.join('\n') : '');
                                                               setMcqEditOptions(s.mcqOptions ? [...s.mcqOptions] : []);
                                                           }}
                                                           className="w-full py-1.5 text-[10px] font-black text-blue-700 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 flex items-center justify-center gap-1.5 transition-all"
@@ -16757,6 +17801,16 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                                       rows={2}
                                                                       className="w-full p-1.5 border border-purple-200 rounded-lg text-[10px] outline-none resize-none bg-purple-50 placeholder:text-slate-400"
                                                                       placeholder="Question text edit karo..."
+                                                                  />
+                                                                  <p className="text-[8px] font-black text-purple-700 uppercase mt-1">Statements (कथन - 1 line = 1 statement):</p>
+                                                                  <textarea
+                                                                      value={mcqEditStatements}
+                                                                      onChange={e => setMcqEditStatements(e.target.value)}
+                                                                      rows={2}
+                                                                      className="w-full p-1.5 border border-purple-200 rounded-lg text-[10px] outline-none resize-none bg-purple-50 placeholder:text-slate-400"
+                                                                      placeholder="उदा:
+1. कथन 1...
+2. कथन 2..."
                                                                   />
                                                                   <p className="text-[8px] font-black text-purple-700 uppercase mt-1">Options:</p>
                                                                   {mcqEditOptions.map((opt, oi) => (
@@ -16818,7 +17872,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                                       setMcqFixSaving(true);
                                                                       try {
                                                                           if (mcqEditMode) {
-                                                                              await applyMcqFullEdit(s.chapterKey, s.mcqId || '', mcqFixAnswer, mcqEditQuestion, mcqEditOptions, s.mcqQuestion);
+                                                                              const parsedStmts = mcqEditStatements.trim() ? mcqEditStatements.split('\n').map(x => x.trim()).filter(Boolean) : undefined;
+                                                                              await applyMcqFullEdit(s.chapterKey, s.mcqId || '', mcqFixAnswer, mcqEditQuestion, mcqEditOptions, s.mcqQuestion, parsedStmts);
                                                                           } else {
                                                                               await applyMcqCorrection(s.chapterKey, s.mcqId || '', mcqFixAnswer, s.mcqQuestion);
                                                                           }
@@ -17163,6 +18218,182 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                         ))}
                       </div>
                     )}
+                  </div>
+                );
+              })()}
+
+              {/* FCM CLOUD MESSAGING & WEB PUSH DIAGNOSTIC */}
+              {(() => {
+                const [diagToken, setDiagToken] = useState<string | null>(() => getStoredFcmToken());
+                const [diagPerm, setDiagPerm] = useState<string>(() => getNotificationPermissionStatus());
+                const [diagLoading, setDiagLoading] = useState(false);
+                const [diagCopied, setDiagCopied] = useState(false);
+                const [diagKeyCopied, setDiagKeyCopied] = useState(false);
+                const [diagTestSent, setDiagTestSent] = useState(false);
+
+                const handleGetToken = async () => {
+                  setDiagLoading(true);
+                  try {
+                    const token = await subscribeUserToPush(user?.id);
+                    setDiagPerm(getNotificationPermissionStatus());
+                    if (token) {
+                      setDiagToken(token);
+                      alert('Success! FCM Device Token generated and saved in Firebase database.');
+                    } else {
+                      alert('Could not get token. Check if browser notification permission is allowed.');
+                    }
+                  } catch (err: any) {
+                    alert('Token request error: ' + (err?.message || err));
+                  } finally {
+                    setDiagLoading(false);
+                  }
+                };
+
+                const copyText = (val: string, isKey = false) => {
+                  try {
+                    navigator.clipboard.writeText(val);
+                    if (isKey) {
+                      setDiagKeyCopied(true);
+                      setTimeout(() => setDiagKeyCopied(false), 2000);
+                    } else {
+                      setDiagCopied(true);
+                      setTimeout(() => setDiagCopied(false), 2000);
+                    }
+                  } catch (_) {}
+                };
+
+                const triggerTestPush = async () => {
+                  setDiagTestSent(true);
+                  await dispatchSmartNotification({
+                    title: '🔔 Test Notification Successful!',
+                    body: 'Aapke device par push notification bilkul sahi kaam kar raha hai!',
+                    category: 'CHAT',
+                    url: '/'
+                  });
+                  setTimeout(() => setDiagTestSent(false), 3000);
+                };
+
+                return (
+                  <div className="bg-slate-900 text-white p-6 rounded-2xl border border-slate-800 mt-6 shadow-xl space-y-5">
+                    <div className="flex items-center justify-between flex-wrap gap-3 border-b border-slate-800 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                          <Bell size={20} />
+                        </div>
+                        <div>
+                          <h4 className="font-black text-white text-base flex items-center gap-2">
+                            Firebase Cloud Messaging (FCM Web Push) Diagnostic
+                          </h4>
+                          <p className="text-xs text-slate-400">VAPID Key verify karein, FCM Device Token dekhein aur test notification bhejein</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={triggerTestPush}
+                        className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Sparkles size={14} className="text-amber-300" />
+                        <span>{diagTestSent ? '✓ Notification Triggered!' : 'Send Test Notification to This Device'}</span>
+                      </button>
+                    </div>
+
+                    {/* VAPID Public Key Card */}
+                    <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                          <Key size={14} className="text-amber-400" /> Active VAPID Public Key (Web Push Certificate)
+                        </span>
+                        <span className="text-[10px] bg-emerald-500/20 text-emerald-400 font-bold px-2 py-0.5 rounded-full border border-emerald-500/30">
+                          Active in Code
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <code className="text-[11px] font-mono bg-slate-900 text-amber-200 px-3 py-2 rounded-lg border border-slate-800 flex-1 truncate select-all">
+                          {VAPID_KEY}
+                        </code>
+                        <button
+                          onClick={() => copyText(VAPID_KEY, true)}
+                          className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg flex items-center gap-1 cursor-pointer transition-colors shrink-0"
+                        >
+                          <Copy size={13} /> {diagKeyCopied ? 'Copied!' : 'Copy Key'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Permission Status & Device FCM Token */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-2">
+                        <span className="text-xs font-bold text-slate-300">Browser Notification Permission</span>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-xs font-black uppercase px-2.5 py-1 rounded-lg ${
+                            diagPerm === 'granted'
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : diagPerm === 'denied'
+                              ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                              : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                          }`}>
+                            Status: {diagPerm}
+                          </span>
+                          <button
+                            onClick={handleGetToken}
+                            disabled={diagLoading}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
+                          >
+                            {diagLoading ? 'Generating...' : diagPerm === 'granted' ? 'Refresh Token' : 'Allow & Get Token'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-950/70 p-4 rounded-xl border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-300">Device FCM Registration Token</span>
+                          {diagToken && (
+                            <button
+                              onClick={() => copyText(diagToken, false)}
+                              className="text-[11px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Copy size={11} /> {diagCopied ? 'Copied!' : 'Copy Token for Firebase'}
+                            </button>
+                          )}
+                        </div>
+                        {diagToken ? (
+                          <p className="text-[11px] font-mono text-slate-300 truncate bg-slate-900 px-3 py-2 rounded-lg border border-slate-800 select-all">
+                            {diagToken}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-amber-400/90 italic">
+                            Token not generated yet. Click "Allow &amp; Get Token" to generate.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Step-by-step Troubleshooting Explanation */}
+                    <div className="bg-amber-950/20 border border-amber-500/30 p-4 rounded-xl space-y-3">
+                      <h5 className="text-xs font-black text-amber-300 uppercase tracking-wide flex items-center gap-2">
+                        <HelpCircle size={15} />
+                        Notification kyu nahi aa raha tha? (Explanation &amp; Solution)
+                      </h5>
+                      <div className="text-xs text-slate-300 space-y-2.5 leading-relaxed">
+                        <p>
+                          <strong className="text-amber-200">1. VAPID Key vs FCM Device Token:</strong> Jo key aapne daali hai (<code className="text-[11px] text-amber-300">BIZ9FrX...</code>), wo Web Push Certificate (Public VAPID Key) hai. VAPID key ka kaam sirf user ke browser se device ka unique <strong>FCM Device Token</strong> generate karna hota hai. Sirf key add karne se notification apne aap nahi aate.
+                        </p>
+                        <p>
+                          <strong className="text-amber-200">2. Firebase Console me "Send test message" karte waqt kya daalein:</strong>
+                        </p>
+                        <ol className="list-decimal pl-5 space-y-1 text-slate-300 text-[11px]">
+                          <li>Upar diye gaye <strong className="text-white">"Copy Token for Firebase"</strong> button par click karke apna Device Token copy karein (jo <code className="text-amber-300">d7vX...:APA91b...</code> jaisa hota hai).</li>
+                          <li>Firebase Console kholein ➔ <strong className="text-white">Cloud Messaging</strong> (ya Engage &gt; Messaging).</li>
+                          <li><strong className="text-white">"New campaign"</strong> ➔ <strong className="text-white">"Firebase Notification messages"</strong> par click karein.</li>
+                          <li>Notification Title aur Message text likhein.</li>
+                          <li>Right preview panel me <strong className="text-white">"Send test message"</strong> button dabayein.</li>
+                          <li>Wahan <strong className="text-white">"Add an FCM registration token"</strong> ka input box milega — usme apna copied <strong>FCM Device Token</strong> paste karein (VAPID key mat daalna!).</li>
+                          <li><strong className="text-white">"Test"</strong> button par click karein ➔ Turant aapke browser/mobile screen par notification popup aa jayega!</li>
+                        </ol>
+                        <p className="text-[11px] text-slate-400">
+                          <strong>Note:</strong> Agar app tab open hai, to ab humne foreground handler bhi add kar diya hai taaki open app me bhi alert screen par dikhe.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 );
               })()}
@@ -18354,10 +19585,12 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   </select>
                               </div>
                               <div>
-                                  <label className="text-xs font-bold text-pink-700 uppercase block mb-1">Level</label>
+                                  <label className="text-xs font-bold text-pink-700 uppercase block mb-1">Level (VIP / VIP+)</label>
                                   <select value={newCodeSubLevel} onChange={e => setNewCodeSubLevel(e.target.value)} className="p-3 rounded-xl border border-pink-200 bg-white font-bold">
-                                      <option value="BASIC">Basic</option>
-                                      <option value="ULTRA">Ultra</option>
+                                      <option value="BASIC">Basic (PRO VIP)</option>
+                                      <option value="ULTRA">Ultra (MAX VIP)</option>
+                                      <option value="PRO_PLUS">⭐💎 PRO+ (VIP+ with Daily Diamonds)</option>
+                                      <option value="MAX_PLUS">👑💎 MAX+ (VIP+ with Daily Diamonds)</option>
                                   </select>
                               </div>
                           </>
@@ -18562,15 +19795,26 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       <span className="text-[11px] text-slate-500 font-mono bg-white/70 px-1.5 py-0.5 rounded border border-slate-200">UID: {u.id}</span>
                                   </p>
                               </div>
-                              <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                                  u.subscriptionTier === 'LIFETIME' ? 'bg-yellow-200 text-yellow-800' :
-                                  u.subscriptionTier === 'YEARLY' ? 'bg-purple-200 text-purple-800' :
-                                  u.subscriptionTier === 'MONTHLY' ? 'bg-blue-200 text-blue-800' :
-                                  u.subscriptionTier === 'WEEKLY' ? 'bg-green-200 text-green-800' :
-                                  'bg-slate-200 text-slate-700'
-                              }`}>
-                                  {u.subscriptionTier === 'LIFETIME' ? '🌟 LIFETIME' : u.subscriptionTier === 'YEARLY' ? '📅 YEARLY' : u.subscriptionTier === 'MONTHLY' ? '📆 MONTHLY' : u.subscriptionTier === 'WEEKLY' ? '⏰ WEEKLY' : 'FREE'}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                  {(u.vipPlusTier === 'PRO_PLUS' || u.vipPlusTier === 'MAX_PLUS') && u.isPremium && (
+                                      <span className={`px-2.5 py-1 rounded-full text-[11px] font-black border ${
+                                          u.vipPlusTier === 'MAX_PLUS'
+                                              ? 'bg-pink-100 text-pink-800 border-pink-300'
+                                              : 'bg-cyan-100 text-cyan-800 border-cyan-300'
+                                      }`}>
+                                          {u.vipPlusTier === 'MAX_PLUS' ? '👑💎 MAX+ VIP+' : '⭐💎 PRO+ VIP+'}
+                                      </span>
+                                  )}
+                                  <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                      u.subscriptionTier === 'LIFETIME' ? 'bg-yellow-200 text-yellow-800' :
+                                      u.subscriptionTier === 'YEARLY' ? 'bg-purple-200 text-purple-800' :
+                                      u.subscriptionTier === 'MONTHLY' ? 'bg-blue-200 text-blue-800' :
+                                      u.subscriptionTier === 'WEEKLY' ? 'bg-green-200 text-green-800' :
+                                      'bg-slate-200 text-slate-700'
+                                  }`}>
+                                      {u.subscriptionTier === 'LIFETIME' ? '🌟 LIFETIME' : u.subscriptionTier === 'YEARLY' ? '📅 YEARLY' : u.subscriptionTier === 'MONTHLY' ? '📆 MONTHLY' : u.subscriptionTier === 'WEEKLY' ? '⏰ WEEKLY' : 'FREE'}
+                                  </span>
+                              </div>
                           </div>
 
                           <div className="grid grid-cols-4 gap-3 mb-3 text-xs">
@@ -19363,28 +20607,17 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
 
                       {/* SUBSCRIPTION TIER */}
                       <div className="border-t pt-3">
-                          <label className="text-xs font-bold text-slate-600 uppercase">👑 Grant Subscription</label>
+                          <label className="text-xs font-bold text-slate-600 uppercase">👑 Grant Subscription (VIP & VIP+)</label>
                           <div className="grid grid-cols-2 gap-2 mt-2">
-                              <button onClick={() => { setEditSubscriptionTier('FREE'); setEditSubscriptionPrice(0); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'FREE' ? 'bg-slate-200 text-slate-800' : 'bg-slate-100 text-slate-600'}`}>FREE</button>
-                              <button onClick={() => { setEditSubscriptionTier('WEEKLY'); updatePriceForSelection('WEEKLY', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'WEEKLY' ? 'bg-green-200 text-green-800' : 'bg-green-50 text-green-600'}`}>⏰ WEEKLY</button>
-                              <button onClick={() => { setEditSubscriptionTier('MONTHLY'); updatePriceForSelection('MONTHLY', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'MONTHLY' ? 'bg-blue-200 text-blue-800' : 'bg-blue-50 text-blue-600'}`}>📆 MONTHLY</button>
-                              <button onClick={() => { setEditSubscriptionTier('3_MONTHLY'); updatePriceForSelection('3_MONTHLY', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === '3_MONTHLY' ? 'bg-indigo-200 text-indigo-800' : 'bg-indigo-50 text-indigo-600'}`}>📅 3 MONTHLY</button>
-                              <button onClick={() => { setEditSubscriptionTier('YEARLY'); updatePriceForSelection('YEARLY', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'YEARLY' ? 'bg-purple-200 text-purple-800' : 'bg-purple-50 text-purple-600'}`}>📅 YEARLY</button>
-                              <button onClick={() => { setEditSubscriptionTier('LIFETIME'); updatePriceForSelection('LIFETIME', editSubscriptionLevel); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'LIFETIME' ? 'bg-yellow-200 text-yellow-800' : 'bg-yellow-50 text-yellow-600'}`}>🌟 LIFETIME</button>
+                              <button onClick={() => { setEditSubscriptionTier('FREE'); setEditVipPlusTier('NONE'); setEditSubscriptionPrice(0); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'FREE' ? 'bg-slate-200 text-slate-800' : 'bg-slate-100 text-slate-600'}`}>FREE</button>
+                              <button onClick={() => { setEditSubscriptionTier('WEEKLY'); updatePriceForSelection('WEEKLY', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'WEEKLY' ? 'bg-green-200 text-green-800' : 'bg-green-50 text-green-600'}`}>⏰ WEEKLY</button>
+                              <button onClick={() => { setEditSubscriptionTier('MONTHLY'); updatePriceForSelection('MONTHLY', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'MONTHLY' ? 'bg-blue-200 text-blue-800' : 'bg-blue-50 text-blue-600'}`}>📆 MONTHLY</button>
+                              <button onClick={() => { setEditSubscriptionTier('3_MONTHLY'); updatePriceForSelection('3_MONTHLY', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === '3_MONTHLY' ? 'bg-indigo-200 text-indigo-800' : 'bg-indigo-50 text-indigo-600'}`}>📅 3 MONTHLY</button>
+                              <button onClick={() => { setEditSubscriptionTier('YEARLY'); updatePriceForSelection('YEARLY', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'YEARLY' ? 'bg-purple-200 text-purple-800' : 'bg-purple-50 text-purple-600'}`}>📅 YEARLY</button>
+                              <button onClick={() => { setEditSubscriptionTier('LIFETIME'); updatePriceForSelection('LIFETIME', editSubscriptionLevel, editVipPlusTier); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'LIFETIME' ? 'bg-yellow-200 text-yellow-800' : 'bg-yellow-50 text-yellow-600'}`}>🌟 LIFETIME</button>
                               <button onClick={() => { setEditSubscriptionTier('CUSTOM'); setEditSubscriptionPrice(0); }} className={`p-2 rounded font-bold text-xs ${editSubscriptionTier === 'CUSTOM' ? 'bg-pink-200 text-pink-800' : 'bg-pink-50 text-pink-600'}`}>⚙️ CUSTOMIZED</button>
                           </div>
                       </div>
-
-                      {/* SUBSCRIPTION LEVEL */}
-                      {editSubscriptionTier !== 'FREE' && (
-                          <div className="mt-2">
-                              <label className="text-xs font-bold text-slate-600 uppercase">Level (For Real Users)</label>
-                              <div className="grid grid-cols-2 gap-2 mt-1">
-                                  <button onClick={() => { setEditSubscriptionLevel('BASIC'); updatePriceForSelection(editSubscriptionTier, 'BASIC'); }} className={`p-2 rounded font-bold text-xs border ${editSubscriptionLevel === 'BASIC' ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-white border-slate-200'}`}>BASIC</button>
-                                  <button onClick={() => { setEditSubscriptionLevel('ULTRA'); updatePriceForSelection(editSubscriptionTier, 'ULTRA'); }} className={`p-2 rounded font-bold text-xs border ${editSubscriptionLevel === 'ULTRA' ? 'bg-purple-100 border-purple-300 text-purple-800' : 'bg-white border-slate-200'}`}>ULTRA</button>
-                              </div>
-                          </div>
-                      )}
 
                       {editSubscriptionTier === 'CUSTOM' && (
                           <div className="space-y-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
@@ -19427,14 +20660,86 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                           </div>
                       )}
 
-                      {/* SUBSCRIPTION LEVEL */}
+                      {/* SUBSCRIPTION LEVEL (VIP & VIP+ PLANS) */}
                       {editSubscriptionTier !== 'FREE' && (
-                          <div className="mt-2">
-                              <label className="text-xs font-bold text-slate-600 uppercase">Level (For Real Users)</label>
-                              <div className="grid grid-cols-2 gap-2 mt-1">
-                                  <button onClick={() => { setEditSubscriptionLevel('BASIC'); updatePriceForSelection(editSubscriptionTier, 'BASIC'); }} className={`p-2 rounded font-bold text-xs border ${editSubscriptionLevel === 'BASIC' ? 'bg-blue-100 border-blue-300 text-blue-800' : 'bg-white border-slate-200'}`}>BASIC</button>
-                                  <button onClick={() => { setEditSubscriptionLevel('ULTRA'); updatePriceForSelection(editSubscriptionTier, 'ULTRA'); }} className={`p-2 rounded font-bold text-xs border ${editSubscriptionLevel === 'ULTRA' ? 'bg-purple-100 border-purple-300 text-purple-800' : 'bg-white border-slate-200'}`}>ULTRA</button>
+                          <div className="mt-2 space-y-2">
+                              <label className="text-xs font-bold text-slate-600 uppercase block">Level (For Real Users — VIP & VIP+)</label>
+                              <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          setEditVipPlusTier('NONE');
+                                          setEditSubscriptionLevel('BASIC');
+                                          updatePriceForSelection(editSubscriptionTier, 'BASIC', 'NONE');
+                                      }}
+                                      className={`p-2 rounded-lg font-bold text-xs border transition ${
+                                          editSubscriptionLevel === 'BASIC' && editVipPlusTier === 'NONE'
+                                              ? 'bg-blue-100 border-blue-400 text-blue-900 shadow-sm'
+                                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                      }`}
+                                  >
+                                      ⭐ BASIC (VIP Pro)
+                                  </button>
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          setEditVipPlusTier('NONE');
+                                          setEditSubscriptionLevel('ULTRA');
+                                          updatePriceForSelection(editSubscriptionTier, 'ULTRA', 'NONE');
+                                      }}
+                                      className={`p-2 rounded-lg font-bold text-xs border transition ${
+                                          editSubscriptionLevel === 'ULTRA' && editVipPlusTier === 'NONE'
+                                              ? 'bg-purple-100 border-purple-400 text-purple-900 shadow-sm'
+                                              : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                                      }`}
+                                  >
+                                      👑 ULTRA (VIP Max)
+                                  </button>
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          setEditVipPlusTier('PRO_PLUS');
+                                          setEditSubscriptionLevel('BASIC');
+                                          updatePriceForSelection(editSubscriptionTier, 'BASIC', 'PRO_PLUS');
+                                      }}
+                                      className={`p-2 rounded-lg font-bold text-xs border transition ${
+                                          editVipPlusTier === 'PRO_PLUS'
+                                              ? 'bg-cyan-100 border-cyan-500 text-cyan-900 shadow-sm ring-1 ring-cyan-400'
+                                              : 'bg-cyan-50/50 border-cyan-200 text-cyan-800 hover:bg-cyan-50'
+                                      }`}
+                                  >
+                                      ⭐💎 PRO+ (VIP+)
+                                  </button>
+                                  <button
+                                      type="button"
+                                      onClick={() => {
+                                          setEditVipPlusTier('MAX_PLUS');
+                                          setEditSubscriptionLevel('ULTRA');
+                                          updatePriceForSelection(editSubscriptionTier, 'ULTRA', 'MAX_PLUS');
+                                      }}
+                                      className={`p-2 rounded-lg font-bold text-xs border transition ${
+                                          editVipPlusTier === 'MAX_PLUS'
+                                              ? 'bg-pink-100 border-pink-500 text-pink-900 shadow-sm ring-1 ring-pink-400'
+                                              : 'bg-pink-50/50 border-pink-200 text-pink-800 hover:bg-pink-50'
+                                      }`}
+                                  >
+                                      👑💎 MAX+ (VIP+)
+                                  </button>
                               </div>
+                              {(editVipPlusTier === 'PRO_PLUS' || editVipPlusTier === 'MAX_PLUS') && (
+                                  <div className={`p-2.5 rounded-xl border text-[11px] font-bold flex items-center justify-between ${
+                                      editVipPlusTier === 'MAX_PLUS'
+                                          ? 'bg-gradient-to-r from-pink-50 to-purple-50 border-pink-200 text-purple-900'
+                                          : 'bg-gradient-to-r from-cyan-50 to-sky-50 border-cyan-200 text-cyan-900'
+                                  }`}>
+                                      <span>
+                                          {editVipPlusTier === 'MAX_PLUS' ? '👑💎 MAX+ (VIP+) Selected' : '⭐💎 PRO+ (VIP+) Selected'} — All {editVipPlusTier === 'MAX_PLUS' ? 'Max' : 'Pro'} Features + Daily Diamonds
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded-full bg-white border text-[10px] font-black shrink-0">
+                                          +{getVipPlusDiamondsPerDay({ duration: editSubscriptionTier === 'WEEKLY' ? '7 days' : editSubscriptionTier === '3_MONTHLY' ? '3 months' : editSubscriptionTier === 'YEARLY' || editSubscriptionTier === 'LIFETIME' ? '365 days' : '30 days' }, editVipPlusTier)} 💎/d
+                                      </span>
+                                  </div>
+                              )}
                           </div>
                       )}
 
@@ -19470,6 +20775,195 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               </p>
                           </div>
                       )}
+
+                      {/* --- VIP+ PLAN SUBSCRIPTION (PRO+ / MAX+ WITH DAILY DIAMONDS) --- */}
+                      <div className="border-t pt-3">
+                          <label className="text-xs font-bold text-cyan-800 uppercase flex items-center gap-1.5">
+                              <span>👑💎</span>
+                              VIP+ Plan Subscription (PRO+ / MAX+)
+                          </label>
+                          <p className="text-[10px] text-slate-500 mb-2">
+                              VIP+ Plan se Premium Content (Pro/Max) + Daily Diamonds dono ek saath unlock hote hain.
+                          </p>
+
+                          {isVipPlusUser(editingUser) ? (
+                              <div className={`p-3 rounded-xl border space-y-2 ${
+                                  editingUser.vipPlusTier === 'MAX_PLUS'
+                                      ? 'bg-pink-50 border-pink-200'
+                                      : 'bg-cyan-50 border-cyan-200'
+                              }`}>
+                                  <div className="flex items-center justify-between">
+                                      <span className={`text-xs font-black ${
+                                          editingUser.vipPlusTier === 'MAX_PLUS' ? 'text-pink-900' : 'text-cyan-900'
+                                      }`}>
+                                          {editingUser.vipPlusTier === 'MAX_PLUS' ? '👑💎 MAX+ (VIP+ Elite)' : '⭐💎 PRO+ (VIP+)'} — {editingUser.subscriptionTier}
+                                      </span>
+                                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                          editingUser.vipPlusTier === 'MAX_PLUS'
+                                              ? 'bg-pink-200 text-pink-900'
+                                              : 'bg-cyan-200 text-cyan-900'
+                                      }`}>
+                                          ACTIVE
+                                      </span>
+                                  </div>
+                                  <div className="text-xs text-slate-700 grid grid-cols-2 gap-1">
+                                      <div>💎 Daily Diamonds: <strong>+{editingUser.dailyVipDiamonds || (editingUser.vipPlusTier === 'MAX_PLUS' ? 50 : 25)} 💎/d</strong></div>
+                                      <div>👑 Content Tier: <strong>{editingUser.vipPlusTier === 'MAX_PLUS' ? 'ULTRA (Max)' : 'BASIC (Pro)'}</strong></div>
+                                      <div className="col-span-2">📅 Expires: <strong>{editingUser.subscriptionEndDate ? new Date(editingUser.subscriptionEndDate).toLocaleDateString() : 'Lifetime'}</strong></div>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={async () => {
+                                          if (!confirm(`Kya aap ${editingUser.name} ka VIP+ Plan (${editingUser.vipPlusTier === 'MAX_PLUS' ? 'MAX+' : 'PRO+'}) cancel/revoke karna chahte hain?`)) return;
+                                          const updated: User = {
+                                              ...editingUser,
+                                              isPremium: false,
+                                              subscriptionTier: 'FREE',
+                                              vipPlusTier: undefined,
+                                              dailyVipDiamonds: undefined,
+                                              subscriptionEndDate: undefined,
+                                              diamondSubscription: editingUser.diamondSubscription
+                                                  ? { ...editingUser.diamondSubscription, status: 'EXPIRED' }
+                                                  : undefined,
+                                          };
+                                          const ok = await saveUserToLive(updated);
+                                          if (ok) {
+                                              setEditingUser(updated);
+                                              setEditSubscriptionTier('FREE');
+                                              setEditVipPlusTier('NONE');
+                                              setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                                              alert('VIP+ Plan revoked successfully.');
+                                          }
+                                      }}
+                                      className="w-full py-1.5 bg-red-100 hover:bg-red-200 text-red-700 text-xs font-bold rounded-lg transition"
+                                  >
+                                      ❌ Revoke / Cancel VIP+ Plan
+                                  </button>
+                              </div>
+                          ) : (
+                              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                                  <span className="text-xs text-slate-500 italic block">No active VIP+ subscription</span>
+                                  <div className="grid grid-cols-2 gap-2">
+                                      <button
+                                          type="button"
+                                          onClick={() => setSelectedVipPlusGrantTier('PRO_PLUS')}
+                                          className={`p-2 rounded-lg font-bold text-[11px] border leading-tight transition ${
+                                              selectedVipPlusGrantTier === 'PRO_PLUS'
+                                                  ? 'bg-cyan-100 border-cyan-500 text-cyan-900 shadow-sm'
+                                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                          }`}
+                                      >
+                                          <div className="text-cyan-700 font-black">⭐💎 PRO+ (VIP+)</div>
+                                          <div className="opacity-80 font-normal text-[10px]">Pro Content + Daily 💎</div>
+                                      </button>
+                                      <button
+                                          type="button"
+                                          onClick={() => setSelectedVipPlusGrantTier('MAX_PLUS')}
+                                          className={`p-2 rounded-lg font-bold text-[11px] border leading-tight transition ${
+                                              selectedVipPlusGrantTier === 'MAX_PLUS'
+                                                  ? 'bg-pink-100 border-pink-500 text-pink-900 shadow-sm'
+                                                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                          }`}
+                                      >
+                                          <div className="text-pink-700 font-black">👑💎 MAX+ (VIP+)</div>
+                                          <div className="opacity-80 font-normal text-[10px]">Max Content + Daily 💎</div>
+                                      </button>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-bold text-slate-500 uppercase w-16">Validity:</span>
+                                      <div className="flex-1 grid grid-cols-5 gap-1">
+                                          {([
+                                              { label: '1W', tier: 'WEEKLY' as const, days: 7 },
+                                              { label: '1M', tier: 'MONTHLY' as const, days: 30 },
+                                              { label: '3M', tier: '3_MONTHLY' as const, days: 90 },
+                                              { label: '1Y', tier: 'YEARLY' as const, days: 365 },
+                                              { label: 'LIFE', tier: 'LIFETIME' as const, days: 1825 },
+                                          ]).map(opt => (
+                                              <button
+                                                  key={opt.tier}
+                                                  type="button"
+                                                  onClick={() => setSelectedVipPlusGrantDuration(opt.tier)}
+                                                  className={`py-1.5 rounded font-bold text-[11px] border ${
+                                                      selectedVipPlusGrantDuration === opt.tier
+                                                          ? 'bg-cyan-800 border-cyan-900 text-white shadow-sm'
+                                                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                                  }`}
+                                              >
+                                                  {opt.label}
+                                              </button>
+                                          ))}
+                                      </div>
+                                  </div>
+                                  <button
+                                      type="button"
+                                      onClick={async () => {
+                                          const durDays = selectedVipPlusGrantDuration === 'WEEKLY' ? 7 : selectedVipPlusGrantDuration === 'MONTHLY' ? 30 : selectedVipPlusGrantDuration === '3_MONTHLY' ? 90 : selectedVipPlusGrantDuration === 'YEARLY' ? 365 : 1825;
+                                          const durObj = { duration: selectedVipPlusGrantDuration === 'WEEKLY' ? '7 days' : selectedVipPlusGrantDuration === '3_MONTHLY' ? '3 months' : selectedVipPlusGrantDuration === 'YEARLY' || selectedVipPlusGrantDuration === 'LIFETIME' ? '365 days' : '30 days' };
+                                          const dailyDia = getVipPlusDiamondsPerDay(durObj, selectedVipPlusGrantTier);
+                                          const tierLabel = selectedVipPlusGrantTier === 'MAX_PLUS' ? 'MAX+ (VIP+)' : 'PRO+ (VIP+)';
+                                          if (!confirm(`Kya aap ${editingUser.name} ko "${selectedVipPlusGrantDuration} ${tierLabel}" (+${dailyDia} 💎/day) grant karna chahte hain?`)) return;
+
+                                          const now = new Date();
+                                          const endDate = new Date(now.getTime() + durDays * 24 * 60 * 60 * 1000);
+                                          const isoEndDate = endDate.toISOString();
+                                          const finalLevel: 'BASIC' | 'ULTRA' = selectedVipPlusGrantTier === 'MAX_PLUS' ? 'ULTRA' : 'BASIC';
+
+                                          const historyEntry: SubscriptionHistoryEntry = {
+                                              id: `hist-${Date.now()}`,
+                                              tier: selectedVipPlusGrantDuration,
+                                              level: finalLevel,
+                                              startDate: now.toISOString(),
+                                              endDate: selectedVipPlusGrantDuration === 'LIFETIME' ? 'LIFETIME' : isoEndDate,
+                                              durationHours: durDays * 24,
+                                              price: 0,
+                                              originalPrice: 0,
+                                              isFree: true,
+                                              grantSource: 'ADMIN',
+                                              grantedBy: currentUser?.id,
+                                              grantedByName: currentUser?.name,
+                                          };
+
+                                          const updated: User = {
+                                              ...editingUser,
+                                              isPremium: true,
+                                              subscriptionTier: selectedVipPlusGrantDuration,
+                                              subscriptionLevel: finalLevel,
+                                              vipPlusTier: selectedVipPlusGrantTier,
+                                              dailyVipDiamonds: dailyDia,
+                                              subscriptionEndDate: isoEndDate,
+                                              grantedByAdmin: true,
+                                              subscriptionHistory: [historyEntry, ...(editingUser.subscriptionHistory || [])],
+                                              diamondSubscription: {
+                                                  planId: `vipplus_${selectedVipPlusGrantTier.toLowerCase()}_${Date.now()}`,
+                                                  planName: `${selectedVipPlusGrantDuration} (${selectedVipPlusGrantTier === 'MAX_PLUS' ? 'MAX+' : 'PRO+'})`,
+                                                  dailyDiamonds: dailyDia,
+                                                  totalDays: durDays,
+                                                  startDate: now.toISOString(),
+                                                  endDate: isoEndDate,
+                                                  totalClaimedDays: 0,
+                                                  totalDiamondsClaimed: 0,
+                                                  pricePaid: 0,
+                                                  status: 'ACTIVE',
+                                              },
+                                          };
+
+                                          const ok = await saveUserToLive(updated);
+                                          if (ok) {
+                                              setEditingUser(updated);
+                                              setEditSubscriptionTier(selectedVipPlusGrantDuration);
+                                              setEditSubscriptionLevel(finalLevel);
+                                              setEditVipPlusTier(selectedVipPlusGrantTier);
+                                              setUsers(prev => prev.map(u => u.id === updated.id ? updated : u));
+                                              alert(`✅ ${tierLabel} (${selectedVipPlusGrantDuration}) with +${dailyDia} 💎/day granted to ${editingUser.name}!`);
+                                          }
+                                      }}
+                                      className="w-full py-2 bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-700 hover:to-purple-700 text-white text-xs font-bold rounded-lg transition shadow-sm"
+                                  >
+                                      👑💎 Grant VIP+ Plan ({selectedVipPlusGrantTier === 'MAX_PLUS' ? 'MAX+' : 'PRO+'} • {selectedVipPlusGrantDuration})
+                                  </button>
+                              </div>
+                          )}
+                      </div>
 
                       {/* --- DAILY CREDIT SUBSCRIPTION (DAILY PASS) --- */}
                       <div className="border-t pt-3">
@@ -19835,12 +21329,18 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   className="w-full p-2 border rounded-lg text-sm"
                               >
                                   <option value="">Select Plan</option>
-                                  <option value="WEEKLY_BASIC">Weekly Basic</option>
-                                  <option value="WEEKLY_ULTRA">Weekly Ultra</option>
-                                  <option value="MONTHLY_BASIC">Monthly Basic</option>
-                                  <option value="MONTHLY_ULTRA">Monthly Ultra</option>
-                                  <option value="YEARLY_BASIC">Yearly Basic</option>
-                                  <option value="YEARLY_ULTRA">Yearly Ultra</option>
+                                  <option value="WEEKLY_BASIC">Weekly Basic (VIP Pro)</option>
+                                  <option value="WEEKLY_ULTRA">Weekly Ultra (VIP Max)</option>
+                                  <option value="WEEKLY_PRO_PLUS">⭐💎 Weekly PRO+ (VIP+)</option>
+                                  <option value="WEEKLY_MAX_PLUS">👑💎 Weekly MAX+ (VIP+)</option>
+                                  <option value="MONTHLY_BASIC">Monthly Basic (VIP Pro)</option>
+                                  <option value="MONTHLY_ULTRA">Monthly Ultra (VIP Max)</option>
+                                  <option value="MONTHLY_PRO_PLUS">⭐💎 Monthly PRO+ (VIP+)</option>
+                                  <option value="MONTHLY_MAX_PLUS">👑💎 Monthly MAX+ (VIP+)</option>
+                                  <option value="YEARLY_BASIC">Yearly Basic (VIP Pro)</option>
+                                  <option value="YEARLY_ULTRA">Yearly Ultra (VIP Max)</option>
+                                  <option value="YEARLY_PRO_PLUS">⭐💎 Yearly PRO+ (VIP+)</option>
+                                  <option value="YEARLY_MAX_PLUS">👑💎 Yearly MAX+ (VIP+)</option>
                               </select>
                               <div className="flex gap-2 items-center">
                                   <label className="text-xs text-slate-600">Duration (Days):</label>
@@ -19921,17 +21421,19 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                       <Trash2 size={16} />
                                   </button>
                               </div>
-                              <input 
-                                  type="text" 
-                                  value={vid.url || ''} 
-                                  onChange={(e) => {
-                                      const updated = [...universalVideos];
-                                      updated[i] = {...updated[i], url: e.target.value};
-                                      setUniversalVideos(updated);
-                                  }}
-                                  placeholder="YouTube URL (e.g. https://youtu.be/...)"
-                                  className="w-full p-2 border border-slate-200 rounded text-xs font-mono text-blue-600 bg-slate-50" 
-                              />
+                              <div className="space-y-1.5">
+                                  <DirectUploadButton
+                                      kind="video"
+                                      compact
+                                      currentUrl={vid.url}
+                                      onUploaded={(url, file) => {
+                                          const updated = [...universalVideos];
+                                          const autoTitle = updated[i]?.title || file.name.replace(/\.[^/.]+$/, '');
+                                          updated[i] = { ...updated[i], url, title: autoTitle };
+                                          setUniversalVideos(updated);
+                                      }}
+                                  />
+                              </div>
                           </div>
                       ))}
                   </div>
@@ -20120,6 +21622,23 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                                       <Trash2 size={12} />
                                                                   </button>
                                                               </div>
+                                                              <textarea
+                                                                  value={Array.isArray(q.statements) ? q.statements.join('\n') : ((q as any).statement || '')}
+                                                                  onChange={e => {
+                                                                      const val = e.target.value;
+                                                                      const arr = val.split('\n').map(s => s.trim()).filter(Boolean);
+                                                                      const updated = [...editingMcqs];
+                                                                      updated[qIdx] = {
+                                                                          ...updated[qIdx],
+                                                                          statements: arr.length > 0 ? arr : undefined,
+                                                                          statement: val || undefined,
+                                                                      };
+                                                                      setEditingMcqs(updated);
+                                                                  }}
+                                                                  rows={2}
+                                                                  placeholder="Statements / कथन (Optional — Har statement nayi line me)"
+                                                                  className="w-full p-1.5 border border-sky-200 bg-sky-50/50 rounded text-xs outline-none focus:border-sky-500 placeholder-slate-400 resize-none mb-1"
+                                                              />
 
                                                               <div className="grid grid-cols-2 gap-1 mb-1">
                                                                   {q.options.map((opt, oIdx) => (
@@ -20287,12 +21806,24 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                               placeholder="Topic (e.g. Geometry)"
                               className="w-full p-2 border border-slate-200 rounded text-sm"
                           />
-                          <input
-                              type="text"
-                              id="prem-note-url"
-                              placeholder="PDF URL (e.g. https://...)"
-                              className="w-full p-2 border border-slate-200 rounded text-sm text-blue-600"
-                          />
+                          <div className="space-y-1.5">
+                              <input
+                                  type="hidden"
+                                  id="prem-note-url"
+                              />
+                              <DirectUploadButton
+                                  kind="pdf"
+                                  compact
+                                  onUploaded={(url, file) => {
+                                      const urlInput = document.getElementById('prem-note-url') as HTMLInputElement | null;
+                                      const titleInput = document.getElementById('prem-note-title') as HTMLInputElement | null;
+                                      if (urlInput) urlInput.value = url;
+                                      if (titleInput && !titleInput.value) {
+                                          titleInput.value = file.name.replace(/\.[^/.]+$/, '');
+                                      }
+                                  }}
+                              />
+                          </div>
                           <button
                               onClick={() => {
                                   const title = (document.getElementById('prem-note-title') as HTMLInputElement).value;
@@ -20523,6 +22054,23 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
               onCropComplete={handleCropComplete} 
               onCancel={() => setCropImageSrc(null)} 
           />
+      )}
+
+      {/* Admin Lucent Media (PDF / Video / Audio) Modal */}
+      {adminLucentMediaModalEntry && (
+        <AdminLucentMediaModal
+          entry={adminLucentMediaModalEntry}
+          initialPageIndex={adminLucentMediaModalPageIndex}
+          onClose={() => {
+            setAdminLucentMediaModalEntry(null);
+            setAdminLucentMediaModalPageIndex(-1);
+          }}
+          onSaved={(updated) => {
+            const updatedList = (localSettings.lucentNotes || []).map((n: LucentNoteEntry) => n.id === updated.id ? updated : n);
+            setLocalSettings((prev: any) => ({ ...prev, lucentNotes: updatedList }));
+            setAlertConfig({ isOpen: true, message: `✅ "${updated.lessonTitle}" media update ho gaya!` });
+          }}
+        />
       )}
 
       <CustomAlert 

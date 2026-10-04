@@ -38,6 +38,15 @@ export function safeGetItem(key: string): string | null {
  * Safe localStorage.setItem — fails gracefully and attempts quota cleanup on QuotaExceededError.
  */
 export function safeSetItem(key: string, value: string): boolean {
+  if (key === 'nst_users') {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return safeSaveUsersCache(parsed);
+      }
+    } catch {}
+  }
+
   try {
     localStorage.setItem(key, value);
     return true;
@@ -47,12 +56,19 @@ export function safeSetItem(key: string, value: string): boolean {
       err?.name === 'QuotaExceededError' ||
       err?.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
       err?.code === 22 ||
-      err?.code === 1014;
+      err?.code === 1014 ||
+      String(err?.message || '').toLowerCase().includes('quota');
 
     if (isQuota) {
       try {
         // Attempt automatic emergency storage cleanup
         pruneLocalStorageForQuota();
+        if (key === 'nst_users') {
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) return safeSaveUsersCache(parsed);
+          } catch {}
+        }
         localStorage.setItem(key, value);
         return true;
       } catch {
@@ -66,6 +82,219 @@ export function safeSetItem(key: string, value: string): boolean {
       }
     }
     return false;
+  }
+}
+
+/**
+ * Deduplicates inbox items by id (or by text+date if id is missing)
+ */
+export function deduplicateInbox(inbox?: any[]): any[] {
+  if (!Array.isArray(inbox)) return [];
+  const seen = new Set<string>();
+  const result: any[] = [];
+  for (const item of inbox) {
+    if (!item) continue;
+    const key = item.id || `${item.text || ''}_${item.date || ''}_${item.type || ''}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+/**
+ * Strips bulky / heavyweight fields from user objects so they fit safely in localStorage cache.
+ */
+export function compactUserForCache(user: any): any {
+  if (!user || typeof user !== 'object') return user;
+  const {
+    // Drop heavy properties that cause multi-megabyte bloat
+    history,
+    quizHistory,
+    examHistory,
+    activityLog,
+    detailedProgress,
+    chatMessages,
+    routinePlan,
+    revisionTracker,
+    ...rest
+  } = user;
+
+  // Trim arrays that can grow indefinitely
+  const trimmedReferredList = Array.isArray(rest.referredUsersList)
+    ? rest.referredUsersList.slice(0, 5)
+    : rest.referredUsersList;
+
+  const trimmedInbox = Array.isArray(rest.inbox)
+    ? deduplicateInbox(rest.inbox).slice(0, 10)
+    : rest.inbox;
+
+  const trimmedCommissionLogs = Array.isArray(rest.referralCommissionLogs)
+    ? rest.referralCommissionLogs.slice(0, 5)
+    : rest.referralCommissionLogs;
+
+  return {
+    ...rest,
+    referredUsersList: trimmedReferredList,
+    inbox: trimmedInbox,
+    referralCommissionLogs: trimmedCommissionLogs,
+  };
+}
+
+// Raw reference to Storage.prototype.setItem to bypass hooks and prevent infinite recursion
+let _rawStorageSetItem: ((this: Storage, key: string, value: string) => void) | null = null;
+try {
+  if (typeof window !== 'undefined' && window.Storage && window.Storage.prototype) {
+    _rawStorageSetItem = window.Storage.prototype.setItem;
+  }
+} catch {}
+
+function rawSetItem(storage: Storage, key: string, value: string): void {
+  if (_rawStorageSetItem) {
+    _rawStorageSetItem.call(storage, key, value);
+  } else {
+    storage.setItem(key, value);
+  }
+}
+
+/**
+ * Safely writes 'nst_users' to localStorage without throwing QuotaExceededError.
+ * Compacts user objects, limits count if necessary, and catches quota issues gracefully.
+ */
+let isSavingUsersCache = false;
+export function safeSaveUsersCache(users: any[]): boolean {
+  if (!Array.isArray(users) || typeof window === 'undefined' || !window.localStorage) return false;
+  if (isSavingUsersCache) return false;
+  isSavingUsersCache = true;
+  try {
+    // 1. Compact users to essential cache representation
+    const compacted = users.map(compactUserForCache);
+
+    // Try saving compacted users (capped at max 40 to protect quota)
+    const listToSave = compacted.slice(0, 40);
+    const jsonStr = JSON.stringify(listToSave);
+
+    try {
+      rawSetItem(window.localStorage, 'nst_users', jsonStr);
+      return true;
+    } catch {
+      // If quota exceeded, prune storage and try smaller subset
+      pruneLocalStorageForQuota();
+
+      // Try with top 15 users
+      const smallerList = compacted.slice(0, 15);
+      try {
+        rawSetItem(window.localStorage, 'nst_users', JSON.stringify(smallerList));
+        return true;
+      } catch {
+        // Try with top 3 users or remove nst_users if localStorage is completely exhausted
+        try {
+          const minimalList = compacted.slice(0, 3);
+          rawSetItem(window.localStorage, 'nst_users', JSON.stringify(minimalList));
+          return true;
+        } catch {
+          try { window.localStorage.removeItem('nst_users'); } catch {}
+          console.warn('[safeSaveUsersCache] Quota exhausted; cleared nst_users cache to protect device.');
+          return false;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[safeSaveUsersCache] Failed to cache users safely:', e);
+    return false;
+  } finally {
+    isSavingUsersCache = false;
+  }
+}
+
+/**
+ * Installs global quota protection on Storage.prototype.setItem so that
+ * direct localStorage.setItem calls across any component or library
+ * automatically recover from QuotaExceededError without throwing unhandled exceptions.
+ */
+let quotaProtectionInstalled = false;
+let isRecoveringQuota = false;
+export function installStorageQuotaProtection(): void {
+  if (quotaProtectionInstalled || typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const proto = window.Storage ? window.Storage.prototype : null;
+    if (!proto || !proto.setItem) return;
+
+    if (!_rawStorageSetItem) {
+      _rawStorageSetItem = proto.setItem;
+    }
+    const origSetItem = _rawStorageSetItem;
+
+    const protectedSetItem = function (this: Storage, key: string, value: string) {
+      if (this !== window.localStorage) {
+        origSetItem.call(this, key, value);
+        return;
+      }
+
+      // If updating nst_users directly, route through safeSaveUsersCache
+      if (key === 'nst_users' && !isSavingUsersCache) {
+        try {
+          const parsed = JSON.parse(value);
+          if (Array.isArray(parsed)) {
+            safeSaveUsersCache(parsed);
+            return;
+          }
+        } catch {}
+      }
+
+      try {
+        origSetItem.call(this, key, value);
+      } catch (err: any) {
+        const isQuota =
+          err?.name === 'QuotaExceededError' ||
+          err?.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+          err?.code === 22 ||
+          err?.code === 1014 ||
+          String(err?.message || '').toLowerCase().includes('quota');
+
+        if (isQuota && !isRecoveringQuota) {
+          isRecoveringQuota = true;
+          console.warn(`[StorageQuotaProtection] Quota exceeded for "${key}". Recovering...`);
+          try {
+            if (key === 'nst_users') {
+              try {
+                const parsed = JSON.parse(value);
+                if (Array.isArray(parsed)) {
+                  safeSaveUsersCache(parsed);
+                  return;
+                }
+              } catch {}
+              try { window.localStorage.removeItem('nst_users'); } catch {}
+              return;
+            }
+
+            pruneLocalStorageForQuota();
+            try {
+              origSetItem.call(this, key, value);
+            } catch {
+              // Backup to sessionStorage if localStorage is completely exhausted
+              try {
+                if (window.sessionStorage) {
+                  origSetItem.call(window.sessionStorage, key, value);
+                }
+              } catch {}
+              console.warn(`[StorageQuotaProtection] LocalStorage full for "${key}". Saved to sessionStorage.`);
+            }
+          } finally {
+            isRecoveringQuota = false;
+          }
+        } else if (!isQuota) {
+          throw err;
+        }
+      }
+    };
+
+    proto.setItem = protectedSetItem;
+    window.localStorage.setItem = protectedSetItem.bind(window.localStorage);
+    quotaProtectionInstalled = true;
+  } catch (e) {
+    console.warn('[installStorageQuotaProtection] Failed to hook Storage.prototype.setItem:', e);
   }
 }
 
@@ -105,14 +334,30 @@ export function pruneLocalStorageForQuota(): void {
       try { localStorage.removeItem(k); } catch {}
     }
 
-    // Trim oversized array keys to the most recent 20 items
+    // Check if nst_users itself is oversized (> 50KB) and compact or remove it
+    try {
+      const usersRaw = localStorage.getItem('nst_users');
+      if (usersRaw && usersRaw.length > 50000) {
+        try {
+          const parsed = JSON.parse(usersRaw);
+          if (Array.isArray(parsed)) {
+            const compacted = parsed.slice(0, 10).map(compactUserForCache);
+            rawSetItem(window.localStorage, 'nst_users', JSON.stringify(compacted));
+          }
+        } catch {
+          try { localStorage.removeItem('nst_users'); } catch {}
+        }
+      }
+    } catch {}
+
+    // Trim oversized array keys to the most recent 15 items
     for (const k of keysToTrim) {
       try {
         const raw = localStorage.getItem(k);
         if (raw) {
           const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed) && parsed.length > 20) {
-            localStorage.setItem(k, JSON.stringify(parsed.slice(-20)));
+          if (Array.isArray(parsed) && parsed.length > 15) {
+            rawSetItem(window.localStorage, k, JSON.stringify(parsed.slice(-15)));
           }
         }
       } catch {}

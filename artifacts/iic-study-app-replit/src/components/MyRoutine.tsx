@@ -18,6 +18,8 @@ import {
   TIER_SLOT_DIAMOND_COST,
   type RoutineData, type RoutineSubjectConfig, type UserSubTier, type RoutineSlot,
   type RoutineCategory, type RoutineCategorySubject,
+  isMultiPageRoutineNote, sanitizeRoutineCategories, isRoutineSubjectNameExcluded,
+  isAcademicSchoolNote, ACADEMIC_SUBJECT_NAMES,
 } from '../utils/routineStorage';
 import { applyDeduction, getTotalCredits } from '../utils/creditSystem';
 import { CreditConfirmationModal } from './CreditConfirmationModal';
@@ -32,12 +34,20 @@ import {
   getPageMcqPercent, getPageMcqBestPercent,
   getLessonPageAvgPercent, getLessonBestPageAvgPercent,
   getPageTime,
+  isMathLessonManualDone, setMathLessonManualDone, isMathKey,
 } from '../utils/routineAutoTrack';
 import { scheduleRoutineLessonForRevision } from '../utils/revisionTrackerV2';
 import { RoutineRevisionBadge } from './RoutineRevisionBadge';
 import { tryEarnScore, getActiveBoost } from '../utils/scoreSystem';
-import { DailyEventPage } from './DailyEventPage';
+import { DailyEventPage, getRevisionSubjectTheme } from './DailyEventPage';
 import { useAppTheme } from '../utils/themeContext';
+import { pedroSpeak, stopPedroVoice } from '../utils/pedroVoiceManager';
+import { getRoutineSpeechSummary } from './PedroAssistant';
+import { notifyStudyProgressMilestone } from './NotificationManager';
+import { SevenDayRoutineModal } from './SevenDayRoutineModal';
+import { SmartRoutineWizard } from './SmartRoutineWizard';
+import { getSlotUnlockStatus } from '../utils/routineStorage';
+import { CLASS_10_FAKE_LESSONS } from '../constants/class10SeedLessons';
 
 const TASK_COMPLETE_PTS = 50; // (25 pts Notes + 25 pts MCQ per lesson)
 
@@ -55,7 +65,7 @@ interface LucentEntry {
 
 type SubjectCategory = 'SCIENCE' | 'SOCIAL_SCIENCE' | 'OTHER';
 
-const SCIENCE_SUBJECTS = new Set(['physics', 'chemistry', 'biology', 'science', 'botany', 'zoology', 'maths', 'mathematics']);
+const SCIENCE_SUBJECTS = new Set(['physics', 'chemistry', 'biology', 'science', 'botany', 'zoology', 'math', 'maths', 'mathematics']);
 const SOCIAL_SUBJECTS  = new Set(['history', 'polity', 'economics', 'geography', 'civics', 'sociology', 'political_science', 'political science']);
 
 function getCategory(subjectId: string): SubjectCategory {
@@ -70,7 +80,9 @@ function getToday() { return new Date().toISOString().split('T')[0]; }
 function buildSubjectGroups(notes: LucentEntry[]): Record<string, LucentEntry[]> {
   const groups: Record<string, LucentEntry[]> = {};
   (notes || []).forEach(e => {
+    if (!isMultiPageRoutineNote(e)) return;
     const sid = (e.subject || 'other').toLowerCase().trim();
+    if (isRoutineSubjectNameExcluded(sid)) return;
     if (!groups[sid]) groups[sid] = [];
     groups[sid].push(e);
   });
@@ -106,6 +118,7 @@ const SUBJECT_META: Record<string, { icon: React.ReactNode; color: string; bg: s
   'political science':{ icon: <Globe size={18} />,       color: 'text-indigo-600',  bg: 'bg-indigo-50',  border: 'border-indigo-200' },
   economics:         { icon: <TrendingUp size={18} />,   color: 'text-orange-600',  bg: 'bg-orange-50',  border: 'border-orange-200' },
   geography:         { icon: <BarChart3 size={18} />,    color: 'text-teal-600',    bg: 'bg-teal-50',    border: 'border-teal-200' },
+  math:              { icon: <Zap size={18} />,          color: 'text-purple-600',  bg: 'bg-purple-50',  border: 'border-purple-200' },
   maths:             { icon: <Zap size={18} />,          color: 'text-purple-600',  bg: 'bg-purple-50',  border: 'border-purple-200' },
   mathematics:       { icon: <Zap size={18} />,          color: 'text-purple-600',  bg: 'bg-purple-50',  border: 'border-purple-200' },
 };
@@ -135,26 +148,12 @@ const CAT_LABEL: Record<SubjectCategory, string> = {
 const SLOT_EMOJI: Record<string, string> = {
   physics: '⚛️', chemistry: '⚗️', biology: '🌿', science: '🔬',
   history: '🏛️', polity: '⚖️', 'political science': '⚖️',
-  economics: '📈', geography: '🗺️', maths: '📐', mathematics: '📐',
+  economics: '📈', geography: '🗺️', math: '📐', maths: '📐', mathematics: '📐',
   hindi: '📖', english: '📝', sanskrit: '🕉️', computer: '💻',
   gk: '🌐', environment: '🌱', art: '🎨',
 };
 function getSlotEmoji(subjectId: string): string {
   return SLOT_EMOJI[subjectId.toLowerCase()] || '📚';
-}
-
-// ── Helper: verify a note is eligible for Routine (multi-page only, no Sar Sangrah) ──
-function isMultiPageRoutineNote(n: any): boolean {
-  if (!n) return false;
-  const pCount = Array.isArray(n.pages) ? n.pages.length : (n.pageCount || 0);
-  if (pCount <= 1) return false;
-  const title = (n.lessonTitle || n.title || '').toLowerCase();
-  const book = ((n as any).bookName || '').toLowerCase();
-  const sub = (n.subject || '').toLowerCase();
-  if (title.includes('sar sangrah') || title.includes('saar sangrah') || title.includes('sar-sangrah')) return false;
-  if (book.includes('sar sangrah') || book.includes('saar sangrah') || book.includes('sar-sangrah')) return false;
-  if (sub.includes('sar sangrah') || sub.includes('saar sangrah')) return false;
-  return true;
 }
 
 // ── Filter notes for a routine slot ──────────────────────────────────────────
@@ -179,6 +178,10 @@ function getNotesForSubject(sub: RoutineCategorySubject, allNotes: LucentEntry[]
     const ns = (n.subject || 'other').toLowerCase().trim();
     if (sub.bookName && nb !== sub.bookName) return false;
     if (sub.classLevel && nc !== sub.classLevel) return false;
+    if (sub.board && sub.board !== 'ALL_BOARDS') {
+      const noteBoard = (n as any).board;
+      if (noteBoard && noteBoard !== sub.board && noteBoard !== 'ALL_BOARDS') return false;
+    }
     return ns === sub.subjectId;
   });
 }
@@ -245,11 +248,22 @@ function TaskLessonCard({
   });
   const readCount  = pageStates.filter(s => s !== 'none').length;
   const doneCount  = pageStates.filter(s => s === 'done').length;
-  const allDone    = doneCount === totalPages && totalPages > 0;
+
+  // Math rule: Math auto-track nahi hoga, manually done mark karna padega
+  const isMath = isMathKey(lessonId) || isMathKey(subjectName) || isMathKey(label);
+  const [isMathDone, setIsMathDone] = useState(() => isMathLessonManualDone(lessonId));
+
+  useEffect(() => {
+    if (isMath) {
+      setIsMathDone(isMathLessonManualDone(lessonId));
+    }
+  }, [isMath, lessonId]);
+
+  const allDone = isMath ? isMathDone : (doneCount === totalPages && totalPages > 0);
   // Per-page MCQ badge counts
   const pagesWithMcqIdx = Array.from({ length: totalPages }, (_, i) => i); // all pages (no server info here)
   const pageMcqDoneCount = pagesWithMcqIdx.filter(i => !!snapshot.pageMcqDone?.[`${lessonId}__${i}`]).length;
-  const pct        = totalPages > 0 ? Math.round((readCount / totalPages) * 100) : 0;
+  const pct        = isMath ? (isMathDone ? 100 : 0) : (totalPages > 0 ? Math.round((readCount / totalPages) * 100) : 0);
 
   // Fire lesson complete callback once when all pages become green
   const onLessonCompleteRef = useRef(onLessonComplete);
@@ -272,12 +286,15 @@ function TaskLessonCard({
           <div className="flex items-center gap-1.5 mb-0.5">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</p>
             {allDone && <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">✓ DONE</span>}
+            {isMath && <span className="text-[9px] font-black text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded-full">📐 MANUAL</span>}
           </div>
           <p className={`font-black text-sm leading-tight truncate ${allDone ? 'text-emerald-700' : 'text-slate-800'}`}>{subjectName}</p>
           <p className="text-xs text-slate-500 font-medium truncate">{lessonTitle}</p>
           {/* Mini progress bar */}
           <div className="flex items-center gap-2 mt-1.5">
-            {totalPages > 0 ? (
+            {isMath ? (
+              <span className="text-[10px] font-bold text-blue-600">Manual Done Check Required</span>
+            ) : totalPages > 0 ? (
                 <>
                     <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                       <div className={`h-full rounded-full transition-all ${allDone ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
@@ -290,9 +307,28 @@ function TaskLessonCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
-          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${pageMcqDoneCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-            {pageMcqDoneCount > 0 ? `✅ ${pageMcqDoneCount}/${totalPages} MCQ` : '⏳ MCQ'}
-          </span>
+          {isMath ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextState = !isMathDone;
+                setMathLessonManualDone(lessonId, nextState);
+                setIsMathDone(nextState);
+                if (nextState && onLessonCompleteRef.current && !isLessonRewarded(lessonId)) {
+                  onLessonCompleteRef.current(lessonId);
+                }
+              }}
+              className={`text-[10px] font-black px-2.5 py-1 rounded-full border transition-all ${
+                isMathDone ? 'bg-emerald-500 text-white border-emerald-600 shadow-xs' : 'bg-white text-blue-600 border-blue-300 hover:bg-blue-50'
+              }`}
+            >
+              {isMathDone ? '✅ Done' : 'Mark Done'}
+            </button>
+          ) : (
+            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${pageMcqDoneCount > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+              {pageMcqDoneCount > 0 ? `✅ ${pageMcqDoneCount}/${totalPages} MCQ` : '⏳ MCQ'}
+            </span>
+          )}
           {expanded ? <ChevronUp size={13} className="text-slate-300" /> : <ChevronDown size={13} className="text-slate-300" />}
         </div>
       </div>
@@ -331,7 +367,30 @@ function TaskLessonCard({
             ) : null; })()}
           </div>
           {/* Progress hint */}
-          {allDone ? (
+          {isMath ? (
+            <div className="rounded-xl p-3 text-xs bg-blue-50 border border-blue-200 flex items-center justify-between">
+              <div>
+                <p className="font-black text-blue-900">📐 Math Manual Tracker</p>
+                <p className="text-[10px] text-blue-600 mt-0.5">Math auto-track nahi hota. Routine me done hone par Mark Done karein.</p>
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nextState = !isMathDone;
+                  setMathLessonManualDone(lessonId, nextState);
+                  setIsMathDone(nextState);
+                  if (nextState && onLessonCompleteRef.current && !isLessonRewarded(lessonId)) {
+                    onLessonCompleteRef.current(lessonId);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  isMathDone ? 'bg-emerald-600 text-white shadow-sm' : 'bg-white border border-blue-300 text-blue-700 hover:bg-blue-100'
+                }`}
+              >
+                {isMathDone ? '✅ Completed' : 'Mark Done'}
+              </button>
+            </div>
+          ) : allDone ? (
             <div className="rounded-xl p-3 text-xs bg-emerald-100 text-emerald-700">
               <p className="font-black">✅ Lesson complete! Daily Event Page mein pts claim karo</p>
             </div>
@@ -344,25 +403,27 @@ function TaskLessonCard({
             </div>
           )}
 
-          {/* Revision Hub button — locked until today's lesson is complete */}
-          {isLessonRewarded(lessonId) ? (
-            <RoutineRevisionBadge
-              lessonId={lessonId}
-              lessonTitle={lessonTitle}
-              onGoToRevision={onGoToRevision}
-            />
-          ) : (
-            <div className="mt-3 rounded-xl bg-slate-100 border border-slate-200 p-3 flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center shrink-0">
-                <Lock size={15} className="text-slate-400" />
+          {/* Revision Hub button — locked until today's lesson is complete (Excluded for Math) */}
+          {!isMath && (
+            isLessonRewarded(lessonId) ? (
+              <RoutineRevisionBadge
+                lessonId={lessonId}
+                lessonTitle={lessonTitle}
+                onGoToRevision={onGoToRevision}
+              />
+            ) : (
+              <div className="mt-3 rounded-xl bg-slate-100 border border-slate-200 p-3 flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center shrink-0">
+                  <Lock size={15} className="text-slate-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] font-black text-slate-500">🔒 Revision Hub</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+                    Aaj ka lesson complete karo → <span className="font-bold">"{lessonTitle}"</span> unlock hoga
+                  </p>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-black text-slate-500">🔒 Revision Hub</p>
-                <p className="text-[10px] text-slate-400 mt-0.5 truncate">
-                  Aaj ka lesson complete karo → <span className="font-bold">"{lessonTitle}"</span> unlock hoga
-                </p>
-              </div>
-            </div>
+            )
           )}
         </div>
       )}
@@ -465,41 +526,76 @@ function CatSubjectCard({
   onCoinFlash: (msg: string) => void;
   onOpenLesson?: (id: string) => void;
 }) {
+  const theme = useAppTheme();
   const [targetStart, setTargetStart] = useState(sub.currentLessonIndex);
 
   // Sync if external updates happen
   useEffect(() => { setTargetStart(sub.currentLessonIndex); }, [sub.currentLessonIndex]);
 
   const meta = SUBJECT_META[sub.subjectId] || DEFAULT_META;
+  const subTheme = getRevisionSubjectTheme(sub.displayName || sub.subjectId, sub.subjectId);
   const skipCost = getSkipCost(sub.currentLessonIndex, targetStart);
 
   return (
-    <div className={`rounded-2xl border overflow-hidden transition-all shadow-sm ${meta.border} bg-white`}>
+    <div
+      className="rounded-2xl border overflow-hidden transition-all shadow-xs"
+      style={{
+        background: subTheme.cardBg,
+        borderColor: subTheme.borderColor,
+      }}
+    >
       {/* Header: subject name */}
-      <div className="flex items-center gap-3 px-4 py-3 bg-slate-50/50">
-        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${meta.bg} ${meta.color}`}>
+      <div
+        className="flex items-center gap-3 px-4 py-3"
+        style={{
+          background: 'rgba(255, 255, 255, 0.45)',
+          borderBottom: `1px solid ${subTheme.borderColor}40`,
+        }}
+      >
+        <div
+          className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-2xs text-lg"
+          style={{
+            background: subTheme.iconBg,
+            border: `1px solid ${subTheme.iconBorder}`,
+          }}
+        >
           {sub.emoji || meta.icon}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-black text-slate-800 text-sm truncate">{sub.displayName || capitalise(sub.subjectId)}</p>
-          <p className="text-[10px] text-slate-500 font-medium">{sub.bookName || (`Class ${sub.classLevel}`)}</p>
+          <p className="font-black text-sm truncate" style={{ color: subTheme.titleColor }}>
+            {sub.displayName || capitalise(sub.subjectId)}
+          </p>
+          <p className="text-[10px] font-semibold truncate" style={{ color: subTheme.metaColor }}>
+            {sub.bookName || (`Class ${sub.classLevel}`)}
+          </p>
         </div>
       </div>
 
       {/* Lesson navigator */}
-      <div className="border-t border-slate-100 px-4 pb-3.5 pt-3">
+      <div className="px-4 pb-3.5 pt-3">
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
               const next = Math.max(0, targetStart - 1);
               setTargetStart(next);
             }}
-            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center active:bg-slate-200 transition shrink-0"
+            className="w-9 h-9 rounded-xl border flex items-center justify-center active:scale-95 transition shrink-0 shadow-2xs"
+            style={{
+              background: '#ffffff',
+              borderColor: subTheme.borderColor,
+              color: subTheme.titleColor,
+            }}
           >
-            <Minus size={14} className="text-slate-600" />
+            <Minus size={14} />
           </button>
 
-          <div className="flex-1 text-center bg-slate-50 rounded-xl border border-slate-100 py-1.5 px-2 relative group hover:border-blue-200 transition">
+          <div
+            className="flex-1 text-center rounded-xl border py-1.5 px-2 relative group transition shadow-2xs"
+            style={{
+              background: 'rgba(255, 255, 255, 0.85)',
+              borderColor: subTheme.borderColor,
+            }}
+          >
             <select
               value={targetStart}
               onChange={(e) => setTargetStart(Number(e.target.value))}
@@ -512,11 +608,11 @@ function CatSubjectCard({
                 </option>
               ))}
             </select>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider leading-none mb-0.5 flex items-center justify-center gap-1">
+            <p className="text-[10px] font-black uppercase tracking-wider leading-none mb-0.5 flex items-center justify-center gap-1" style={{ color: subTheme.metaColor }}>
               <span>Lesson {targetStart + 1} of {lessons.length}</span>
-              <span className="text-[8px] text-blue-500 font-bold">▾</span>
+              <span className="text-[8px] font-bold">▾</span>
             </p>
-            <p className="text-[12px] font-bold text-slate-800 leading-tight truncate">
+            <p className="text-[12px] font-black leading-tight truncate" style={{ color: subTheme.titleColor }}>
               {lessons[targetStart]?.lessonTitle || `Lesson ${targetStart + 1}`}
             </p>
             {skipCost > 0 && <p className="text-[9px] text-amber-600 font-black mt-0.5">−{skipCost}🪙</p>}
@@ -528,31 +624,16 @@ function CatSubjectCard({
               const next = Math.min(lessons.length - 1, targetStart + 1);
               setTargetStart(next);
             }}
-            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center active:bg-slate-200 transition shrink-0"
+            className="w-9 h-9 rounded-xl border flex items-center justify-center active:scale-95 transition shrink-0 shadow-2xs"
+            style={{
+              background: '#ffffff',
+              borderColor: subTheme.borderColor,
+              color: subTheme.titleColor,
+            }}
           >
-            <Plus size={14} className="text-slate-600" />
+            <Plus size={14} />
           </button>
         </div>
-
-        {/* 1-Tap Notes and MCQ Buttons for Current Lesson */}
-        {lessons[sub.currentLessonIndex] && onOpenLesson && (
-          <div className="grid grid-cols-2 gap-2 mt-2.5">
-            <button
-              onClick={() => onOpenLesson(lessons[sub.currentLessonIndex].id)}
-              className="py-1.5 px-2 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center justify-center gap-1 active:scale-95 transition hover:bg-indigo-100"
-            >
-              <BookOpen size={12} />
-              <span>📖 Read Notes</span>
-            </button>
-            <button
-              onClick={() => onOpenLesson(lessons[sub.currentLessonIndex].id)}
-              className="py-1.5 px-2 rounded-xl bg-violet-600 text-white text-[11px] font-black flex items-center justify-center gap-1 active:scale-95 transition hover:bg-violet-700 shadow-xs"
-            >
-              <Target size={12} />
-              <span>🧠 Practice MCQ</span>
-            </button>
-          </div>
-        )}
 
         {targetStart !== sub.currentLessonIndex && (
           <button
@@ -561,7 +642,8 @@ function CatSubjectCard({
               onChangeStart(catId, sub.subjectId, targetStart);
               onCoinFlash(skipCost > 0 ? `Start changed! −${skipCost}🪙` : 'Start point changed! Free 🎉');
             }}
-            className="mt-2.5 w-full py-2 rounded-xl bg-blue-600 text-white text-xs font-black active:scale-95 transition shadow-sm"
+            className="mt-2.5 w-full py-2 rounded-xl text-white text-xs font-black active:scale-95 transition shadow-xs hover:opacity-95"
+            style={{ background: subTheme.mcqBtnGrad }}
           >
             {skipCost > 0 ? `✓ Apply (−${skipCost}🪙 deduct hoga)` : '✓ Apply (Free)'}
           </button>
@@ -580,8 +662,10 @@ function SubjectCard({
   onCoinFlash: (msg: string) => void;
   onOpenLesson?: (id: string) => void;
 }) {
+  const theme = useAppTheme();
   const [targetStart, setTargetStart] = useState(sub.startLessonIndex);
   const meta     = SUBJECT_META[sub.id] || DEFAULT_META;
+  const subTheme = getRevisionSubjectTheme(sub.name, sub.id);
   const skipCost = getSkipCost(sub.startLessonIndex, targetStart);
 
   const handleToggle = (e: React.MouseEvent) => {
@@ -596,15 +680,34 @@ function SubjectCard({
   };
 
   return (
-    <div className={`rounded-2xl border overflow-hidden transition-all shadow-sm ${sub.routineApplied ? meta.border : 'border-slate-200'} bg-white`}>
+    <div
+      className="rounded-2xl border overflow-hidden transition-all shadow-xs"
+      style={{
+        background: subTheme.cardBg,
+        borderColor: sub.routineApplied ? subTheme.borderColor : '#e2e8f0',
+      }}
+    >
       {/* Header: subject name + toggle */}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${sub.routineApplied ? `${meta.bg} ${meta.color}` : 'bg-slate-100 text-slate-400'}`}>
+      <div
+        className="flex items-center gap-3 px-4 py-3"
+        style={{
+          background: sub.routineApplied ? 'rgba(255, 255, 255, 0.5)' : undefined,
+          borderBottom: `1px solid ${subTheme.borderColor}40`,
+        }}
+      >
+        <div
+          className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 shadow-2xs text-lg"
+          style={{
+            background: sub.routineApplied ? subTheme.iconBg : '#f1f5f9',
+            border: sub.routineApplied ? `1px solid ${subTheme.iconBorder}` : '1px solid #e2e8f0',
+            color: sub.routineApplied ? subTheme.titleColor : '#94a3b8'
+          }}
+        >
           {meta.icon}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="font-black text-slate-800 text-sm truncate">{sub.name}</p>
-          <p className="text-[10px] text-slate-500 font-medium">{CAT_LABEL[sub.category]}</p>
+          <p className="font-black text-sm truncate" style={{ color: subTheme.titleColor }}>{sub.name}</p>
+          <p className="text-[10px] font-semibold" style={{ color: subTheme.metaColor }}>{CAT_LABEL[sub.category]}</p>
         </div>
         <button
           onClick={handleToggle}
@@ -612,8 +715,9 @@ function SubjectCard({
           style={{
             minWidth: 44, width: 44, height: 24,
             backgroundColor: sub.routineApplied
-              ? (SUBJECT_TOGGLE_COLOR[meta.color] ?? '#6366f1')
-              : '#94a3b8', /* slate-400 — clearly visible in both states */
+              ? undefined
+              : '#94a3b8',
+            background: sub.routineApplied ? subTheme.mcqBtnGrad : undefined
           }}
         >
           <span
@@ -624,19 +728,30 @@ function SubjectCard({
       </div>
 
       {/* Lesson navigator */}
-      <div className="border-t border-slate-100 px-4 pb-3.5 pt-3">
+      <div className="px-4 pb-3.5 pt-3">
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
               const next = Math.max(0, targetStart - 1);
               setTargetStart(next);
             }}
-            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center active:bg-slate-200 transition shrink-0"
+            className="w-9 h-9 rounded-xl border flex items-center justify-center active:scale-95 transition shrink-0 shadow-2xs"
+            style={{
+              background: '#ffffff',
+              borderColor: subTheme.borderColor,
+              color: subTheme.titleColor,
+            }}
           >
-            <Minus size={14} className="text-slate-600" />
+            <Minus size={14} />
           </button>
 
-          <div className="flex-1 text-center bg-slate-50 rounded-xl border border-slate-100 py-1.5 px-2 relative group hover:border-blue-200 transition">
+          <div
+            className="flex-1 text-center rounded-xl border py-1.5 px-2 relative group transition shadow-2xs"
+            style={{
+              background: 'rgba(255, 255, 255, 0.85)',
+              borderColor: subTheme.borderColor,
+            }}
+          >
             <select
               value={targetStart}
               onChange={(e) => setTargetStart(Number(e.target.value))}
@@ -649,11 +764,11 @@ function SubjectCard({
                 </option>
               ))}
             </select>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-wider leading-none mb-0.5 flex items-center justify-center gap-1">
+            <p className="text-[10px] font-black uppercase tracking-wider leading-none mb-0.5 flex items-center justify-center gap-1" style={{ color: subTheme.metaColor }}>
               <span>Lesson {targetStart + 1} of {lessons.length}</span>
-              <span className="text-[8px] text-blue-500 font-bold">▾</span>
+              <span className="text-[8px] font-bold">▾</span>
             </p>
-            <p className="text-[12px] font-bold text-slate-800 leading-tight truncate">
+            <p className="text-[12px] font-black leading-tight truncate" style={{ color: subTheme.titleColor }}>
               {lessons[targetStart]?.lessonTitle || `Lesson ${targetStart + 1}`}
             </p>
             {skipCost > 0 && <p className="text-[9px] text-amber-600 font-black mt-0.5">−{skipCost}🪙</p>}
@@ -665,31 +780,16 @@ function SubjectCard({
               const next = Math.min(lessons.length - 1, targetStart + 1);
               setTargetStart(next);
             }}
-            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center active:bg-slate-200 transition shrink-0"
+            className="w-9 h-9 rounded-xl border flex items-center justify-center active:scale-95 transition shrink-0 shadow-2xs"
+            style={{
+              background: '#ffffff',
+              borderColor: subTheme.borderColor,
+              color: subTheme.titleColor,
+            }}
           >
-            <Plus size={14} className="text-slate-600" />
+            <Plus size={14} />
           </button>
         </div>
-
-        {/* 1-Tap Notes and MCQ Buttons for Current Lesson */}
-        {lessons[sub.startLessonIndex] && onOpenLesson && (
-          <div className="grid grid-cols-2 gap-2 mt-2.5">
-            <button
-              onClick={() => onOpenLesson(lessons[sub.startLessonIndex].id)}
-              className="py-1.5 px-2 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-black flex items-center justify-center gap-1 active:scale-95 transition hover:bg-indigo-100"
-            >
-              <BookOpen size={12} />
-              <span>📖 Read Notes</span>
-            </button>
-            <button
-              onClick={() => onOpenLesson(lessons[sub.startLessonIndex].id)}
-              className="py-1.5 px-2 rounded-xl bg-violet-600 text-white text-[11px] font-black flex items-center justify-center gap-1 active:scale-95 transition hover:bg-violet-700 shadow-xs"
-            >
-              <Target size={12} />
-              <span>🧠 Practice MCQ</span>
-            </button>
-          </div>
-        )}
 
         {targetStart !== sub.startLessonIndex && (
           <button
@@ -698,7 +798,8 @@ function SubjectCard({
               onChangeStart(targetStart);
               onCoinFlash(skipCost > 0 ? `Start changed! −${skipCost}🪙` : 'Start point changed! Free 🎉');
             }}
-            className="mt-2.5 w-full py-2 rounded-xl bg-blue-600 text-white text-xs font-black active:scale-95 transition shadow-sm"
+            className="mt-2.5 w-full py-2 rounded-xl text-white text-xs font-black active:scale-95 transition shadow-xs hover:opacity-95"
+            style={{ background: subTheme.mcqBtnGrad }}
           >
             {skipCost > 0 ? `✓ Apply (−${skipCost}🪙 deduct hoga)` : '✓ Apply (Free)'}
           </button>
@@ -715,6 +816,7 @@ function TrackingView({ subjectGroups, subjects, mcqHistory, onOpenLesson }: {
   mcqHistory: any[];
   onOpenLesson?: (id: string) => void;
 }) {
+  const theme = useAppTheme();
   const [expandedSubs, setExpandedSubs] = useState<Record<string, boolean>>({});
   const [expandedLessons, setExpandedLessons] = useState<Record<string, boolean>>({});
   const [trackingSearch, setTrackingSearch] = useState('');
@@ -767,9 +869,12 @@ function TrackingView({ subjectGroups, subjects, mcqHistory, onOpenLesson }: {
   return (
     <div className="space-y-4">
       {/* Overall stats card */}
-      <div className="bg-gradient-to-br from-indigo-700 via-purple-700 to-blue-700 rounded-2xl p-4 text-white shadow-lg">
+      <div
+        className="rounded-2xl p-4 text-white shadow-lg transition-all"
+        style={{ background: theme.topBarGrad || theme.btnGrad || `linear-gradient(135deg, ${theme.primary}, ${theme.mid || theme.primary})` }}
+      >
         <div className="flex items-center justify-between mb-2">
-          <p className="text-[10px] font-black uppercase tracking-widest text-indigo-200">📖 My Syllabus Mastery (3-Tier)</p>
+          <p className="text-[10px] font-black uppercase tracking-widest text-white/90">📖 My Syllabus Mastery (3-Tier)</p>
           <span className="text-xs font-black bg-white/20 px-2 py-0.5 rounded-full">{syllabusMasteryPct}% Mastered</span>
         </div>
         <div className="grid grid-cols-4 gap-2 mb-3">
@@ -779,9 +884,9 @@ function TrackingView({ subjectGroups, subjects, mcqHistory, onOpenLesson }: {
             { label: 'Pages Read', value: totalRead },
             { label: 'MCQ Done', value: totalMcqDone },
           ].map(s => (
-            <div key={s.label} className="bg-white/10 rounded-xl p-2 text-center">
+            <div key={s.label} className="bg-white/15 backdrop-blur-xs rounded-xl p-2 text-center border border-white/10">
               <p className="text-base font-black">{s.value}</p>
-              <p className="text-[8px] opacity-70 font-medium">{s.label}</p>
+              <p className="text-[8px] opacity-80 font-medium">{s.label}</p>
             </div>
           ))}
         </div>
@@ -792,7 +897,7 @@ function TrackingView({ subjectGroups, subjects, mcqHistory, onOpenLesson }: {
             </div>
             <span className="text-xs font-black">{syllabusMasteryPct}%</span>
           </div>
-          <div className="flex items-center justify-between text-[10px] text-white/80 font-semibold px-0.5">
+          <div className="flex items-center justify-between text-[10px] text-white/90 font-semibold px-0.5">
             <span>📖 Reading: {readPct}% ({totalRead}/{totalPages} pgs)</span>
             <span>🧠 MCQ: {mcqPct}% ({totalMcqDone}/{totalPages} pgs)</span>
           </div>
@@ -824,7 +929,8 @@ function TrackingView({ subjectGroups, subjects, mcqHistory, onOpenLesson }: {
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar pt-1 border-t border-slate-100">
           <button
             onClick={() => setSelectedSubFilter('ALL')}
-            className={`px-2.5 py-1 rounded-lg text-[10px] font-black whitespace-nowrap transition-all shrink-0 ${selectedSubFilter === 'ALL' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-black whitespace-nowrap transition-all shrink-0 ${selectedSubFilter === 'ALL' ? 'text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            style={selectedSubFilter === 'ALL' ? { background: theme.btnGrad || theme.primary } : {}}
           >
             🌟 Sabhi ({allLessons.length} Lessons)
           </button>
@@ -832,15 +938,25 @@ function TrackingView({ subjectGroups, subjects, mcqHistory, onOpenLesson }: {
             const lCount = (subjectGroups[sub.id] || []).length;
             if (lCount === 0) return null;
             const meta = SUBJECT_META[sub.id] || DEFAULT_META;
+            const subTheme = getRevisionSubjectTheme(sub.name, sub.id);
+            const isSelected = selectedSubFilter === sub.id;
             return (
               <button
                 key={sub.id}
                 onClick={() => setSelectedSubFilter(sub.id)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-black whitespace-nowrap transition-all shrink-0 flex items-center gap-1 ${selectedSubFilter === sub.id ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                className="px-2.5 py-1 rounded-lg text-[10px] font-black whitespace-nowrap transition-all shrink-0 flex items-center gap-1 shadow-2xs"
+                style={isSelected ? {
+                  background: subTheme.mcqBtnGrad,
+                  color: '#ffffff',
+                } : {
+                  background: subTheme.cardBg,
+                  color: subTheme.titleColor,
+                  border: `1px solid ${subTheme.borderColor}`,
+                }}
               >
                 <span>{meta.icon}</span>
                 <span>{sub.name}</span>
-                <span className="opacity-70">({lCount})</span>
+                <span className="opacity-80 font-bold">({lCount})</span>
               </button>
             );
           })}
@@ -903,58 +1019,115 @@ function TrackingView({ subjectGroups, subjects, mcqHistory, onOpenLesson }: {
         const totalBatches = Math.ceil(lessons.length / BATCH_SIZE);
         const visibleLessons = isShowAll ? lessons : lessons.slice(currentBatch * BATCH_SIZE, (currentBatch + 1) * BATCH_SIZE);
 
+        const subTheme = getRevisionSubjectTheme(sub.name, sub.id);
+
         return (
-          <div key={sub.id} className={`rounded-2xl border overflow-hidden ${sub.routineApplied ? meta.border : 'border-slate-200'} bg-white`}>
+          <div
+            key={sub.id}
+            className="rounded-2xl border overflow-hidden transition-all shadow-xs"
+            style={{
+              background: subTheme.cardBg,
+              borderColor: sub.routineApplied ? subTheme.borderColor : '#e2e8f0',
+            }}
+          >
             {/* Subject header */}
-            <div className="flex items-center gap-3 p-3.5 cursor-pointer active:bg-slate-50"
-              onClick={() => setExpandedSubs(prev => ({ ...prev, [sub.id]: !isExpanded }))}>
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${meta.bg} ${meta.color}`}>
+            <div
+              className="flex items-center gap-3 p-3.5 cursor-pointer active:opacity-90 transition-opacity"
+              style={{
+                background: 'rgba(255, 255, 255, 0.45)',
+              }}
+              onClick={() => setExpandedSubs(prev => ({ ...prev, [sub.id]: !isExpanded }))}
+            >
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-2xs text-lg"
+                style={{
+                  background: subTheme.iconBg,
+                  border: `1px solid ${subTheme.iconBorder}`,
+                }}
+              >
                 {meta.icon}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <p className="font-black text-slate-800 text-sm">{sub.name}</p>
+                  <p className="font-black text-sm truncate" style={{ color: subTheme.titleColor }}>{sub.name}</p>
                   {sub.routineApplied && (
-                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full ${meta.bg} ${meta.color}`}>Routine</span>
+                    <span
+                      className="text-[9px] font-black px-1.5 py-0.5 rounded-full"
+                      style={{
+                        background: subTheme.iconBg,
+                        color: subTheme.titleColor,
+                        border: `1px solid ${subTheme.borderColor}`,
+                      }}
+                    >
+                      Routine
+                    </span>
                   )}
-                  <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-0.2 rounded-full ml-auto">
+                  <span
+                    className="text-[10px] font-black px-2 py-0.2 rounded-full ml-auto"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.8)',
+                      color: subTheme.metaColor,
+                      border: `1px solid ${subTheme.borderColor}70`,
+                    }}
+                  >
                     {lessons.length} Lessons
                   </span>
                 </div>
                 <div className="flex items-center gap-2 mt-1">
-                  <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full transition-all ${meta.color.replace('text-', 'bg-')}`}
-                      style={{ width: `${subPct}%` }} />
+                  <div className="flex-1 h-1.5 bg-black/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        background: subTheme.iconBorder,
+                        width: `${subPct}%`,
+                      }}
+                    />
                   </div>
-                  <span className="text-[10px] font-black text-slate-500 shrink-0">{subPct}%</span>
+                  <span className="text-[10px] font-black shrink-0" style={{ color: subTheme.metaColor }}>{subPct}%</span>
                 </div>
               </div>
-              {isExpanded ? <ChevronUp size={14} className="text-slate-300 shrink-0" /> : <ChevronDown size={14} className="text-slate-300 shrink-0" />}
+              {isExpanded ? (
+                <ChevronUp size={14} style={{ color: subTheme.iconBorder }} className="shrink-0" />
+              ) : (
+                <ChevronDown size={14} style={{ color: subTheme.iconBorder }} className="shrink-0" />
+              )}
             </div>
 
             {/* Subject stats strip */}
-            <div className="flex border-t border-slate-100 divide-x divide-slate-100 bg-slate-50/50">
-              <div className="flex-1 py-2 text-center">
-                <p className="text-[9px] text-slate-400">Total Lessons</p>
-                <p className="text-xs font-black text-slate-700">{allSubLessons.length}</p>
+            <div
+              className="flex divide-x"
+              style={{
+                background: 'rgba(255, 255, 255, 0.65)',
+                borderTop: `1px solid ${subTheme.borderColor}40`,
+              }}
+            >
+              <div className="flex-1 py-2 text-center" style={{ borderColor: `${subTheme.borderColor}40` }}>
+                <p className="text-[9px] font-semibold" style={{ color: subTheme.metaColor }}>Total Lessons</p>
+                <p className="text-xs font-black" style={{ color: subTheme.titleColor }}>{allSubLessons.length}</p>
               </div>
-              <div className="flex-1 py-2 text-center">
-                <p className="text-[9px] text-slate-400">Complete</p>
+              <div className="flex-1 py-2 text-center" style={{ borderColor: `${subTheme.borderColor}40` }}>
+                <p className="text-[9px] font-semibold" style={{ color: subTheme.metaColor }}>Complete</p>
                 <p className="text-xs font-black text-emerald-600">{subCompletedLessons}</p>
               </div>
-              <div className="flex-1 py-2 text-center">
-                <p className="text-[9px] text-slate-400">Pages Read</p>
+              <div className="flex-1 py-2 text-center" style={{ borderColor: `${subTheme.borderColor}40` }}>
+                <p className="text-[9px] font-semibold" style={{ color: subTheme.metaColor }}>Pages Read</p>
                 <p className="text-xs font-black text-blue-600">{subReadPages}/{subTotalPages}</p>
               </div>
-              <div className="flex-1 py-2 text-center">
-                <p className="text-[9px] text-slate-400">MCQ Done</p>
+              <div className="flex-1 py-2 text-center" style={{ borderColor: `${subTheme.borderColor}40` }}>
+                <p className="text-[9px] font-semibold" style={{ color: subTheme.metaColor }}>MCQ Done</p>
                 <p className="text-xs font-black text-purple-600">{subMcqDone}/{subTotalPages}</p>
               </div>
             </div>
 
             {/* Lesson list */}
             {isExpanded && (
-              <div className="border-t border-slate-100 px-3 pb-3 pt-2.5 space-y-1.5">
+              <div
+                className="px-3 pb-3 pt-2.5 space-y-1.5"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.4)',
+                  borderTop: `1px solid ${subTheme.borderColor}30`,
+                }}
+              >
                 {/* Batching controls if lessons count is large */}
                 {lessons.length > BATCH_SIZE && (
                   <div className="flex items-center justify-between p-2 bg-slate-50 rounded-xl border border-slate-200 mb-2 text-[10px] font-bold text-slate-600">
@@ -1228,6 +1401,7 @@ function TrackingView({ subjectGroups, subjects, mcqHistory, onOpenLesson }: {
 // ── Available subject/book slots from notes ───────────────────────────────────
 // ── Default subject groups always shown in AddCategorySheet ───────────────────
 const DEFAULT_SUBJECT_GROUPS: Array<{ group: string; subjects: string[] }> = [
+  { group: 'Mathematics',    subjects: ['math', 'mathematics'] },
   { group: 'Science',        subjects: ['physics', 'chemistry', 'biology'] },
   { group: 'Social Science', subjects: ['history', 'geography', 'polity', 'economics'] },
 ];
@@ -1243,9 +1417,11 @@ function getAvailableSubjectSlots(notes: LucentEntry[]): Array<{
   // Count notes per book/class/subject
   const seen = new Map<string, any>();
   notes.forEach(n => {
+    if (!isMultiPageRoutineNote(n)) return;
     const bk = (n as any).bookName?.trim() || '';
     const cl = (n as any).classLevel || '';
     const sj = (n.subject || 'other').toLowerCase().trim();
+    if (isRoutineSubjectNameExcluded(bk) || isRoutineSubjectNameExcluded(sj)) return;
     // count into default bucket
     if (defaultCounts[sj] !== undefined) defaultCounts[sj]++;
     if (!bk && !cl) return;
@@ -1277,7 +1453,7 @@ function getAvailableSubjectSlots(notes: LucentEntry[]): Array<{
 
 // ── Routine Setup Sheet (one-time: School/Competition → Class/Books, saved to data) ──
 
-function RoutineSetupSheet({ allNotes, currentMode, currentBoard, currentClass, currentBooks, isUltraUser, userCredits, userDiamonds, unlockedCompetitionBooks, onUnlockBook, onSave, onClose }: {
+function RoutineSetupSheet({ allNotes, currentMode, currentBoard, currentClass, currentBooks, isUltraUser, userCredits, userDiamonds, unlockedCompetitionBooks, onUnlockBook, onSave, onClose, singleBookNames }: {
   allNotes: LucentEntry[];
   currentMode: 'SCHOOL' | 'COMPETITION' | null;
   currentBoard: string | null;
@@ -1290,9 +1466,10 @@ function RoutineSetupSheet({ allNotes, currentMode, currentBoard, currentClass, 
   onUnlockBook: (book: string, method: 'CREDITS' | 'DIAMONDS') => boolean;
   onSave: (mode: 'SCHOOL' | 'COMPETITION', board: string | null, classLevel: string | null, books: string[]) => void;
   onClose: () => void;
+  singleBookNames?: string[];
 }) {
   const [mode, setMode] = useState<'SCHOOL' | 'COMPETITION' | null>(currentMode);
-  const [board, setBoard] = useState<string | null>(currentBoard);
+  const [board, setBoard] = useState<string | null>(currentBoard || 'BSEB');
   const [classLevel, setClassLevel] = useState(currentClass || '');
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(() => {
     if (!isUltraUser) {
@@ -1307,22 +1484,31 @@ function RoutineSetupSheet({ allNotes, currentMode, currentBoard, currentClass, 
 
   const availableClasses = useMemo(() => {
     const s = new Set<string>();
+    const targetBoard = board || 'BSEB';
     allNotes.forEach(n => {
       const cl = (n as any).classLevel;
       // School mode mein sirf numeric classes dikhao — COMPETITION etc. exclude karo
-      if (cl && !isNaN(Number(cl))) s.add(String(cl));
+      if (cl && !isNaN(Number(cl))) {
+        const nb = (n as any).board;
+        if (targetBoard && targetBoard !== 'ALL_BOARDS' && nb && nb !== targetBoard && nb !== 'ALL_BOARDS') return;
+        s.add(String(cl));
+      }
     });
+    if (s.size === 0) {
+      ['9', '10', '11', '12'].forEach(c => s.add(c));
+    }
     return Array.from(s).sort((a, b) => Number(a) - Number(b));
-  }, [allNotes]);
+  }, [allNotes, board]);
 
   const availableBooks = useMemo(() => {
     const s = new Set<string>();
     allNotes.forEach(n => {
-      if (!isMultiPageRoutineNote(n)) return;
+      if (!isMultiPageRoutineNote(n, singleBookNames)) return;
+      if (isAcademicSchoolNote(n)) return;
       const bk = (n as any).bookName?.trim();
       if (bk) {
           const bkLower = bk.toLowerCase();
-          if (bkLower !== 'speedy science' && bkLower !== 'speedy social science' && !bkLower.includes('sar sangrah') && !bkLower.includes('saar sangrah') && bkLower !== 'mcq practice') {
+          if (!isRoutineSubjectNameExcluded(bkLower, singleBookNames) && !ACADEMIC_SUBJECT_NAMES.has(bkLower)) {
               s.add(bk);
           }
       } else if ((n as any).classLevel === 'COMPETITION') {
@@ -1330,16 +1516,14 @@ function RoutineSetupSheet({ allNotes, currentMode, currentBoard, currentClass, 
       }
     });
 
-    // Ensure Lucent is included if there's any valid multi-page competition note, as fallback
-    if (allNotes.some(n => (n as any).classLevel === 'COMPETITION' && isMultiPageRoutineNote(n))) {
-       s.add('Lucent');
-    }
+    // Fallback: ensure Lucent is always present as competition book
+    s.add('Lucent');
 
     return Array.from(s).sort();
-  }, [allNotes]);
+  }, [allNotes, singleBookNames]);
 
   const selectedBook = Array.from(selectedBooks)[0] || '';
-  const canSave = mode === 'SCHOOL' ? !!classLevel : mode === 'COMPETITION' ? selectedBooks.size > 0 : false;
+  const canSave = mode === 'SCHOOL' ? (!!classLevel && !!board) : mode === 'COMPETITION' ? selectedBooks.size > 0 : false;
 
   return (
     <div className="fixed inset-0 z-[600] flex items-end bg-slate-900/60 backdrop-blur-sm" onClick={onClose}>
@@ -1396,23 +1580,54 @@ function RoutineSetupSheet({ allNotes, currentMode, currentBoard, currentClass, 
           </div>
 
           {mode === 'SCHOOL' && (
-            <label className="block">
-              <span className="block text-xs font-black text-slate-600 mb-1.5">Class</span>
-              <div className="relative">
-                <select
-                  value={classLevel}
-                  onChange={e => setClassLevel(e.target.value)}
-                  className="w-full appearance-none rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-3 pr-10 text-sm font-black text-blue-800 outline-none focus:border-blue-500"
-                >
-                  <option value="">Class chuno</option>
-                  {availableClasses.map(cl => <option key={cl} value={cl}>Class {cl}</option>)}
-                </select>
-                <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
+            <div className="space-y-3">
+              <div>
+                <span className="block text-xs font-black text-slate-600 mb-1.5">Board Chuno</span>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'BSEB', label: 'BSEB', sub: 'Bihar Board', icon: '🏛️' },
+                    { id: 'NCERT_HI', label: 'NCERT', sub: 'हिंदी माध्यम', icon: '📖' },
+                    { id: 'NCERT_EN', label: 'NCERT', sub: 'English Medium', icon: '📘' },
+                  ].map(b => {
+                    const isSelected = (board || 'BSEB') === b.id;
+                    return (
+                      <button
+                        key={b.id}
+                        type="button"
+                        onClick={() => setBoard(b.id)}
+                        className={`p-2.5 rounded-2xl border text-center transition-all ${
+                          isSelected
+                            ? 'border-blue-600 bg-blue-50 text-blue-900 shadow-sm ring-2 ring-blue-500/20'
+                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span className="text-xl block mb-1">{b.icon}</span>
+                        <span className="text-xs font-black block leading-tight">{b.label}</span>
+                        <span className="text-[9px] text-slate-500 font-medium block mt-0.5">{b.sub}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              {availableClasses.length === 0 && (
-                <span className="block text-xs text-slate-400 font-medium mt-2">Koi class notes nahi mili — pehle notes add karo.</span>
-              )}
-            </label>
+
+              <label className="block">
+                <span className="block text-xs font-black text-slate-600 mb-1.5">Class</span>
+                <div className="relative">
+                  <select
+                    value={classLevel}
+                    onChange={e => setClassLevel(e.target.value)}
+                    className="w-full appearance-none rounded-xl border-2 border-blue-200 bg-blue-50 px-4 py-3 pr-10 text-sm font-black text-blue-800 outline-none focus:border-blue-500"
+                  >
+                    <option value="">Class chuno</option>
+                    {availableClasses.map(cl => <option key={cl} value={cl}>Class {cl}</option>)}
+                  </select>
+                  <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
+                </div>
+                {availableClasses.length === 0 && (
+                  <span className="block text-xs text-slate-400 font-medium mt-2">Koi class notes nahi mili — pehle notes add karo.</span>
+                )}
+              </label>
+            </div>
           )}
 
           {mode === 'COMPETITION' && (
@@ -1552,42 +1767,64 @@ function RoutineSetupSheet({ allNotes, currentMode, currentBoard, currentClass, 
 }
 
 // ── Add Category Sheet ────────────────────────────────────────────────────────
-function AddCategorySheet({ allNotes, existingCategories, routineMode, selectedClass, selectedBook, selectedBooks, onAdd, onClose }: {
+function AddCategorySheet({ allNotes, existingCategories, routineMode, selectedBoard, selectedClass, selectedBook, selectedBooks, onAdd, onClose, singleBookNames }: {
   allNotes: LucentEntry[];
   existingCategories: RoutineCategory[];
   routineMode: 'SCHOOL' | 'COMPETITION' | null;
+  selectedBoard?: string | null;
   selectedClass: string | null;
   selectedBook: string | null;
   selectedBooks?: string[];
   onAdd: (cat: Omit<RoutineCategory, 'id'>) => void;
   onClose: () => void;
+  singleBookNames?: string[];
 }) {
   const [search, setSearch] = useState('');
   const [categoryName, setCategoryName] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Filter notes by user's chosen mode/class/books
+  // Filter notes by user's chosen mode/board/class/books
   const modeFilteredNotes = useMemo(() => {
-    if (routineMode === 'SCHOOL' && selectedClass) {
-      return allNotes.filter(n => String((n as any).classLevel) === String(selectedClass));
+    if (routineMode === 'SCHOOL') {
+      return allNotes.filter(n => {
+        if (!isMultiPageRoutineNote(n, singleBookNames)) return false;
+        if (selectedClass && String((n as any).classLevel) !== String(selectedClass)) return false;
+        if (selectedBoard && selectedBoard !== 'ALL_BOARDS') {
+          const nb = (n as any).board;
+          if (nb && nb !== selectedBoard && nb !== 'ALL_BOARDS') return false;
+        }
+        return true;
+      });
     }
     if (routineMode === 'COMPETITION') {
       if (selectedBooks && selectedBooks.length > 0) {
         const bookSet = new Set(selectedBooks);
-        return allNotes.filter(n => bookSet.has((n as any).bookName?.trim() || ''));
+        const isLucent = bookSet.has('Lucent');
+        return allNotes.filter(n => {
+          if (!isMultiPageRoutineNote(n, singleBookNames)) return false;
+          if (isAcademicSchoolNote(n)) return false;
+          const bk = (n as any).bookName?.trim() || '';
+          return bookSet.has(bk) || (isLucent && (!bk || bk.toLowerCase() === 'lucent' || (n as any).classLevel === 'COMPETITION'));
+        });
       }
       if (selectedBook) {
-        return allNotes.filter(n => ((n as any).bookName?.trim() || '') === selectedBook);
+        const isLucent = selectedBook === 'Lucent';
+        return allNotes.filter(n => {
+          if (!isMultiPageRoutineNote(n, singleBookNames)) return false;
+          if (isAcademicSchoolNote(n)) return false;
+          const bk = (n as any).bookName?.trim() || '';
+          return bk === selectedBook || (isLucent && (!bk || bk.toLowerCase() === 'lucent' || (n as any).classLevel === 'COMPETITION'));
+        });
       }
     }
-    return allNotes;
-  }, [allNotes, routineMode, selectedClass, selectedBook, selectedBooks]);
+    return allNotes.filter(n => isMultiPageRoutineNote(n, singleBookNames));
+  }, [allNotes, routineMode, selectedBoard, selectedClass, selectedBook, selectedBooks, singleBookNames]);
 
   const available = useMemo(() => getAvailableSubjectSlots(modeFilteredNotes), [modeFilteredNotes]);
 
   // Label shown at top of sheet
   const sourceLabel = routineMode === 'SCHOOL' && selectedClass
-    ? `📚 Class ${selectedClass} ke notes`
+    ? `📚 ${selectedBoard && selectedBoard !== 'ALL_BOARDS' ? `${selectedBoard} · ` : ''}Class ${selectedClass} ke notes`
     : routineMode === 'COMPETITION'
       ? selectedBooks && selectedBooks.length > 0
         ? `📖 ${selectedBooks.length === 1 ? selectedBooks[0] : `${selectedBooks.length} books`} ke notes`
@@ -1600,6 +1837,11 @@ function AddCategorySheet({ allNotes, existingCategories, routineMode, selectedC
   }, [existingCategories]);
   const filtered = available.filter(item => {
     if (existingSubjectKeys.has(`${item.bookName}||${item.classLevel || ''}||${item.subjectId}`)) return false;
+    if (
+      isRoutineSubjectNameExcluded(item.bookName, singleBookNames) ||
+      isRoutineSubjectNameExcluded(item.subjectId, singleBookNames) ||
+      isRoutineSubjectNameExcluded(item.displayName, singleBookNames)
+    ) return false;
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return item.subjectId.includes(q) || item.displayName.toLowerCase().includes(q) || item.bookName?.toLowerCase().includes(q);
@@ -1647,6 +1889,7 @@ function AddCategorySheet({ allNotes, existingCategories, routineMode, selectedC
         subjectId: item.subjectId,
         bookName: item.bookName,
         classLevel: item.classLevel,
+        board: routineMode === 'SCHOOL' ? (selectedBoard || 'BSEB') : undefined,
         displayName: item.displayName,
         emoji: item.emoji,
         currentLessonIndex: 0,
@@ -1806,11 +2049,12 @@ function SlotRow({ icon, label, count, unlocked, cost, userCredits, locked, lock
 }
 
 // ── Category Edit Sheet ───────────────────────────────────────────────────────
-function CategoryEditSheet({ category, allNotes, existingCategories, routineMode, selectedClass, selectedBook, selectedBooks, onUpdateSubjects, onClose }: {
+function CategoryEditSheet({ category, allNotes, existingCategories, routineMode, selectedBoard, selectedClass, selectedBook, selectedBooks, onUpdateSubjects, onClose }: {
   category: RoutineCategory;
   allNotes: LucentEntry[];
   existingCategories: RoutineCategory[];
   routineMode: 'SCHOOL' | 'COMPETITION' | null;
+  selectedBoard?: string | null;
   selectedClass: string | null;
   selectedBook: string | null;
   selectedBooks?: string[];
@@ -1819,20 +2063,42 @@ function CategoryEditSheet({ category, allNotes, existingCategories, routineMode
 }) {
   const [subjects, setSubjects] = useState<RoutineCategorySubject[]>(category.subjects);
 
-  // Available notes filtered by mode
+  // Available notes filtered by mode and board
   const modeFilteredNotes = useMemo(() => {
-    if (routineMode === 'SCHOOL' && selectedClass) {
-      return allNotes.filter(n => String((n as any).classLevel) === String(selectedClass));
+    if (routineMode === 'SCHOOL') {
+      return allNotes.filter(n => {
+        if (!isMultiPageRoutineNote(n)) return false;
+        if (selectedClass && String((n as any).classLevel) !== String(selectedClass)) return false;
+        if (selectedBoard && selectedBoard !== 'ALL_BOARDS') {
+          const nb = (n as any).board;
+          if (nb && nb !== selectedBoard && nb !== 'ALL_BOARDS') return false;
+        }
+        return true;
+      });
     }
     if (routineMode === 'COMPETITION') {
       if (selectedBooks && selectedBooks.length > 0) {
         const bookSet = new Set(selectedBooks);
-        return allNotes.filter(n => bookSet.has((n as any).bookName?.trim() || ''));
+        const isLucent = bookSet.has('Lucent');
+        return allNotes.filter(n => {
+          if (!isMultiPageRoutineNote(n)) return false;
+          if (isAcademicSchoolNote(n)) return false;
+          const bk = (n as any).bookName?.trim() || '';
+          return bookSet.has(bk) || (isLucent && (!bk || bk.toLowerCase() === 'lucent' || (n as any).classLevel === 'COMPETITION'));
+        });
       }
-      if (selectedBook) return allNotes.filter(n => ((n as any).bookName?.trim() || '') === selectedBook);
+      if (selectedBook) {
+        const isLucent = selectedBook === 'Lucent';
+        return allNotes.filter(n => {
+          if (!isMultiPageRoutineNote(n)) return false;
+          if (isAcademicSchoolNote(n)) return false;
+          const bk = (n as any).bookName?.trim() || '';
+          return bk === selectedBook || (isLucent && (!bk || bk.toLowerCase() === 'lucent' || (n as any).classLevel === 'COMPETITION'));
+        });
+      }
     }
-    return allNotes;
-  }, [allNotes, routineMode, selectedClass, selectedBook, selectedBooks]);
+    return allNotes.filter(n => isMultiPageRoutineNote(n));
+  }, [allNotes, routineMode, selectedBoard, selectedClass, selectedBook, selectedBooks]);
 
   const available = useMemo(() => getAvailableSubjectSlots(modeFilteredNotes), [modeFilteredNotes]);
 
@@ -1867,6 +2133,7 @@ function CategoryEditSheet({ category, allNotes, existingCategories, routineMode
       subjectId: item.subjectId,
       bookName: item.bookName,
       classLevel: item.classLevel,
+      board: routineMode === 'SCHOOL' ? (selectedBoard || 'BSEB') : undefined,
       displayName: item.displayName,
       emoji: item.emoji,
       currentLessonIndex: 0,
@@ -2082,7 +2349,10 @@ interface MyRoutineProps {
     mcqHistory?: any[];
     credits?: number; bonusCredits?: number; giftedCredits?: number; giftedCreditsExpiry?: string;
     diamonds?: number; role?: string;
+    board?: string; classLevel?: string;
   };
+  activeBoard?: string;
+  activeClass?: string;
   lucentNotes?: any[];
   onBack: () => void;
   onUserUpdate?: (u: any) => void;
@@ -2097,39 +2367,88 @@ interface MyRoutineProps {
   challenge20s?: any[];
 }
 
-export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], onBack, onUserUpdate, onGoToRevision, settings, onOpenRevisionHub, onPracticeMistakes, onOpenLesson, onStartChallenge20, onClaimChallenge20, challenge20s = [] }) => {
+export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeClass, lucentNotes = [], onBack, onUserUpdate, onGoToRevision, settings, onOpenRevisionHub, onPracticeMistakes, onOpenLesson, onStartChallenge20, onClaimChallenge20, challenge20s = [] }) => {
   const theme = useAppTheme();
   const userId = user?.id || 'guest';
   const mcqHistory: any[] = user?.mcqHistory || [];
   const subTier: UserSubTier = getUserSubTier(user);
   const userLevel = getLevelInfo(user?.totalScore || 0).level;
-  const allNotes: LucentEntry[] = useMemo(() => (lucentNotes || []), [lucentNotes]);
+  const allNotes: LucentEntry[] = useMemo(() => {
+    const list = Array.isArray(lucentNotes) ? [...lucentNotes] : [];
+    const existingIds = new Set(list.map((n: any) => n.id));
+    const missing = CLASS_10_FAKE_LESSONS.filter(l => !existingIds.has(l.id));
+    return [...list, ...missing];
+  }, [lucentNotes]);
+
+  // Single-subject books from admin settings (One Page / One Subject Books)
+  const singleBookNames = useMemo(() => {
+    const list = (settings?.customBooks || []) as any[];
+    const names = list
+      .filter(b => b.type === 'single')
+      .map(b => (b.name || '').toLowerCase().trim())
+      .filter(Boolean);
+    const ids = list
+      .filter(b => b.type === 'single')
+      .map(b => (b.id || '').toLowerCase().trim())
+      .filter(Boolean);
+    return [...names, ...ids];
+  }, [settings?.customBooks]);
+
+  // Pedro Voice on-demand routine listener
+  const [isSpeakingRoutine, setIsSpeakingRoutine] = useState(false);
+  const handleSpeakPedroRoutine = () => {
+    if (isSpeakingRoutine) {
+      stopPedroVoice();
+      setIsSpeakingRoutine(false);
+      return;
+    }
+    const speech = getRoutineSpeechSummary(userId, user);
+    setIsSpeakingRoutine(true);
+    pedroSpeak(speech, {
+      pitch: 1.12,
+      rate: 1.08,
+      onEnd: () => setIsSpeakingRoutine(false)
+    });
+  };
 
   // data must be declared before routineNotes useMemo — dep array references data.routineMode
   // (declaring after causes TDZ crash in production builds)
   const [data, setDataRaw] = useState<RoutineData>(() => {
     const d = loadRoutineData(userId);
     const reset = checkAndResetDaily(d);
-    return ensureTodayClaimEntry(reset, getUserSubTier(user));
+    const effBoard = reset.selectedBoard || activeBoard || (user as any)?.board || 'BSEB';
+    const effClass = reset.selectedClass || activeClass || (user as any)?.classLevel || '10';
+    const initialMode = reset.routineMode || 'SCHOOL';
+    const ensured: RoutineData = {
+      ...reset,
+      routineCategories: sanitizeRoutineCategories(reset.routineCategories || [], singleBookNames),
+      routineMode: initialMode,
+      selectedBoard: initialMode === 'COMPETITION' ? null : effBoard,
+      selectedClass: initialMode === 'COMPETITION' ? null : (reset.selectedClass || effClass),
+    };
+    return ensureTodayClaimEntry(ensured, getUserSubTier(user));
   });
 
   // Routine notes must strictly be multi-page books, excluding Sar Sangrah
   // and respecting the user's selected book(s) and board/class.
   const routineNotes = useMemo(() => {
+    const effectiveBoard = data.routineMode === 'SCHOOL'
+      ? (data.selectedBoard || activeBoard || (user as any)?.board || 'BSEB')
+      : null;
     return allNotes.filter(n => {
-      if (!isMultiPageRoutineNote(n)) return false;
+      if (!isMultiPageRoutineNote(n, singleBookNames)) return false;
 
       if (data.routineMode === 'SCHOOL') {
         if ((n as any).classLevel === 'COMPETITION') return false;
 
-        // Filter by user's selected board
-        if (data.selectedBoard && data.selectedBoard !== 'ALL_BOARDS' && data.selectedBoard !== '') {
+        // Strict filter by user's selected board
+        if (effectiveBoard && effectiveBoard !== 'ALL_BOARDS') {
            const noteBoard = (n as any).board;
-           if (noteBoard && noteBoard !== data.selectedBoard && noteBoard !== 'ALL_BOARDS') return false;
+           if (noteBoard && noteBoard !== effectiveBoard && noteBoard !== 'ALL_BOARDS') return false;
         }
 
         // Filter by user's selected class
-        if (data.selectedClass && (n as any).classLevel && (n as any).classLevel !== data.selectedClass) {
+        if (data.selectedClass && (n as any).classLevel && String((n as any).classLevel) !== String(data.selectedClass)) {
           return false;
         }
       } else if (data.routineMode === 'COMPETITION') {
@@ -2143,7 +2462,7 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
       }
       return true;
     });
-  }, [allNotes, data.routineMode, data.selectedBoard, data.selectedClass, data.selectedBooks, data.selectedBook]);
+  }, [allNotes, data.routineMode, data.selectedBoard, activeBoard, (user as any)?.board, data.selectedClass, data.selectedBooks, data.selectedBook, singleBookNames]);
   const [showCatManager, setShowCatManager] = useState(false);
   const [showAddCat, setShowAddCat] = useState(false);
   const [editingCatId, setEditingCatId] = useState<string | null>(null);
@@ -2151,6 +2470,8 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
   const [showInfo, setShowInfo] = useState(false);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showSlotUnlock, setShowSlotUnlock] = useState(false);
+  const [show7DayModal, setShow7DayModal] = useState(false);
+  const [showSmartWizard, setShowSmartWizard] = useState(false);
   const [activeView, setActiveView] = useState<'home' | 'subjects' | 'tracking'>('home');
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' | 'coin' } | null>(null);
   const [tick, setTick] = useState(0);
@@ -2163,11 +2484,20 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
   const setData = useCallback((updater: (prev: RoutineData) => RoutineData) => {
     setDataRaw(prev => {
       const next = updater(prev);
-      saveRoutineData(userId, next);
-      scheduleRoutineSync(userId, next); // debounced Firebase backup
+      if (next !== prev) {
+        const sanitizedNext: RoutineData = {
+          ...next,
+          routineCategories: sanitizeRoutineCategories(next.routineCategories || [], singleBookNames),
+        };
+        setTimeout(() => {
+          saveRoutineData(userId, sanitizedNext);
+          scheduleRoutineSync(userId, sanitizedNext); // debounced Firebase backup
+        }, 0);
+        return sanitizedNext;
+      }
       return next;
     });
-  }, [userId]);
+  }, [userId, singleBookNames]);
 
   useEffect(() => {
     const handler = () => setTick(t => t + 1);
@@ -2272,6 +2602,11 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
   }, [user, onUserUpdate, showToast]);
 
   const deductCoins = useCallback((cost: number, onSuccess: () => void) => {
+    const isFreeMode = (user?.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT' || Boolean(user?.isPremium || user?.subscriptionLevel === 'BASIC' || user?.subscriptionLevel === 'ULTRA' || user?.subscriptionTier === 'BASIC' || user?.subscriptionTier === 'ULTRA');
+    if (isFreeMode) {
+      onSuccess();
+      return;
+    }
     const balance = (user.credits || 0);
     if (balance < cost) { showToast(`Coins kam hain! Chahiye: ${cost}🪙`, 'error'); return; }
     if (onUserUpdate) { const u = { ...user, credits: balance - cost }; onUserUpdate(u); try { saveUserToLive(u); } catch (_) {} }
@@ -2279,11 +2614,18 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
   }, [user, onUserUpdate, showToast]);
 
   const handleUnlockTierSlot = useCallback(() => {
+    const isFreeMode = (user?.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT' || Boolean(user?.isPremium || user?.subscriptionLevel === 'BASIC' || user?.subscriptionLevel === 'ULTRA' || user?.subscriptionTier === 'BASIC' || user?.subscriptionTier === 'ULTRA');
+    if (isFreeMode) {
+      setData(prev => ({ ...prev, unlockedTierSlot: true }));
+      setShowSlotUnlock(false);
+      return;
+    }
     setShowSlotUnlock(true);
-  }, []);
+  }, [user, setData]);
 
   const unlockCompetitionBook = useCallback((book: string, method: 'CREDITS' | 'DIAMONDS'): boolean => {
-    if (subTier === 'MAX_PRO' || book.toLowerCase() === 'lucent') return true;
+    const isFreeMode = (user?.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT' || Boolean(user?.isPremium || user?.subscriptionLevel === 'BASIC' || user?.subscriptionLevel === 'ULTRA' || user?.subscriptionTier === 'BASIC' || user?.subscriptionTier === 'ULTRA');
+    if (subTier === 'MAX_PRO' || book.toLowerCase() === 'lucent' || isFreeMode) return true;
     if (method === 'CREDITS') {
       const updated = applyDeduction(user as any, 20);
       if (!updated) {
@@ -2312,6 +2654,12 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
   }, [subTier, user, onUserUpdate, setData, showToast]);
 
   const unlockExtraSlotWithCredits = useCallback(() => {
+    const isFreeMode = (user?.studyMode || 'WITHOUT_CREDIT') !== 'CREDIT' || Boolean(user?.isPremium || user?.subscriptionLevel === 'BASIC' || user?.subscriptionLevel === 'ULTRA' || user?.subscriptionTier === 'BASIC' || user?.subscriptionTier === 'ULTRA');
+    if (isFreeMode) {
+      setData(prev => ({ ...prev, unlockedTierSlot: true }));
+      setShowSlotUnlock(false);
+      return;
+    }
     const cost = getTierSlotCost(subTier);
     const updated = applyDeduction(user as any, cost);
     if (!updated) {
@@ -2366,6 +2714,12 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
       return next;
     });
     const note = allNotes.find(n => n.id === lessonId);
+    void notifyStudyProgressMilestone({
+      recipientIds: [user?.id].filter(Boolean),
+      senderId: user?.id,
+      milestone: 100,
+      lessonTitle: (note as any)?.lessonTitle || lessonId,
+    });
 
     // ── Schedule completed lesson for Revision Hub review (due tomorrow) ──
     try {
@@ -2401,37 +2755,42 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
     setData(prev => ({ ...prev, subjects: prev.subjects.map(s => s.id === subId ? { ...s, routineApplied: !s.routineApplied } : s) }));
   };
   const handleCatChangeStart = (catId: string, subjectId: string, newIdx: number) => {
+    const cats = data.routineCategories || [];
+    const cat = cats.find(c => c.id === catId);
+    if (!cat) return;
+    const sub = cat.subjects.find(s => s.subjectId === subjectId);
+    if (!sub) return;
+
+    const cost = getSkipCost(sub.currentLessonIndex, newIdx);
+    const userCredits = (user.credits || 0) + (user.bonusCredits || 0);
+
+    if (cost > userCredits) {
+      showToast(`Coins kam hain! Chahiye: ${cost}🪙`, 'error');
+      return;
+    }
+
+    if (cost > 0 && onUserUpdate) {
+      const u = { ...user, credits: Math.max(0, (user.credits || 0) - cost) };
+      onUserUpdate(u);
+      try { saveUserToLive(u); } catch (_) {}
+    }
+
     setData(prev => {
-      const cats = [...(prev.routineCategories || [])];
-      const ci = cats.findIndex(c => c.id === catId);
+      const currentCats = [...(prev.routineCategories || [])];
+      const ci = currentCats.findIndex(c => c.id === catId);
       if (ci === -1) return prev;
 
-      const cat = { ...cats[ci] };
-      const subjects = [...cat.subjects];
+      const targetCat = { ...currentCats[ci] };
+      const subjects = [...targetCat.subjects];
       const si = subjects.findIndex(s => s.subjectId === subjectId);
       if (si === -1) return prev;
 
-      const sub = subjects[si];
-      const cost = getSkipCost(sub.currentLessonIndex, newIdx);
-      const userCredits = (user.credits || 0) + (user.bonusCredits || 0);
+      subjects[si] = { ...subjects[si], currentLessonIndex: newIdx };
+      targetCat.subjects = subjects;
+      currentCats[ci] = targetCat;
 
-      if (cost > userCredits) {
-        showToast(`Coins kam hain! Chahiye: ${cost}🪙`, 'error');
-        return prev;
-      }
-
-      if (cost > 0 && onUserUpdate) {
-        const u = { ...user, credits: Math.max(0, (user.credits || 0) - cost) };
-        onUserUpdate(u);
-        try { saveUserToLive(u); } catch (_) {}
-      }
-
-      subjects[si] = { ...sub, currentLessonIndex: newIdx };
-      cat.subjects = subjects;
-      cats[ci] = cat;
-
-      const next = { ...prev, routineCategories: cats };
-      syncRoutineNow(userId, next);
+      const next = { ...prev, routineCategories: currentCats };
+      setTimeout(() => syncRoutineNow(userId, next), 0);
       return next;
     });
   };
@@ -2459,7 +2818,10 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
   const actualMaxSlots = getActualMaxSlots(subTier, userLevel, data);
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-50 flex flex-col h-[100dvh] w-screen overflow-hidden">
+    <div
+      className="fixed inset-0 z-[200] flex flex-col h-[100dvh] w-screen overflow-hidden transition-colors"
+      style={{ background: theme.appBg || theme.appBgColor || '#f8fafc' }}
+    >
 
       {showRoutineSetup && (
         <RoutineSetupSheet
@@ -2473,18 +2835,19 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
           userDiamonds={user.diamonds || 0}
           unlockedCompetitionBooks={data.unlockedCompetitionBooks || {}}
           onUnlockBook={unlockCompetitionBook}
+          singleBookNames={singleBookNames}
           onSave={(mode, board, classLevel, books) => {
             setData(prev => {
               // Build storage key for the current (old) class/book context
               const oldKey = prev.routineMode === 'SCHOOL' && prev.selectedClass
-                ? `SCHOOL_${prev.selectedClass}`
+                ? `SCHOOL_${prev.selectedBoard || 'BSEB'}_${prev.selectedClass}`
                 : prev.routineMode === 'COMPETITION' && (prev.selectedBooks || []).length > 0
                   ? `COMPETITION_${[...(prev.selectedBooks || [])].sort().join('+')}`
                   : null;
 
               // Build storage key for the new class/book context
               const newKey = mode === 'SCHOOL' && classLevel
-                ? `SCHOOL_${classLevel}`
+                ? `SCHOOL_${board || 'BSEB'}_${classLevel}`
                 : mode === 'COMPETITION' && books.length > 0
                   ? `COMPETITION_${[...books].sort().join('+')}`
                   : null;
@@ -2509,8 +2872,10 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
                 routineCategoriesByClass: byClass,
               };
               // Immediate Firebase sync — config change is important
-              syncRoutineNow(userId, next);
-              window.dispatchEvent(new CustomEvent('iic-routine-updated'));
+              setTimeout(() => {
+                syncRoutineNow(userId, next);
+                window.dispatchEvent(new CustomEvent('iic-routine-updated'));
+              }, 0);
               return next;
             });
             setShowRoutineSetup(false);
@@ -2551,6 +2916,7 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
             allNotes={allNotes}
             existingCategories={categories}
             routineMode={data.routineMode}
+            selectedBoard={data.selectedBoard || activeBoard || (user as any)?.board || 'BSEB'}
             selectedClass={data.selectedClass}
             selectedBook={data.selectedBook}
             selectedBooks={data.selectedBooks || []}
@@ -2565,9 +2931,11 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
           existingCategories={categories}
           onAdd={handleAddCategory}
           routineMode={data.routineMode}
+          selectedBoard={data.selectedBoard || activeBoard || (user as any)?.board || 'BSEB'}
           selectedClass={data.selectedClass}
           selectedBook={data.selectedBook}
           selectedBooks={data.selectedBooks || []}
+          singleBookNames={singleBookNames}
           onClose={() => { setShowAddCat(false); setShowCatManager(true); }}
         />
       )}
@@ -2622,95 +2990,128 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
       )}
 
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-white border-b border-slate-100 shrink-0">
+      <div
+        className="sticky top-0 z-10 border-b shrink-0 transition-colors shadow-xs"
+        style={{
+          background: theme.cardBg || '#ffffff',
+          borderColor: `${theme.primary}20`,
+        }}
+      >
         {/* Row 1: back · title · actions */}
         <div className="px-4 pt-3 pb-2 flex items-center gap-2">
-          <button onClick={onBack} className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center active:scale-90 transition shrink-0">
-            <ChevronLeft size={20} className="text-slate-700" />
+          <button
+            id="routine-back-btn"
+            onClick={onBack}
+            className="w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition shrink-0"
+            style={{ background: `${theme.primary}12`, color: theme.primary }}
+          >
+            <ChevronLeft size={20} />
           </button>
-          <div className="flex-1 min-w-0">
-            <h1 className="font-black text-slate-900 text-sm flex items-center gap-1.5">
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            <h1 className="font-black text-sm flex items-center gap-1.5" style={{ color: theme.textPrimary || '#0f172a' }}>
               <CalendarCheck size={16} className="shrink-0" style={{ color: theme.primary }} /> My Routine
             </h1>
+            <button
+              id="routine-pedro-listen-btn"
+              onClick={handleSpeakPedroRoutine}
+              className="px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 transition active:scale-95 border cursor-pointer shrink-0"
+              style={{
+                background: isSpeakingRoutine ? `${theme.primary}25` : `${theme.primary}10`,
+                borderColor: `${theme.primary}35`,
+                color: theme.primary,
+              }}
+              title="Pedro se routine summary suniye"
+            >
+              <span>{isSpeakingRoutine ? '🔊' : '🎙️'}</span>
+              <span>Pedro se suniye</span>
+            </button>
           </div>
           {/* Routine ON/OFF toggle — compact */}
-          <button onClick={toggleRoutine}
+          <button
+            id="routine-toggle-switch"
+            onClick={toggleRoutine}
             className="relative w-12 h-6 rounded-full transition-all duration-300 shrink-0"
-            style={{ background: data.enabled ? (theme.btnGrad || theme.primary) : '#e2e8f0' }}
+            style={{ background: data.enabled ? (theme.btnGrad || theme.primary) : '#cbd5e1' }}
             title={data.enabled ? 'Routine ON' : 'Routine OFF'}>
             <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${data.enabled ? 'left-6' : 'left-0.5'}`} />
           </button>
-          <button onClick={() => setShowInfo(true)} className="w-8 h-8 rounded-full border flex items-center justify-center active:scale-90 shrink-0"
+          <button
+            id="routine-info-btn"
+            onClick={() => setShowInfo(true)} className="w-8 h-8 rounded-full border flex items-center justify-center active:scale-90 shrink-0 transition"
             style={{ background: `${theme.primary}12`, borderColor: `${theme.primary}25`, color: theme.primary }}>
             <HelpCircle size={15} />
           </button>
           {/* Settings button — Class & Category */}
           <div className="relative shrink-0">
             <button
+              id="routine-settings-btn"
               onClick={() => setShowSettingsMenu(s => !s)}
-              className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center active:scale-90 transition"
+              className="w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition"
+              style={{ background: `${theme.primary}12`, color: theme.primary }}
             >
-              <Settings size={15} className="text-slate-600" />
+              <Settings size={15} />
             </button>
             {showSettingsMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowSettingsMenu(false)} />
-                <div className="absolute right-0 top-10 z-50 bg-white rounded-2xl shadow-xl border border-slate-200 w-52 overflow-hidden">
-                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-4 pt-3 pb-1">Settings</p>
+                <div className="absolute right-0 top-10 z-50 bg-white rounded-2xl shadow-xl border w-52 overflow-hidden" style={{ borderColor: `${theme.primary}25` }}>
+                  <p className="text-[9px] font-black uppercase tracking-widest px-4 pt-3 pb-1" style={{ color: theme.primary }}>Settings</p>
                   <button
-                    onClick={() => { setShowSettingsMenu(false); setShowRoutineSetup(true); }}
+                    onClick={() => { setShowSettingsMenu(false); setShowSmartWizard(true); }}
                     className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 active:bg-slate-100 transition text-left"
                   >
-                    <span className="text-base">🏫</span>
+                    <span className="text-base">🎯</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-black text-slate-800">Class / Mode</p>
-                      <p className="text-[10px] text-slate-400 truncate">
-                        {data.routineMode === 'SCHOOL' && data.selectedClass
-                          ? `Class ${data.selectedClass}`
-                          : data.routineMode === 'COMPETITION' && (data.selectedBooks?.length || data.selectedBook)
-                          ? `${data.selectedBooks?.length ? `${data.selectedBooks.length} books` : data.selectedBook}`
-                          : 'Setup nahi hai'}
-                      </p>
+                      <p className="text-[12px] font-black text-slate-800">Smart Setup (Q&A)</p>
+                      <p className="text-[10px] text-slate-400">Questions se routine banayein</p>
                     </div>
-                    <span className="text-slate-400 text-xs">✎</span>
+                    <span className="text-slate-400 text-xs">✨</span>
                   </button>
                   <div className="h-px bg-slate-100 mx-4" />
                   <button
-                    onClick={() => { setShowSettingsMenu(false); setShowCatManager(true); }}
+                    onClick={() => { setShowSettingsMenu(false); setShow7DayModal(true); }}
                     className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 active:bg-slate-100 transition text-left"
                   >
-                    <span className="text-base">📂</span>
+                    <span className="text-base">📅</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-black text-slate-800">Categories</p>
-                      <p className="text-[10px] text-slate-400">
-                        {categories.length === 0 ? 'Koi category nahi' : `${categories.length} categories`}
-                      </p>
+                      <p className="text-[12px] font-black text-slate-800">7-Day Routine</p>
+                      <p className="text-[10px] text-slate-400">Full 7 days schedule timetable</p>
                     </div>
-                    <span className="text-slate-400 text-xs">✎</span>
+                    <span className="text-slate-400 text-xs">↗</span>
                   </button>
                 </div>
               </>
             )}
           </div>
         </div>
-        {/* Row 2: tab bar — always visible */}
-        <div className="mx-4 mb-2 flex bg-slate-100 rounded-2xl p-1 gap-1">
-          <button onClick={() => setActiveView('home')}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all ${activeView === 'home' ? 'shadow-sm' : 'text-slate-500'}`}
-            style={activeView === 'home' ? { background: '#ffffff', color: theme.primary } : {}}>
-            🎯 Daily Hub
-          </button>
-          <button onClick={() => setActiveView('subjects')}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all ${activeView === 'subjects' ? 'shadow-sm' : 'text-slate-500'}`}
-            style={activeView === 'subjects' ? { background: '#ffffff', color: theme.primary } : {}}>
-            📚 Subjects
-          </button>
-          <button onClick={() => setActiveView('tracking')}
-            className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all ${activeView === 'tracking' ? 'shadow-sm' : 'text-slate-500'}`}
-            style={activeView === 'tracking' ? { background: '#ffffff', color: theme.primary } : {}}>
-            📖 My Syllabus
-          </button>
-        </div>
+        {/* Tab bar — always visible */}
+        {(() => {
+          return (
+            <div className="mx-4 mb-2 flex rounded-2xl p-1 gap-1" style={{ background: `${theme.primary}12` }}>
+              <button
+                id="routine-tab-daily-hub"
+                onClick={() => setActiveView('home')}
+                className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'home' ? 'shadow-sm' : 'text-slate-500'}`}
+                style={activeView === 'home' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
+                🎯 Daily Hub
+              </button>
+              <button
+                id="routine-tab-subjects"
+                onClick={() => setActiveView('subjects')}
+                className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'subjects' ? 'shadow-sm' : 'text-slate-500'}`}
+                style={activeView === 'subjects' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
+                📚 Subjects
+              </button>
+              <button
+                id="routine-tab-syllabus"
+                onClick={() => setActiveView('tracking')}
+                className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'tracking' ? 'shadow-sm' : 'text-slate-500'}`}
+                style={activeView === 'tracking' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
+                📖 My Syllabus
+              </button>
+            </div>
+          );
+        })()}
       </div>
 
       {toast && (
@@ -2722,7 +3123,7 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
         }`}>{toast.msg}</div>
       )}
 
-      <div className="flex-1 overflow-y-auto overscroll-contain pb-24">
+      <div id="routine-slots-container" className="flex-1 overflow-y-auto overscroll-contain pb-24">
 
         {/* TODAY */}
         {activeView === 'home' && (
@@ -2772,16 +3173,25 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
                     boxShadow: `0 4px 20px ${theme.primary}0a`,
                   }}
                 >
-                  <span className="text-5xl mb-3 block">📚</span>
-                  <p className="font-black text-slate-800 mb-1">Koi Category Nahi</p>
-                  <p className="text-sm text-slate-500 mb-4">Pehle ek category add karo — phir daily task shuru hoga</p>
-                  <button
-                    onClick={() => setShowCatManager(true)}
-                    className="px-6 py-2.5 rounded-xl text-white font-black text-sm active:scale-95 transition shadow-sm"
-                    style={{ background: theme.btnGrad || theme.primary }}
-                  >
-                    + Category Add Karo
-                  </button>
+                  <span className="text-5xl mb-3 block">🎯</span>
+                  <p className="font-black text-slate-800 mb-1">Routine Setup Nahi Hai</p>
+                  <p className="text-sm text-slate-500 mb-4">Sawal aur options chunein — app apne aap aapka timetable bana dega!</p>
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
+                    <button
+                      onClick={() => setShowSmartWizard(true)}
+                      className="w-full sm:w-auto px-6 py-2.5 rounded-xl text-white font-black text-sm active:scale-95 transition shadow-sm flex items-center justify-center gap-1.5"
+                      style={{ background: theme.btnGrad || theme.primary }}
+                    >
+                      <span>✨</span>
+                      <span>Smart Routine Wizard Shuru Karein</span>
+                    </button>
+                    <button
+                      onClick={() => setShowCatManager(true)}
+                      className="text-xs font-bold text-slate-500 hover:text-slate-800 py-2 px-3"
+                    >
+                      Manual Category Setup
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (
@@ -2812,14 +3222,27 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
             </div>
 
             {categories.length === 0 ? (
-              <div className="bg-[#f5f2eb] rounded-3xl border border-[#e8e4db] p-6 text-center">
+              <div
+                className="rounded-3xl border p-6 text-center"
+                style={{
+                  background: (theme as any)?.soft || (theme as any)?.profileCardBg || '#f8fafc',
+                  border: `1.5px solid ${(theme as any)?.borderSoft || (theme as any)?.cardBorder || `${theme.primary}25`}`,
+                }}
+              >
                 <p className="text-sm text-slate-400">Daily Hub mein categories add karo pehle</p>
               </div>
             ) : categories.map(cat => (
-              <div key={cat.id} className="bg-slate-50 rounded-2xl border border-slate-200 p-3 shadow-sm space-y-3">
+              <div
+                key={cat.id}
+                className="rounded-2xl border p-3 shadow-sm space-y-3 transition-colors"
+                style={{
+                  background: (theme as any)?.soft || (theme as any)?.profileCardBg || '#f8fafc',
+                  border: `1.5px solid ${(theme as any)?.borderSoft || (theme as any)?.cardBorder || `${theme.primary}25`}`,
+                }}
+              >
                 <div className="flex items-center gap-2 px-1">
                   <span className="text-xl">{cat.emoji}</span>
-                  <h3 className="font-black text-slate-800 text-sm">{cat.categoryName}</h3>
+                  <h3 className="font-black text-sm" style={{ color: theme.textPrimary || '#1e293b' }}>{cat.categoryName}</h3>
                 </div>
                 <div className="space-y-3">
                   {cat.subjects.map(sub => (
@@ -2854,6 +3277,45 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, lucentNotes = [], on
         )}
 
       </div>
+
+      {show7DayModal && (
+        <SevenDayRoutineModal
+          isOpen={show7DayModal}
+          onClose={() => setShow7DayModal(false)}
+          categories={data.routineCategories || []}
+          allNotes={routineNotes}
+          studyMode={(user as any)?.studyMode || data.studyMode || 'WITHOUT_CREDIT'}
+        />
+      )}
+
+      {showSmartWizard && (
+        <SmartRoutineWizard
+          isOpen={showSmartWizard}
+          onClose={() => setShowSmartWizard(false)}
+          allNotes={allNotes}
+          user={user}
+          userLevel={userLevel}
+          subTier={subTier}
+          routineData={data}
+          userCredits={userCredits}
+          onUnlockSlotWithCredits={unlockExtraSlotWithCredits}
+          singleBookNames={singleBookNames}
+          onComplete={(cfg) => {
+            setData(prev => ({
+              ...prev,
+              routineMode: cfg.routineMode,
+              selectedBoard: cfg.selectedBoard,
+              selectedClass: cfg.selectedClass,
+              selectedBooks: cfg.selectedBooks,
+              selectedBook: cfg.selectedBooks[0] || null,
+              routineCategories: cfg.routineCategories,
+              enabled: true,
+            }));
+            setShowSmartWizard(false);
+            showToast('🎉 Routine Safalta Se Ban Gaya!', 'success');
+          }}
+        />
+      )}
     </div>
   );
 };

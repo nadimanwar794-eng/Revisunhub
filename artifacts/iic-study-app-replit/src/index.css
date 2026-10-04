@@ -466,3 +466,55 @@
   display: inline-block;
   transform-origin: center;
 }
+
+/* ── Auto-hide Bottom Navigation Bar & FAB when ANY Modal / Popup is Open ── */
+body.nsta-modal-open [data-iic-bottom-nav],
+body.nsta-modal-open .iic-bottom-nav,
+body.nsta-modal-open [data-nsta-fab],
+body:has([role="dialog"]) [data-iic-bottom-nav],
+body:has([role="dialog"]) .iic-bottom-nav,
+body:has([role="dialog"]) [data-nsta-fab],
+body:has([data-modal="true"]) [data-iic-bottom-nav],
+body:has([data-modal="true"]) .iic-bottom-nav,
+body:has([data-modal="true"]) [data-nsta-fab],
+body:has(.iic-modal-overlay) [data-iic-bottom-nav],
+body:has(.iic-modal-overlay) .iic-bottom-nav,
+body:has(.iic-modal-overlay) [data-nsta-fab] {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+/* ── Video Player Fullscreen: Hides Top Bar AND Bottom Navigation Completely ── */
+body.nsta-video-fullscreen-active,
+html.nsta-video-fullscreen-active,
+:fullscreen,
+::backdrop,
+*:fullscreen {
+  background-color: #000000 !important;
+}
+
+body.nsta-video-fullscreen-active #top-banner-container,
+body.nsta-video-fullscreen-active [data-iic-topbar],
+body.nsta-video-fullscreen-active .iic-top-bar,
+body.nsta-video-fullscreen-active [data-iic-bottom-nav],
+body.nsta-video-fullscreen-active .iic-bottom-nav,
+body.nsta-video-fullscreen-active [data-iic-float-logo],
+body.nsta-video-fullscreen-active #nsta-floating-trigger,
+body.nsta-video-fullscreen-active [data-nsta-fab],
+html.nsta-video-fullscreen-active #top-banner-container,
+html.nsta-video-fullscreen-active [data-iic-bottom-nav],
+html.nsta-video-fullscreen-active .iic-bottom-nav,
+html.nsta-video-fullscreen-active #nsta-floating-trigger {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  overflow: hidden !important;
+}
+
+
