@@ -323,6 +323,16 @@ export const sendPrivateMessage = async (
   const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const timestamp = Date.now();
 
+  // Fail-safe check: Do not send message if user is blocked
+  try {
+    const myBlocked = getLocalBlockedUsers(myUserId);
+    if (myBlocked.some((b) => isSameUser(b.id, peerUserId))) {
+      throw new Error('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('block')) throw err;
+  }
+
   // Freshly sent messages have SENT status, NOT READ!
   // Read/Seen will only happen when recipient opens and views the thread.
   const message: ChatMessage = {
@@ -1649,6 +1659,9 @@ export const acceptFriendRequest = async (
       updates[`chat/friend_requests_sent/${rKey}/${mKey}`] = null;
       updates[`chat/friend_requests_sent/${mKey}/${rKey}`] = null;
       updates[`chat/friend_accepted/${rKey}/${mKey}`] = acceptedNotificationForSender;
+      // Authoritative reset: clear any lingering unfriend actions so new friendship is active
+      updates[`chat/friend_actions/${mKey}/${rKey}`] = null;
+      updates[`chat/friend_actions/${rKey}/${mKey}`] = null;
     });
   });
   if (!isAlreadyFriend) {
@@ -1667,6 +1680,8 @@ export const acceptFriendRequest = async (
     await remove(ref(rtdb, `chat/friend_requests/${cleanRequester}/${cleanMy}`)).catch(() => {});
     await remove(ref(rtdb, `chat/friend_requests_sent/${cleanRequester}/${cleanMy}`)).catch(() => {});
     await remove(ref(rtdb, `chat/friend_requests_sent/${cleanMy}/${cleanRequester}`)).catch(() => {});
+    await remove(ref(rtdb, `chat/friend_actions/${cleanMy}/${cleanRequester}`)).catch(() => {});
+    await remove(ref(rtdb, `chat/friend_actions/${cleanRequester}/${cleanMy}`)).catch(() => {});
     await set(ref(rtdb, `chat/friend_accepted/${cleanRequester}/${cleanMy}`), acceptedNotificationForSender).catch(() => {});
   }
 
@@ -1679,17 +1694,46 @@ export const acceptFriendRequest = async (
     url: '/?open=messenger',
   });
 
+  // 1.2 Remove both from local unfriended sets so renewed friendships are active immediately
+  const clearUnfriendedCache = (userId: string, peerId: string) => {
+    try {
+      const key = `nsta_unfriended_${userId}`;
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const list: string[] = JSON.parse(raw);
+        const cleanPeer = sanitizeRtdbKey(peerId);
+        const filtered = list.filter((id) => !isSameUser(id, peerId) && sanitizeRtdbKey(id) !== cleanPeer);
+        localStorage.setItem(key, JSON.stringify(filtered));
+      }
+    } catch {}
+  };
+  clearUnfriendedCache(myUser.id, requester.id);
+  clearUnfriendedCache(requester.id, myUser.id);
+
   // 2. Dual-Sync in Firestore (non-blocking in background)
   try {
     if (db) {
       const reqId1 = `${requester.id}_${myUser.id}`;
       const reqId2 = `${myUser.id}_${requester.id}`;
+      const cleanReqId1 = `${sanitizeRtdbKey(requester.id)}_${sanitizeRtdbKey(myUser.id)}`;
+      const cleanReqId2 = `${sanitizeRtdbKey(myUser.id)}_${sanitizeRtdbKey(requester.id)}`;
       Promise.allSettled([
         setDoc(doc(db, 'whatsapp_direct', convId, 'messages', starterMsgId), starterMsg, { merge: true }),
-        setDoc(doc(db, 'friend_requests', reqId1), { status: 'ACCEPTED', acceptedAt: now, friend: friendData2 }, { merge: true }),
-        setDoc(doc(db, 'friend_requests', reqId2), { status: 'ACCEPTED', acceptedAt: now, friend: friendData1 }, { merge: true }),
         setDoc(doc(db, 'users', requester.id, 'friends', myUser.id), friendData2, { merge: true }),
         setDoc(doc(db, 'users', myUser.id, 'friends', requester.id), friendData1, { merge: true }),
+        // Delete pending request documents so they disappear completely from requests page
+        deleteDoc(doc(db, 'friend_requests', reqId1)),
+        deleteDoc(doc(db, 'friend_requests', reqId2)),
+        deleteDoc(doc(db, 'friend_requests', cleanReqId1)),
+        deleteDoc(doc(db, 'friend_requests', cleanReqId2)),
+        deleteDoc(doc(db, 'users', requester.id, 'friend_requests_sent', reqId1)),
+        deleteDoc(doc(db, 'users', requester.id, 'friend_requests_sent', cleanReqId1)),
+        deleteDoc(doc(db, 'users', myUser.id, 'friend_requests_incoming', reqId1)),
+        deleteDoc(doc(db, 'users', myUser.id, 'friend_requests_incoming', cleanReqId1)),
+        deleteDoc(doc(db, 'users', myUser.id, 'friend_requests_sent', reqId2)),
+        deleteDoc(doc(db, 'users', myUser.id, 'friend_requests_sent', cleanReqId2)),
+        deleteDoc(doc(db, 'users', requester.id, 'friend_requests_incoming', reqId2)),
+        deleteDoc(doc(db, 'users', requester.id, 'friend_requests_incoming', cleanReqId2)),
       ]).catch(() => {});
     }
   } catch {}
@@ -1697,8 +1741,7 @@ export const acceptFriendRequest = async (
   // 3. Local storage instant updates
   saveLocalFriend(myUser.id, friendData1);
   saveLocalFriend(requester.id, friendData2);
-  removeLocalFriendRequest(`${requester.id}_${myUser.id}`);
-  removeLocalFriendRequest(`${myUser.id}_${requester.id}`);
+  removeLocalFriendRequestsBetween(myUser.id, requester.id);
   removeLocalSentFriendRequest(myUser.id, requester.id);
   removeLocalSentFriendRequest(requester.id, myUser.id);
 
@@ -1717,8 +1760,7 @@ export const rejectFriendRequest = async (
   const cleanMy = sanitizeRtdbKey(myUserId);
   const cleanRequester = sanitizeRtdbKey(requesterId);
 
-  removeLocalFriendRequest(`${requesterId}_${myUserId}`);
-  removeLocalFriendRequest(`${myUserId}_${requesterId}`);
+  removeLocalFriendRequestsBetween(myUserId, requesterId);
   removeLocalSentFriendRequest(myUserId, requesterId);
   removeLocalSentFriendRequest(requesterId, myUserId);
 
@@ -1728,12 +1770,16 @@ export const rejectFriendRequest = async (
   const rtdbRemovals: Promise<any>[] = [
     remove(ref(rtdb, `chat/friend_requests/${cleanMy}/${cleanRequester}`)).catch(() => {}),
     remove(ref(rtdb, `chat/friend_requests_sent/${cleanRequester}/${cleanMy}`)).catch(() => {}),
+    remove(ref(rtdb, `chat/friend_requests/${cleanRequester}/${cleanMy}`)).catch(() => {}),
+    remove(ref(rtdb, `chat/friend_requests_sent/${cleanMy}/${cleanRequester}`)).catch(() => {}),
   ];
 
   myKeys.forEach((mKey) => {
     reqKeys.forEach((rKey) => {
       rtdbRemovals.push(remove(ref(rtdb, `chat/friend_requests/${mKey}/${rKey}`)).catch(() => {}));
       rtdbRemovals.push(remove(ref(rtdb, `chat/friend_requests_sent/${rKey}/${mKey}`)).catch(() => {}));
+      rtdbRemovals.push(remove(ref(rtdb, `chat/friend_requests/${rKey}/${mKey}`)).catch(() => {}));
+      rtdbRemovals.push(remove(ref(rtdb, `chat/friend_requests_sent/${mKey}/${rKey}`)).catch(() => {}));
     });
   });
 
@@ -1743,10 +1789,20 @@ export const rejectFriendRequest = async (
     if (db) {
       const reqId1 = `${cleanRequester}_${cleanMy}`;
       const reqId2 = `${cleanMy}_${cleanRequester}`;
+      const rawReqId1 = `${requesterId}_${myUserId}`;
+      const rawReqId2 = `${myUserId}_${requesterId}`;
       deleteDoc(doc(db, 'friend_requests', reqId1)).catch(() => {});
       deleteDoc(doc(db, 'friend_requests', reqId2)).catch(() => {});
+      deleteDoc(doc(db, 'friend_requests', rawReqId1)).catch(() => {});
+      deleteDoc(doc(db, 'friend_requests', rawReqId2)).catch(() => {});
       deleteDoc(doc(db, 'users', myUserId, 'friend_requests_incoming', reqId1)).catch(() => {});
+      deleteDoc(doc(db, 'users', myUserId, 'friend_requests_incoming', rawReqId1)).catch(() => {});
       deleteDoc(doc(db, 'users', requesterId, 'friend_requests_sent', reqId1)).catch(() => {});
+      deleteDoc(doc(db, 'users', requesterId, 'friend_requests_sent', rawReqId1)).catch(() => {});
+      deleteDoc(doc(db, 'users', myUserId, 'friend_requests_sent', reqId2)).catch(() => {});
+      deleteDoc(doc(db, 'users', myUserId, 'friend_requests_sent', rawReqId2)).catch(() => {});
+      deleteDoc(doc(db, 'users', requesterId, 'friend_requests_incoming', reqId2)).catch(() => {});
+      deleteDoc(doc(db, 'users', requesterId, 'friend_requests_incoming', rawReqId2)).catch(() => {});
     }
   } catch {}
 
@@ -1765,11 +1821,11 @@ export const cancelFriendRequest = async (
   const cleanMy = sanitizeRtdbKey(myUserId);
   const cleanTo = sanitizeRtdbKey(toUserId);
   const reqId = `${cleanMy}_${cleanTo}`;
+  const rawReqId = `${myUserId}_${toUserId}`;
 
-  removeLocalFriendRequest(`${myUserId}_${toUserId}`);
-  removeLocalFriendRequest(reqId);
+  removeLocalFriendRequestsBetween(myUserId, toUserId);
   removeLocalSentFriendRequest(myUserId, toUserId);
-  removeLocalSentFriendRequest(myUserId, reqId);
+  removeLocalSentFriendRequest(toUserId, myUserId);
 
   const myKeys = Array.from(new Set([myUserId, cleanMy, ...(extraMyIds || [])].filter(Boolean).map(sanitizeRtdbKey)));
   const toKeys = Array.from(new Set([toUserId, cleanTo, ...(extraToIds || [])].filter(Boolean).map(sanitizeRtdbKey)));
@@ -1777,12 +1833,16 @@ export const cancelFriendRequest = async (
   const rtdbRemovals: Promise<any>[] = [
     remove(ref(rtdb, `chat/friend_requests/${cleanTo}/${cleanMy}`)).catch(() => {}),
     remove(ref(rtdb, `chat/friend_requests_sent/${cleanMy}/${cleanTo}`)).catch(() => {}),
+    remove(ref(rtdb, `chat/friend_requests/${cleanMy}/${cleanTo}`)).catch(() => {}),
+    remove(ref(rtdb, `chat/friend_requests_sent/${cleanTo}/${cleanMy}`)).catch(() => {}),
   ];
 
   toKeys.forEach((tKey) => {
     myKeys.forEach((mKey) => {
       rtdbRemovals.push(remove(ref(rtdb, `chat/friend_requests/${tKey}/${mKey}`)).catch(() => {}));
       rtdbRemovals.push(remove(ref(rtdb, `chat/friend_requests_sent/${mKey}/${tKey}`)).catch(() => {}));
+      rtdbRemovals.push(remove(ref(rtdb, `chat/friend_requests/${mKey}/${tKey}`)).catch(() => {}));
+      rtdbRemovals.push(remove(ref(rtdb, `chat/friend_requests_sent/${tKey}/${mKey}`)).catch(() => {}));
     });
   });
 
@@ -1791,8 +1851,13 @@ export const cancelFriendRequest = async (
   try {
     if (db) {
       deleteDoc(doc(db, 'friend_requests', reqId)).catch(() => {});
+      deleteDoc(doc(db, 'friend_requests', rawReqId)).catch(() => {});
       deleteDoc(doc(db, 'users', toUserId, 'friend_requests_incoming', reqId)).catch(() => {});
+      deleteDoc(doc(db, 'users', toUserId, 'friend_requests_incoming', rawReqId)).catch(() => {});
       deleteDoc(doc(db, 'users', myUserId, 'friend_requests_sent', reqId)).catch(() => {});
+      deleteDoc(doc(db, 'users', myUserId, 'friend_requests_sent', rawReqId)).catch(() => {});
+      deleteDoc(doc(db, 'users', myUserId, 'friend_requests_incoming', `${cleanTo}_${cleanMy}`)).catch(() => {});
+      deleteDoc(doc(db, 'users', toUserId, 'friend_requests_sent', `${cleanTo}_${cleanMy}`)).catch(() => {});
     }
   } catch {}
 
@@ -2546,9 +2611,13 @@ export const unfriendUser = async (myUserId: string, friendId: string, extraMyId
     myKeys.forEach((myKey) => {
       friendKeys.forEach((friendKey) => {
         actionUpdates[`chat/friends/${myKey}/${friendKey}`] = null;
+        actionUpdates[`chat/friends/${friendKey}/${myKey}`] = null;
         actionUpdates[`chat/friend_requests/${myKey}/${friendKey}`] = null;
+        actionUpdates[`chat/friend_requests/${friendKey}/${myKey}`] = null;
         actionUpdates[`chat/friend_requests_sent/${myKey}/${friendKey}`] = null;
+        actionUpdates[`chat/friend_requests_sent/${friendKey}/${myKey}`] = null;
         actionUpdates[`chat/friend_accepted/${myKey}/${friendKey}`] = null;
+        actionUpdates[`chat/friend_accepted/${friendKey}/${myKey}`] = null;
         actionUpdates[`chat/friend_actions/${friendKey}/${myKey}`] = {
           type: 'UNFRIENDED',
           unfriendedBy: myUserId,
@@ -2655,6 +2724,11 @@ export const blockUser = async (
 
   try {
     await set(ref(rtdb, `chat/blocked_users/${cleanMy}/${cleanTarget}`), blockData);
+    // Also record reverse block so the target user knows they are blocked and cannot message
+    await set(ref(rtdb, `chat/blocked_by/${cleanTarget}/${cleanMy}`), {
+      blockedBy: myUserId,
+      blockedAt: Date.now(),
+    });
   } catch (e) {
     console.warn('[Nsta Messenger] Error saving block to RTDB:', e);
   }
@@ -2671,6 +2745,12 @@ export const blockUser = async (
   // Automatically unfriend upon blocking
   await unfriendUser(myUserId, targetUser.id);
 
+  // Clear any pending friend requests in both directions
+  try {
+    await cancelFriendRequest(myUserId, targetUser.id);
+    await cancelFriendRequest(targetUser.id, myUserId);
+  } catch {}
+
   return true;
 };
 
@@ -2683,8 +2763,10 @@ export const unblockUser = async (myUserId: string, targetUserId: string): Promi
 
   try {
     await remove(ref(rtdb, `chat/blocked_users/${cleanMy}/${cleanTarget}`));
+    await remove(ref(rtdb, `chat/blocked_by/${cleanTarget}/${cleanMy}`)).catch(() => {});
     if (cleanMy !== myUserId || cleanTarget !== targetUserId) {
       await remove(ref(rtdb, `chat/blocked_users/${myUserId}/${targetUserId}`)).catch(() => {});
+      await remove(ref(rtdb, `chat/blocked_by/${targetUserId}/${myUserId}`)).catch(() => {});
     }
   } catch (e) {
     console.warn('[Nsta Messenger] Error unblocking in RTDB:', e);
@@ -2708,7 +2790,7 @@ export function getLocalBlockedUsers(myUserId: string): { id: string; name: stri
 }
 
 /**
- * Subscribe to Blocked Users list.
+ * Subscribe to Blocked Users list (users I have blocked).
  */
 export const subscribeToBlockedUsers = (
   myUserId: string,
@@ -2735,6 +2817,34 @@ export const subscribeToBlockedUsers = (
     },
     () => {
       callback(local);
+    }
+  );
+
+  return unsub;
+};
+
+/**
+ * Subscribe to list of user IDs who have blocked me.
+ */
+export const subscribeToBlockedByList = (
+  myUserId: string,
+  callback: (blockedByIds: string[]) => void
+): (() => void) => {
+  if (!myUserId) return () => {};
+  const cleanMy = sanitizeRtdbKey(myUserId);
+  const blockByRef = ref(rtdb, `chat/blocked_by/${cleanMy}`);
+  const unsub = onValue(
+    blockByRef,
+    (snapshot) => {
+      const val = snapshot.val();
+      if (val && typeof val === 'object') {
+        callback(Object.keys(val));
+      } else {
+        callback([]);
+      }
+    },
+    () => {
+      callback([]);
     }
   );
 

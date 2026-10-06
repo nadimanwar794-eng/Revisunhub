@@ -122,6 +122,7 @@ import {
   blockUser,
   unblockUser,
   subscribeToBlockedUsers,
+  subscribeToBlockedByList,
   leaveGroup,
   deleteWhatsAppGroup,
   clearChatHistory,
@@ -890,8 +891,60 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   // Quick 1-tap friend request sending state
   const [sendingReqIds, setSendingReqIds] = useState<Set<string>>(new Set());
 
-  // Blocked users list
+  // Blocked users list (users I blocked)
   const [blockedUsers, setBlockedUsers] = useState<{ id: string; name: string; blockedAt: number }[]>([]);
+  // Blocked-by list (users who blocked me)
+  const [blockedByList, setBlockedByList] = useState<string[]>([]);
+
+  // Helper: check if a user is blocked by me
+  const isUserBlocked = (targetUserId: string): boolean => {
+    return blockedUsers.some((b) => isSameUser(b.id, targetUserId));
+  };
+
+  // Helper: check if a user blocked me
+  const isBlockedByPeer = (targetUserId: string): boolean => {
+    return blockedByList.some((id) => isSameUser(id, targetUserId));
+  };
+
+  // Helper: check if any block exists between both users
+  const isBlockActive = (targetUserId: string): boolean => {
+    return isUserBlocked(targetUserId) || isBlockedByPeer(targetUserId);
+  };
+
+  // Helper: check if private messaging to a contact is allowed
+  const canSendPrivateMessageToContact = (contact: ChatContact): { allowed: boolean; reason?: string } => {
+    if (isUserBlocked(contact.id)) {
+      return { allowed: false, reason: 'Aapne is user ko block kiya hua hai. Pehle unblock karein.' };
+    }
+    if (isBlockedByPeer(contact.id)) {
+      return { allowed: false, reason: '🚫 Aap is user ko message nahi bhej sakte (Aap block hain).' };
+    }
+    if (!isUserFriend(contact.id)) {
+      return { allowed: false, reason: '🤝 Chat karne ke liye pehle friend request bhejein aur dost banein.' };
+    }
+    return { allowed: true };
+  };
+
+  // Filtered pending friend requests for REQUESTS tab (friends & blocked users are completely hidden from requests page)
+  const visibleReceivedRequests = useMemo(() => {
+    return friendRequests.filter((req) => {
+      if (isUserFriend(req.fromId) || isUserFriend((req as any).fromUid) || isUserFriend({ id: req.fromId, uid: (req as any).fromUid, email: (req as any).fromEmail })) return false;
+      if (isUserBlocked(req.fromId) || isBlockedByPeer(req.fromId)) return false;
+      if (isSameUser(req.fromId, effectiveUserId || user.id)) return false;
+      if (req.status && req.status !== 'PENDING') return false;
+      return true;
+    });
+  }, [friendRequests, friends, blockedUsers, blockedByList, effectiveUserId, user?.id]);
+
+  const visibleSentRequests = useMemo(() => {
+    return sentRequests.filter((req) => {
+      if (isUserFriend(req.toId) || isUserFriend((req as any).toUid) || isUserFriend({ id: req.toId, uid: (req as any).toUid, email: (req as any).toEmail })) return false;
+      if (isUserBlocked(req.toId) || isBlockedByPeer(req.toId)) return false;
+      if (isSameUser(req.toId, effectiveUserId || user.id)) return false;
+      if (req.status && req.status !== 'PENDING') return false;
+      return true;
+    });
+  }, [sentRequests, friends, blockedUsers, blockedByList, effectiveUserId, user?.id]);
   // Menu dropdown toggles
   const [showMainMenu, setShowMainMenu] = useState(false);
   const [showContactMenu, setShowContactMenu] = useState(false);
@@ -1109,9 +1162,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setShowMessageLimitModal(true);
       return;
     }
-    if (selectedContact && isUserBlocked(selectedContact.id)) {
-      showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
-      return;
+    if (selectedContact) {
+      const check = canSendPrivateMessageToContact(selectedContact);
+      if (!check.allowed) {
+        showToast(check.reason!);
+        return;
+      }
     }
 
     setIsUploadingChatVideo(true);
@@ -1317,9 +1373,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setShowMessageLimitModal(true);
       return;
     }
-    if (selectedContact && isUserBlocked(selectedContact.id)) {
-      showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
-      return;
+    if (selectedContact) {
+      const check = canSendPrivateMessageToContact(selectedContact);
+      if (!check.allowed) {
+        showToast(check.reason!);
+        return;
+      }
     }
 
     if (previewAudioRef.current) {
@@ -1458,9 +1517,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         setShowMessageLimitModal(true);
         return;
       }
-      if (selectedContact && isUserBlocked(selectedContact.id)) {
-        showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
-        return;
+      if (selectedContact) {
+        const check = canSendPrivateMessageToContact(selectedContact);
+        if (!check.allowed) {
+          showToast(check.reason!);
+          return;
+        }
       }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         showToast('Microphone recording available nahi hai. Audio file chunein.');
@@ -1552,9 +1614,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       setShowMessageLimitModal(true);
       return;
     }
-    if (selectedContact && isUserBlocked(selectedContact.id)) {
-      showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
-      return;
+    if (selectedContact) {
+      const check = canSendPrivateMessageToContact(selectedContact);
+      if (!check.allowed) {
+        showToast(check.reason!);
+        return;
+      }
     }
 
     setIsUploadingVoice(true);
@@ -2182,6 +2247,14 @@ export const WhatsAppChatModal: React.FC<Props> = ({
   useEffect(() => {
     const unsub = subscribeToBlockedUsers(effectiveUserId || user.id, (list) => {
       setBlockedUsers(list);
+    });
+    return () => unsub();
+  }, [user?.id, effectiveUserId]);
+
+  // 1c. Subscribe to blocked-by list (users who blocked me)
+  useEffect(() => {
+    const unsub = subscribeToBlockedByList(effectiveUserId || user.id, (list) => {
+      setBlockedByList(list);
     });
     return () => unsub();
   }, [user?.id, effectiveUserId]);
@@ -2850,14 +2923,11 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     return isUserFriend(targetUserId);
   };
 
-  // Helper: check if a user is blocked
-  const isUserBlocked = (targetUserId: string): boolean => {
-    return blockedUsers.some((b) => isSameUser(b.id, targetUserId));
-  };
-
   // Helper: check if outgoing request is pending
   const hasPendingSentRequest = (targetUserId: string): boolean => {
-    if (isUserFriend(targetUserId)) return false;
+    if (!targetUserId || isUserFriend(targetUserId) || isUserBlocked(targetUserId) || isBlockedByPeer(targetUserId)) {
+      return false;
+    }
     const cleanTarget = sanitizeRtdbKey(targetUserId);
     if (sentRequests.some((r) => (isSameUser(r.toId, targetUserId) || sanitizeRtdbKey(r.toId) === cleanTarget) && (r.status === 'PENDING' || !r.status))) {
       return true;
@@ -2874,9 +2944,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
   // Helper: check if incoming request exists
   const hasIncomingRequest = (targetUserId: string): FriendRequest | undefined => {
+    if (!targetUserId || isUserFriend(targetUserId) || isUserBlocked(targetUserId) || isBlockedByPeer(targetUserId)) {
+      return undefined;
+    }
     const cleanTarget = sanitizeRtdbKey(targetUserId);
     return friendRequests.find(
-      (r) => (r.fromId === targetUserId || sanitizeRtdbKey(r.fromId) === cleanTarget) && r.status === 'PENDING'
+      (r) => (isSameUser(r.fromId, targetUserId) || sanitizeRtdbKey(r.fromId) === cleanTarget) && (r.status === 'PENDING' || !r.status)
     );
   };
 
@@ -2890,24 +2963,25 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       if (type === 'UNFRIEND') {
         await unfriendUser(effectiveUserId || user.id, targetId, allMyUserIds);
         setFriends((prev) => prev.filter((f) => !isSameUser(f.id, targetId) && !isSameUser(f.uid, targetId)));
-        if (selectedContact && (isSameUser(selectedContact.id, targetId) || isSameUser(selectedContact.uid, targetId))) {
-          setSelectedContact(null);
-        }
-        showToast(`❌ ${targetName} ko friend list se hata diya gaya hai.`);
+        setFriendRequests((prev) => prev.filter((r) => !isSameUser(r.fromId, targetId) && !isSameUser(r.toId, targetId)));
+        setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, targetId) && !isSameUser(r.fromId, targetId)));
+        showToast(`❌ ${targetName} ko unfriend kar diya gaya hai.`);
       } else if (type === 'BLOCK') {
         if (blockedUsers.length >= totalBlockLimit) {
           setAttemptingBlockUser({ id: targetId, name: targetName });
           setShowLimitReachedModal(true);
           return;
         }
-        await blockUser(user.id, { id: targetId, name: targetName });
+        await blockUser(effectiveUserId || user.id, { id: targetId, name: targetName });
         setBlockedUsers((prev) => [...prev, { id: targetId, name: targetName, blockedAt: Date.now() }]);
-        setFriends((prev) => prev.filter((f) => f.id !== targetId));
-        showToast(`🚫 ${targetName} ko block kar diya gaya hai (${blockedUsers.length + 1}/${totalBlockLimit} slots).`);
+        setFriends((prev) => prev.filter((f) => !isSameUser(f.id, targetId) && !isSameUser(f.uid, targetId)));
+        setFriendRequests((prev) => prev.filter((r) => !isSameUser(r.fromId, targetId) && !isSameUser(r.toId, targetId)));
+        setSentRequests((prev) => prev.filter((r) => !isSameUser(r.toId, targetId) && !isSameUser(r.fromId, targetId)));
+        showToast(`🚫 ${targetName} ko block kar diya gaya hai. Dosti bhi khatam ho gayi hai.`);
       } else if (type === 'UNBLOCK') {
-        await unblockUser(user.id, targetId);
-        setBlockedUsers((prev) => prev.filter((b) => b.id !== targetId));
-        showToast(`✅ ${targetName} ko unblock kar diya gaya hai.`);
+        await unblockUser(effectiveUserId || user.id, targetId);
+        setBlockedUsers((prev) => prev.filter((b) => !isSameUser(b.id, targetId)));
+        showToast(`✅ ${targetName} ko unblock kar diya gaya hai. Message bhejne ke liye dubara Friend Request bhejein.`);
       } else if (type === 'LEAVE_GROUP') {
         const gId = groupId || targetId;
         await leaveGroup(gId, { id: user.id, name: user.name || 'Student' });
@@ -2979,6 +3053,19 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       sendingReqIds.has(targetStudent.id)
     )
       return;
+
+    if (isUserBlocked(targetStudent.id)) {
+      showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
+      return;
+    }
+    if (isBlockedByPeer(targetStudent.id)) {
+      showToast('🚫 Aap is user ko friend request nahi bhej sakte (Aap block hain).');
+      return;
+    }
+    if (isUserFriend(targetStudent.id)) {
+      showToast('Aap pehle se dost hain!');
+      return;
+    }
 
     if (friends.length >= totalFriendLimit) {
       setShowFriendLimitModal(true);
@@ -3169,8 +3256,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     const userPhoto = user.photoURL || (user as any).avatarUrl;
 
     if (selectedContact) {
-      if (isUserBlocked(selectedContact.id)) {
-        showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
+      const check = canSendPrivateMessageToContact(selectedContact);
+      if (!check.allowed) {
+        showToast(check.reason!);
         return;
       }
 
@@ -3284,9 +3372,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       return;
     }
 
-    if (selectedContact && isUserBlocked(selectedContact.id)) {
-      showToast('Aapne is user ko block kiya hua hai. Pehle unblock karein.');
-      return;
+    if (selectedContact) {
+      const check = canSendPrivateMessageToContact(selectedContact);
+      if (!check.allowed) {
+        showToast(check.reason!);
+        return;
+      }
     }
 
     setIsUploadingImage(true);
@@ -3443,6 +3534,12 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     const msgType = type === 'NOTE' ? 'NOTE' : 'DOUBT';
 
     if (selectedContact) {
+      const check = canSendPrivateMessageToContact(selectedContact);
+      if (!check.allowed) {
+        showToast(check.reason!);
+        return;
+      }
+
       const optimisticMsg: ChatMessage = {
         id: `local_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         senderId: effectiveUserId,
@@ -4065,12 +4162,21 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         </button>
                       </div>
                     ) : incomingReq ? (
-                      <button
-                        onClick={() => handleAcceptRequest(incomingReq)}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1 transition-all"
-                      >
-                        <Check size={13} /> Accept ✅
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => handleAcceptRequest(incomingReq)}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1 transition-all cursor-pointer"
+                        >
+                          <Check size={13} /> Accept ✅
+                        </button>
+                        <button
+                          onClick={() => handleRejectRequest(incomingReq)}
+                          className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                          title="Decline Request"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     ) : (
                       <button
                         onClick={() => handleSendFriendRequest(student)}
@@ -4372,9 +4478,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               >
                 <UserCheck size={11} className={activeTab === 'REQUESTS' ? 'text-amber-400' : ''} />
                 <span>REQUESTS</span>
-                {friendRequests.length > 0 && (
+                {visibleReceivedRequests.length > 0 && (
                   <span className="bg-amber-400 text-slate-950 text-[8px] px-1 py-0 rounded-full font-black animate-pulse leading-tight">
-                    {friendRequests.length}
+                    {visibleReceivedRequests.length}
                   </span>
                 )}
               </button>
@@ -5480,14 +5586,32 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                                       <span>Chat 💬</span>
                                     </button>
                                   ) : isSent ? (
-                                    <span className="text-[11px] text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-lg">Sent ⏳</span>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[11px] text-amber-600 dark:text-amber-400 font-bold bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-lg">Sent ⏳</span>
+                                      <button
+                                        onClick={() => handleCancelSentRequest(st.id, st.name)}
+                                        className="px-1.5 py-0.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 rounded-lg text-xs font-bold border border-rose-200 dark:border-rose-900/40"
+                                        title="Cancel Request"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
                                   ) : incomingReq ? (
-                                    <button
-                                      onClick={() => handleAcceptRequest(incomingReq)}
-                                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold cursor-pointer"
-                                    >
-                                      Accept ✅
-                                    </button>
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        onClick={() => handleAcceptRequest(incomingReq)}
+                                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold cursor-pointer"
+                                      >
+                                        Accept ✅
+                                      </button>
+                                      <button
+                                        onClick={() => handleRejectRequest(incomingReq)}
+                                        className="px-2 py-1 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-bold cursor-pointer"
+                                        title="Decline"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
                                   ) : (
                                     <button
                                       onClick={() => handleSendFriendRequest(st)}
@@ -5535,9 +5659,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   >
                     <UserCheck size={14} />
                     <span>Received</span>
-                    {friendRequests.length > 0 && (
+                    {visibleReceivedRequests.length > 0 && (
                       <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-black">
-                        {friendRequests.length}
+                        {visibleReceivedRequests.length}
                       </span>
                     )}
                   </button>
@@ -5551,9 +5675,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                   >
                     <Clock size={14} />
                     <span>Sent</span>
-                    {sentRequests.length > 0 && (
+                    {visibleSentRequests.length > 0 && (
                       <span className="bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
-                        {sentRequests.length}
+                        {visibleSentRequests.length}
                       </span>
                     )}
                   </button>
@@ -5562,7 +5686,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 {/* SUBTAB 1: RECEIVED REQUESTS */}
                 {requestsSubTab === 'RECEIVED' && (
                   <div>
-                    {friendRequests.length === 0 ? (
+                    {visibleReceivedRequests.length === 0 ? (
                       <div className="text-center py-10 px-4 space-y-2">
                         <div className="w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto text-2xl">
                           📭
@@ -5576,8 +5700,8 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {friendRequests.map((req) => {
-                          const senderStudent = students.find((s) => s.id === req.fromId);
+                        {visibleReceivedRequests.map((req) => {
+                          const senderStudent = students.find((s) => isSameUser(s.id, req.fromId));
                           const senderTier = senderStudent ? getStudentSubscriptionTier(senderStudent) : 'FREE';
 
                           return (
@@ -5642,13 +5766,13 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               <button
                                 onClick={() => handleAcceptRequest(req)}
-                                className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-90 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95"
+                                className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-90 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 cursor-pointer"
                               >
                                 Accept ✅
                               </button>
                               <button
                                 onClick={() => handleRejectRequest(req)}
-                                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold"
+                                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
                               >
                                 Decline
                               </button>
@@ -5664,7 +5788,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                 {/* SUBTAB 2: SENT REQUESTS */}
                 {requestsSubTab === 'SENT' && (
                   <div>
-                    {sentRequests.length === 0 ? (
+                    {visibleSentRequests.length === 0 ? (
                       <div className="text-center py-10 px-4 space-y-2">
                         <div className="w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400 flex items-center justify-center mx-auto text-2xl">
                           📤
@@ -5678,18 +5802,15 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {sentRequests.map((req) => {
+                        {visibleSentRequests.map((req) => {
                           const recipientStudent = students.find((s) => isSameUser(s.id, req.toId));
                           const recipientTier = recipientStudent ? getStudentSubscriptionTier(recipientStudent) : 'FREE';
-                          const isAcceptedFriend = isUserFriend(req.toId) || (req as any).status === 'ACCEPTED';
 
                           return (
                           <div
                             key={req.id}
                             className={`p-3.5 rounded-2xl border shadow-sm flex items-center justify-between gap-3 ${
-                              isAcceptedFriend
-                                ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800/60'
-                                : recipientTier === 'ULTRA'
+                              recipientTier === 'ULTRA'
                                 ? 'bg-amber-50/50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-800/60'
                                 : recipientTier === 'BASIC'
                                 ? 'bg-blue-50/40 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900/50'
@@ -5735,45 +5856,22 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                                     </span>
                                   )}
                                 </div>
-                                {isAcceptedFriend ? (
-                                  <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5 flex items-center gap-1">
-                                    <span>✅ Request Accepted! Dost ban chuke hain</span>
-                                  </p>
-                                ) : (
-                                  <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-0.5">
-                                    ⏳ Request pending approval
-                                  </p>
-                                )}
+                                <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-0.5">
+                                  ⏳ Request pending approval
+                                </p>
                                 <span className="text-[9px] text-slate-400">
                                   {formatTime(req.timestamp)}
                                 </span>
                               </div>
                             </div>
 
-                            {isAcceptedFriend ? (
-                              <button
-                                onClick={() => handleOpenContactChat({
-                                  id: req.toId,
-                                  name: req.toName || recipientStudent?.name || 'Student',
-                                  photoURL: req.toPhoto || recipientStudent?.photoURL,
-                                  isOnline: true,
-                                  statusText: 'Friend 🤝 · Available to chat',
-                                  uid: (req as any).toUid || recipientStudent?.uid || '',
-                                  email: (req as any).toEmail || recipientStudent?.email || '',
-                                })}
-                                className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
-                              >
-                                <MessageCircle size={13} />
-                                <span>Chat Shuru Karein 💬</span>
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => handleCancelSentRequest(req.toId, req.toName || 'User')}
-                                className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-bold transition-all border border-rose-200 dark:border-rose-900/50 cursor-pointer"
-                              >
-                                Cancel ✕
-                              </button>
-                            )}
+                            <button
+                              onClick={() => handleCancelSentRequest(req.toId, req.toName || 'User')}
+                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-bold transition-all border border-rose-200 dark:border-rose-900/50 cursor-pointer active:scale-95 shrink-0"
+                              title="Cancel Request"
+                            >
+                              Cancel ✕
+                            </button>
                           </div>
                           );
                         })}
@@ -7348,7 +7446,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
               )}
 
               {selectedContact && isUserBlocked(selectedContact.id) ? (
-                <div className="flex items-center justify-between p-3 bg-rose-50 dark:bg-rose-950/40 rounded-2xl border border-rose-200 dark:border-rose-900/60">
+                <div className="flex items-center justify-between p-3 bg-rose-50 dark:bg-rose-950/40 rounded-2xl border border-rose-200 dark:border-rose-900/60 shadow-xs">
                   <div className="flex items-center gap-2.5">
                     <Ban size={18} className="text-rose-600 flex-shrink-0" />
                     <div>
@@ -7356,7 +7454,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         {selectedContact.name} is blocked
                       </p>
                       <p className="text-[10px] text-rose-600 dark:text-rose-400">
-                        Message bhejne ke liye pehle inhein unblock karein
+                        Aapne is user ko block kiya hai. Message bhejne ke liye pehle unblock karein aur dubara friend banein.
                       </p>
                     </div>
                   </div>
@@ -7370,10 +7468,90 @@ export const WhatsAppChatModal: React.FC<Props> = ({
                         targetName: selectedContact.name,
                       });
                     }}
-                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all"
+                    className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all active:scale-95 cursor-pointer shrink-0"
                   >
                     Unblock Karein
                   </button>
+                </div>
+              ) : selectedContact && isBlockedByPeer(selectedContact.id) ? (
+                <div className="flex items-center gap-2.5 p-3 bg-slate-100 dark:bg-slate-800/80 rounded-2xl border border-slate-300 dark:border-slate-700 shadow-xs">
+                  <Ban size={18} className="text-slate-500 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Message bhejna band hai
+                    </p>
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                      🚫 Inhone aapko block kiya hua hai. Block hatne aur dubara dosti hone tak dono me se koi bhi message nahi bhej sakta.
+                    </p>
+                  </div>
+                </div>
+              ) : selectedContact && !isUserFriend(selectedContact.id) ? (
+                <div className="p-3 bg-gradient-to-r from-purple-50 via-indigo-50 to-purple-50 dark:from-purple-950/40 dark:via-indigo-950/40 dark:to-purple-950/40 rounded-2xl border border-purple-200 dark:border-purple-800/60 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <UserPlus size={18} className="text-purple-600 dark:text-purple-400 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                          Aap dono dost nahi hain
+                        </p>
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                          Nsta Messenger par chat karne ke liye pehle friend request bhejein aur dost banein.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Action buttons based on request state */}
+                    {(() => {
+                      const incoming = hasIncomingRequest(selectedContact.id);
+                      const isSentPending = hasPendingSentRequest(selectedContact.id);
+
+                      if (incoming) {
+                        return (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => handleAcceptFromChat(incoming)}
+                              className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-sm active:scale-95 cursor-pointer"
+                            >
+                              Accept ✅
+                            </button>
+                            <button
+                              onClick={() => handleRejectRequest(incoming)}
+                              className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      if (isSentPending) {
+                        return (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-950/60 px-2 py-1 rounded-xl">
+                              ⏳ Request Sent
+                            </span>
+                            <button
+                              onClick={() => handleCancelSentRequest(selectedContact.id, selectedContact.name)}
+                              className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-bold border border-rose-200 dark:border-rose-900/50 cursor-pointer active:scale-95"
+                              title="Cancel Friend Request"
+                            >
+                              Cancel ✕
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <button
+                          onClick={() => handleSendFriendRequest(selectedContact)}
+                          className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 text-white rounded-xl text-xs font-bold shadow-sm flex items-center gap-1 cursor-pointer active:scale-95 shrink-0"
+                        >
+                          <UserPlus size={13} />
+                          <span>Dost Banein 🤝</span>
+                        </button>
+                      );
+                    })()}
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-center gap-2">

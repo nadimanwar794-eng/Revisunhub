@@ -2714,11 +2714,33 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
       return next;
     });
     const note = allNotes.find(n => n.id === lessonId);
+    let calculatedSyllabusPct = 100;
+    try {
+      const snap = getAutoTrackSnapshot();
+      const lessonsList = (allLessons && allLessons.length > 0) ? allLessons : (allNotes as any[]);
+      const totPages = lessonsList.reduce((s, l) => s + (l.pages?.length || 0), 0);
+      if (totPages > 0) {
+        const totRead = lessonsList.reduce((s, l) => {
+          const tp = l.pages?.length || 0;
+          return s + Array.from({ length: tp }, (_, i) => snap.pageReads[`${l.id}__${i}`] ? 1 : 0).reduce((a, b) => a + b, 0);
+        }, 0);
+        const totMcq = lessonsList.reduce((s, l) => {
+          const tp = l.pages?.length || 0;
+          return s + Array.from({ length: tp }, (_, i) => !!snap.pageMcqDone?.[`${l.id}__${i}`] ? 1 : 0).reduce((a, b) => a + b, 0);
+        }, 0);
+        const rPct = Math.round((totRead / totPages) * 100);
+        const mPct = Math.round((totMcq / totPages) * 100);
+        calculatedSyllabusPct = Math.max(1, Math.min(100, Math.round((rPct + mPct) / 2)));
+      }
+    } catch {}
+
     void notifyStudyProgressMilestone({
       recipientIds: [user?.id].filter(Boolean),
       senderId: user?.id,
       milestone: 100,
       lessonTitle: (note as any)?.lessonTitle || lessonId,
+      subjectName: (note as any)?.subject,
+      percentComplete: calculatedSyllabusPct,
     });
 
     // ── Schedule completed lesson for Revision Hub review (due tomorrow) ──

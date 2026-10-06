@@ -263,6 +263,7 @@ export interface PushNotificationRequest {
   senderPhoto?: string;
   icon?: string;
   broadcast?: boolean;
+  classLevel?: string;
 }
 
 /** Ask the server to send an FCM push, AND directly deliver via Firebase RTDB user inbox for instant background wake-up. */
@@ -281,6 +282,7 @@ export const sendPushNotification = async (request: PushNotificationRequest) => 
     icon: request.icon || request.senderPhoto || '/icons/icon-192.png',
     timestamp,
     status: 'UNREAD',
+    ...(request.classLevel ? { classLevel: String(request.classLevel).trim() } : {}),
   };
 
   // 1. Direct real-time delivery via Firebase RTDB user inbox
@@ -634,28 +636,67 @@ export const notifyStudyProgressMilestone = async (request: {
   senderId?: string;
   milestone: 50 | 100;
   lessonTitle?: string;
-}) => sendPushNotification({
-  recipientIds: request.recipientIds,
-  senderId: request.senderId,
-  type: 'STUDY_PROGRESS',
-  title: request.milestone === 100 ? '🎉 Study Target Complete!' : '⚡ 50% Study Progress',
-  body: request.milestone === 100
-    ? `${request.lessonTitle || 'Aaj ka lesson'} complete ho gaya. Great work!`
-    : `${request.lessonTitle || 'Aaj ka lesson'} ka 50% progress complete ho gaya. Keep going!`,
-  url: '/?open=routine',
-});
+  subjectName?: string;
+  percentComplete?: number;
+}) => {
+  const pct = typeof request.percentComplete === 'number' && !isNaN(request.percentComplete)
+    ? Math.max(1, Math.min(100, Math.round(request.percentComplete)))
+    : request.milestone;
+
+  return sendPushNotification({
+    recipientIds: request.recipientIds,
+    senderId: request.senderId,
+    type: 'STUDY_PROGRESS',
+    title: request.milestone === 100
+      ? `🎉 Lesson Complete: ${request.lessonTitle || 'Study Target'}`
+      : `⚡ 50% Progress: ${request.lessonTitle || 'Lesson'}`,
+    body: request.milestone === 100
+      ? `Shaandar! Aapka ${pct}% Syllabus complete ho gaya hai 📈. Revision Hub unlock ho gaya hai, abhi revision test karein!`
+      : `Aaj ke lesson ka 50% progress complete ho gaya (${pct}% syllabus). Keep going!`,
+    url: '/?open=routine',
+  });
+};
+
+export const notifyStudyRoomInviteInBackground = async (request: {
+  senderId: string;
+  senderName: string;
+  roomName: string;
+  roomId: string;
+  roomCode?: string;
+  password?: string;
+  classLevel?: string;
+  url?: string;
+}) => {
+  const displayCode = request.roomCode || request.roomId.slice(-6).toUpperCase();
+  const passText = request.password?.trim() ? request.password.trim() : 'None (Open Entry)';
+  const classText = request.classLevel ? `Class ${request.classLevel}` : 'All Students';
+
+  return sendPushNotification({
+    recipientIds: [],
+    broadcast: true,
+    senderId: request.senderId,
+    senderName: request.senderName,
+    type: 'STUDY_ROOM',
+    classLevel: request.classLevel,
+    title: `🟢 Live Study Room: ${request.roomName}`,
+    body: `${classText} | Room ID: ${displayCode} | Password: ${passText} - Turant judiye aur sath padhein!`,
+    url: request.url || `/?open=study-room&room=${encodeURIComponent(request.roomId)}`,
+  });
+};
 
 export const notifyStudyRoomStartInBackground = async (request: {
   recipientIds: string[];
   senderId: string;
   senderName: string;
   roomName: string;
+  classLevel?: string;
   url?: string;
 }) => sendPushNotification({
   recipientIds: request.recipientIds.filter((id) => id !== request.senderId),
   senderId: request.senderId,
   senderName: request.senderName,
   type: 'STUDY_ROOM',
+  classLevel: request.classLevel,
   title: '🟢 Study room live hai',
   body: `${request.senderName} ne "${request.roomName}" study room start kiya.`,
   url: request.url || '/?open=study-room',
@@ -808,6 +849,20 @@ export const subscribeToUserNotifications = (
       return;
     }
 
+    // Class filter check for Study Room broadcasts: only notify matching class students
+    if (item.type === 'STUDY_ROOM' && item.classLevel) {
+      try {
+        const storedClass = (localStorage.getItem('nst_user_class') || localStorage.getItem('nst_session_class') || '').trim();
+        const targetClass = String(item.classLevel).trim();
+        if (storedClass && targetClass && storedClass !== targetClass) {
+          if (notifKey) {
+            remove(ref(rtdb, `user_notifications/${safeUserId}/${notifKey}`)).catch(() => {});
+          }
+          return;
+        }
+      } catch {}
+    }
+
     console.log('[NotificationManager] Real-time user notification received:', item.title, item.type);
 
     // 1. Invoke custom callback
@@ -836,7 +891,7 @@ export const subscribeToUserNotifications = (
     } catch (_) {}
 
     // 4. Mobile Hardware Vibration
-    const isUrgent = item.type === 'CHAT' || item.type === 'FRIEND_REQUEST' || item.type === 'STUDY_ROOM';
+    const isUrgent = item.type === 'FRIEND_REQUEST' || item.type === 'STUDY_ROOM';
     if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
       try {
         navigator.vibrate(isUrgent ? [250, 100, 250] : [100, 50, 100]);
@@ -844,7 +899,13 @@ export const subscribeToUserNotifications = (
     }
 
     // 5. Native OS Notification via Service Worker (Works even when app tab is in background!)
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+    // NSTA Messenger Rule:
+    // When app is in background (document.hidden), do NOT spam private CHAT push notifications.
+    // Private CHAT alerts notify inside the app. FRIEND_REQUEST, STUDY_ROOM, ROUTINE trigger OS push even in background!
+    const isAppHidden = typeof document !== 'undefined' && document.hidden;
+    const allowOsNotification = !(item.type === 'CHAT' && isAppHidden);
+
+    if (allowOsNotification && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
       try {
         if ('serviceWorker' in navigator) {
           const reg = await getFcmServiceWorkerRegistration();

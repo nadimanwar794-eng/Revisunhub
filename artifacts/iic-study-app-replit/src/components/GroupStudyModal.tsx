@@ -111,6 +111,7 @@ import { STATIC_SYLLABUS, ADMIN_EMAIL, LUCENT_SUBJECT_OPTIONS_BASE, getLucentSub
 import { parseMCQText, extractStatements } from '../utils/mcqParser';
 import { parseMcqQuestion } from '../utils/mcqRender';
 import { type MCQResult } from '../types';
+import { notifyStudyRoomInviteInBackground } from './NotificationManager';
 
 // Normalize any raw MCQ question to GroupStudyMcqQuestion format
 function parseQuestionToGroupMcq(q: any): GroupStudyMcqQuestion | null {
@@ -452,7 +453,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [totalTestSecondsLeft, setTotalTestSecondsLeft] = useState<number>(0);
   const [paceSecondsLeft, setPaceSecondsLeft] = useState<number>(20);
   const [hasPaceAlertTriggered, setHasPaceAlertTriggered] = useState<boolean>(false);
-  const [showQuestionPalette, setShowQuestionPalette] = useState<boolean>(true);
+  const [showQuestionPalette, setShowQuestionPalette] = useState<boolean>(false);
+  const [hasStudentSubmittedEarly, setHasStudentSubmittedEarly] = useState<boolean>(false);
   const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState<boolean>(false);
   const [lobbyActionTab, setLobbyActionTab] = useState<'LAUNCH' | 'SCHEDULE'>('LAUNCH');
   const [isSchedulingTest, setIsSchedulingTest] = useState<boolean>(false);
@@ -509,6 +511,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   };
   const [showMobileRoomInfo, setShowMobileRoomInfo] = useState<boolean>(false);
   const [showMobileInvite, setShowMobileInvite] = useState<boolean>(false);
+  const [sendingInviteNotif, setSendingInviteNotif] = useState<boolean>(false);
+  const [inviteNotifSent, setInviteNotifSent] = useState<boolean>(false);
   const [showMobileHostControls, setShowMobileHostControls] = useState<boolean>(false);
   const [showHostTimerDropdown, setShowHostTimerDropdown] = useState<boolean>(false);
   const [selectedReviewQIdx, setSelectedReviewQIdx] = useState<number | null>(null);
@@ -1565,9 +1569,23 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           setTotalTestSecondsLeft(totalRem);
 
           if (totalRem <= 0) {
-            // Auto submit when time runs out!
+            // Auto submit immediately when time runs out!
             if (isElectedRunner) {
               endLiveMcqBattle(currentRoom.id).catch(console.warn);
+            }
+            if (!hasBatchSubmitted && currentRoom?.id && user?.id) {
+              submitFinalBatchScore(currentRoom.id, user.id, user.name || 'Student', {
+                score: localBattleStats.score,
+                correctCount: localBattleStats.correctCount,
+                wrongCount: localBattleStats.wrongCount,
+                totalAnswered: localBattleStats.totalAnswered,
+                maxStreak: localBattleStats.maxStreak,
+                userXp: localBattleStats.userXp,
+                streakBonusXp: localBattleStats.streakBonusXp,
+                userPhotoURL: user.photoURL || '',
+                answers: localBattleStats.answers,
+              }).catch(console.warn);
+              setHasBatchSubmitted(true);
             }
             return;
           }
@@ -1709,10 +1727,20 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
 
   // Reset local answer selection on new question or new battle session
   useEffect(() => {
-    setSelectedOption(null);
-    setHasAnsweredCurrentQ(false);
-    setShowXpBanner(false);
-  }, [currentRoom?.liveMcq?.currentQuestionIndex, currentRoom?.liveMcq?.title, currentRoom?.liveMcq?.status]);
+    if (currentRoom?.liveMcq?.currentQuestionIndex !== undefined) {
+      const isSelfPaced = currentRoom.liveMcq.timerMode === 'TOTAL_TEST' || currentRoom.liveMcq.timerMode === 'MIX';
+      if (!isSelfPaced) {
+        setStudentActiveQIndex(currentRoom.liveMcq.currentQuestionIndex);
+      }
+    }
+  }, [currentRoom?.liveMcq?.currentQuestionIndex, currentRoom?.liveMcq?.timerMode]);
+
+  // Synchronize selected option state with active question index
+  useEffect(() => {
+    const activeAnswer = localBattleStats.answers[studentActiveQIndex]?.selectedOption;
+    setSelectedOption(activeAnswer !== undefined ? activeAnswer : null);
+    setHasAnsweredCurrentQ(activeAnswer !== undefined);
+  }, [studentActiveQIndex, localBattleStats.answers]);
 
   // Reset anti-cheating flags when battle resets or is in lobby
   useEffect(() => {
@@ -1808,19 +1836,11 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     };
 
     const currentUid = user.id;
-    // Spread 500 users evenly across 0s to 12s in 1.2s slots
-    const slotIndex = hashString(currentUid) % 10;
-    const jitterMs = slotIndex * 1200 + (hashString(currentUid + '_sub') % 600);
 
     setIsSubmittingBatch(true);
-    setBatchSyncSecondsRemaining(Math.ceil(jitterMs / 1000));
+    setBatchSyncSecondsRemaining(0);
 
-    const countdownInterval = setInterval(() => {
-      setBatchSyncSecondsRemaining((prev) => Math.max(0, prev - 1));
-    }, 1000);
-
-    setTimeout(async () => {
-      clearInterval(countdownInterval);
+    const submitTask = async () => {
       try {
         await submitFinalBatchScore(currentRoom.id, currentUid, user.name || 'Student', {
           score: localBattleStats.score,
@@ -1859,7 +1879,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       } finally {
         setIsSubmittingBatch(false);
       }
-    }, jitterMs);
+    };
+    submitTask();
 
     const myScore = liveMcq.scores?.[user.id] || {
       name: user.name || 'Student',
@@ -2399,6 +2420,31 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       document.body.removeChild(a);
     } catch {
       window.open(url, '_blank');
+    }
+  };
+
+  const handleSendAppInviteNotification = async (targetRoom?: GroupStudyRoom | null) => {
+    const room = targetRoom || currentRoom;
+    if (!room || sendingInviteNotif) return;
+    setSendingInviteNotif(true);
+    try {
+      const roomClass = String(room.hostSync?.selectedClass || (room as any).classLevel || user?.classLevel || '10').trim();
+      await notifyStudyRoomInviteInBackground({
+        senderId: user?.id || 'host',
+        senderName: user?.name || 'Classmate',
+        roomName: room.name || 'Group Study Room',
+        roomId: room.id,
+        roomCode: (room.code || room.id?.slice(-6) || 'STUDY1').toUpperCase(),
+        password: room.password || '',
+        classLevel: roomClass,
+      });
+      setInviteNotifSent(true);
+      setTimeout(() => setInviteNotifSent(false), 5000);
+      alert(`📢 Push Notification Sent!\nClass ${roomClass} ke sabhi students ko direct notification bhej diya gaya hai.\nRoom ID: ${(room.code || room.id?.slice(-6)).toUpperCase()} aur Password notification me chala gaya hai!`);
+    } catch (err) {
+      console.warn('Invite notification error:', err);
+    } finally {
+      setSendingInviteNotif(false);
     }
   };
 
@@ -2957,16 +3003,18 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
   const handleSelectOption = async (optIdx: number) => {
     if (!currentRoom || !currentRoom.liveMcq) return;
     const isSelfPaced = currentRoom.liveMcq.timerMode === 'TOTAL_TEST' || currentRoom.liveMcq.timerMode === 'MIX';
-    if (!isSelfPaced && hasAnsweredCurrentQ) return;
-
-    setSelectedOption(optIdx);
-    if (!isSelfPaced) {
-      setHasAnsweredCurrentQ(true);
-    }
-
-    const curIdx = isSelfPaced ? studentActiveQIndex : currentRoom.liveMcq.currentQuestionIndex;
+    
+    const totalQCount = currentRoom.liveMcq.questions?.length || 1;
+    const curIdx = Math.max(0, Math.min(studentActiveQIndex, totalQCount - 1));
     const q = currentRoom.liveMcq.questions[curIdx];
     if (!q) return;
+
+    // Check if current question was already answered (prevent duplicate answers in single question lock mode)
+    const wasAlreadyAnswered = localBattleStats.answers[curIdx] !== undefined;
+    if (!isSelfPaced && wasAlreadyAnswered && !isHost) return;
+
+    setSelectedOption(optIdx);
+    setHasAnsweredCurrentQ(true);
 
     const isCorrect = optIdx === q.correctIndex;
     const durationLimit = currentRoom.liveMcq.durationPerQuestion || 20;
@@ -3616,6 +3664,22 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   👑 Aap Host Hain
                                 </span>
                               )}
+                              {room.liveMcq?.isActive && (room.liveMcq.status === 'QUESTION' || room.liveMcq.status === 'REVEAL') ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40 flex items-center gap-1 animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                                  <span>Battle Live</span>
+                                </span>
+                              ) : (!room.liveMcq?.questions || room.liveMcq.questions.length === 0) ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                                  <span>Active (Waiting Room)</span>
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                  <span>Active ({room.liveMcq.questions.length} Qs)</span>
+                                </span>
+                              )}
                               {room.isScheduled && room.scheduledStartTime && (
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
                                   <Clock size={10} />
@@ -3639,9 +3703,16 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           <h4 className="font-black text-sm text-white group-hover:text-indigo-300 transition line-clamp-1">
                             {room.name}
                           </h4>
-                          <p className="text-[11px] text-slate-400 mb-3">
+                          <p className="text-[11px] text-slate-400 mb-2">
                             Topic: <span className="text-slate-200 font-semibold">{room.subject}</span>
                           </p>
+
+                          {(!room.liveMcq?.questions || room.liveMcq.questions.length === 0) && (
+                            <div className="mb-3 px-2.5 py-1.5 rounded-xl bg-amber-950/40 border border-amber-500/30 text-[11px] text-amber-300 flex items-center gap-1.5">
+                              <Clock size={12} className="shrink-0 text-amber-400" />
+                              <span>Host sawal select kar rahe hain • Password daal kar room join karein</span>
+                            </div>
+                          )}
 
                           {/* Live Day, Hour, Min, Sec Cooldown Banner */}
                           {room.isScheduled && room.scheduledStartTime && (() => {
@@ -3809,28 +3880,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
           <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
             {/* Main Battle Stage */}
             <div className="flex-1 flex flex-col overflow-y-auto p-4 md:p-6 border-b md:border-b-0 md:border-r border-slate-800">
-              {/* During active MCQ running: Clean, uncluttered, and optimized for mobile */}
+              {/* During active MCQ running: Ultra-compact Single Row Toolbar (Exactly 2 rows with top bar, Live Discussion removed during test) */}
               {isMcqRunning ? (
-                <div className="mb-2 flex items-center justify-between gap-1.5 flex-wrap">
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMobileRoomInfo(!showMobileRoomInfo);
-                        if (!showMobileRoomInfo) {
-                          setShowMobileInvite(false);
-                          setShowMobileHostControls(false);
-                        }
-                      }}
-                      className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border transition cursor-pointer flex items-center gap-1 ${
-                        showMobileRoomInfo
-                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/50'
-                          : 'bg-slate-900/90 text-slate-400 hover:text-white border-slate-800'
-                      }`}
-                    >
-                      <Info size={12} /> {showMobileRoomInfo ? 'Hide Rules ▴' : 'Rules ▾'}
-                    </button>
-
+                <div className="shrink-0 mb-2 px-2 py-1 sm:py-1.5 rounded-xl bg-slate-900/95 border border-slate-800 flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar shadow-md">
+                  {/* Single Unified Row: Controls & Navigation */}
+                  <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap">
+                    {/* Invite Button */}
                     <button
                       type="button"
                       onClick={() => {
@@ -3840,15 +3895,39 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           setShowMobileHostControls(false);
                         }
                       }}
-                      className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                      className={`h-7 px-2 sm:px-2.5 rounded-lg text-[11px] font-black border transition cursor-pointer flex items-center gap-1 shrink-0 ${
                         showMobileInvite
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
-                          : 'bg-slate-900/90 text-slate-400 hover:text-white border-slate-800'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
+                          : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border-slate-700'
                       }`}
+                      title="Invite Room Code & WhatsApp Share"
                     >
-                      <Share2 size={12} /> Invite ({currentRoom.code}) ▾
+                      <Share2 size={12} className="text-emerald-400 shrink-0" />
+                      <span>Invite ({currentRoom.code || currentRoom.id?.slice(-6)})</span>
                     </button>
 
+                    {/* Rules Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMobileRoomInfo(!showMobileRoomInfo);
+                        if (!showMobileRoomInfo) {
+                          setShowMobileInvite(false);
+                          setShowMobileHostControls(false);
+                        }
+                      }}
+                      className={`h-7 px-2 sm:px-2.5 rounded-lg text-[11px] font-black border transition cursor-pointer flex items-center gap-1 shrink-0 ${
+                        showMobileRoomInfo
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm'
+                          : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border-slate-700'
+                      }`}
+                      title="Scoring & Rules Dekhein"
+                    >
+                      <Info size={12} className="text-amber-400 shrink-0" />
+                      <span>Rules</span>
+                    </button>
+
+                    {/* Host Settings & Time Management (Admin / Host only) */}
                     {isHost && (
                       <button
                         type="button"
@@ -3859,20 +3938,38 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             setShowMobileInvite(false);
                           }
                         }}
-                        className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border transition cursor-pointer flex items-center gap-1 ${
+                        className={`h-7 px-2 sm:px-2.5 rounded-lg text-[11px] font-black border transition cursor-pointer flex items-center gap-1 shrink-0 ${
                           showMobileHostControls
-                            ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/50'
-                            : 'bg-slate-900/90 text-slate-400 hover:text-white border-slate-800'
+                            ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/50 shadow-sm'
+                            : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border-slate-700'
                         }`}
+                        title="Per Question Timer aur Host Settings"
                       >
-                        <Settings size={12} /> {showMobileHostControls ? 'Hide Host ▴' : 'Host ⚙️ ▾'}
+                        <Settings size={12} className="text-indigo-400 shrink-0" />
+                        <span>Host Settings ⚙️</span>
                       </button>
                     )}
+
+                    {/* Sawal Grid Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => setShowQuestionPalette((prev) => !prev)}
+                      className={`h-7 px-2 sm:px-2.5 rounded-lg text-[11px] font-black border transition cursor-pointer flex items-center gap-1 shrink-0 ${
+                        showQuestionPalette
+                          ? 'bg-indigo-600 text-white border-indigo-400 shadow-sm'
+                          : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border-slate-700'
+                      }`}
+                      title="Question Grid kholein ya band karein"
+                    >
+                      <LayoutGrid size={12} className="text-indigo-400 shrink-0" />
+                      <span>Sawal Grid ({Object.keys(localBattleStats.answers).length}/{currentRoom.liveMcq?.totalQuestions || currentRoom.liveMcq?.questions?.length || 0})</span>
+                    </button>
                   </div>
 
-                  <div className="flex items-center gap-1.5 ml-auto text-[11px]">
-                    <span className="font-mono text-cyan-300 bg-cyan-950/40 border border-cyan-500/30 px-2 py-0.5 rounded-lg text-[10px] font-bold">
-                      🔴 Live Arena
+                  {/* Right Side: Live Pulse Badge (Live Discussion completely removed during active test) */}
+                  <div className="flex items-center gap-1 shrink-0 ml-auto pl-1">
+                    <span className="font-mono text-cyan-300 bg-cyan-950/60 border border-cyan-500/40 px-2 py-0.5 rounded-md text-[10px] font-black flex items-center gap-1 shrink-0">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping shrink-0" /> Live
                     </span>
                   </div>
                 </div>
@@ -3964,6 +4061,16 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       </button>
                       <button
                         type="button"
+                        onClick={() => handleSendAppInviteNotification(currentRoom)}
+                        disabled={sendingInviteNotif || inviteNotifSent}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black shadow-md active:scale-95 transition cursor-pointer shrink-0 disabled:opacity-80"
+                        title="Class ke sabhi doston ko direct App Push Notification bhejein (WhatsApp ki zaroorat nahi)"
+                      >
+                        <Radio size={13} className={sendingInviteNotif ? "animate-spin text-amber-300" : inviteNotifSent ? "text-emerald-300" : "text-amber-300"} />
+                        <span>{sendingInviteNotif ? "Bhej raha hai..." : inviteNotifSent ? "✅ Sent to Class!" : "📢 App Notification Bhejo"}</span>
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => handleShareToWhatsApp(currentRoom)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md active:scale-95 transition cursor-pointer shrink-0"
                         title="Doston ko WhatsApp par invite karein (Code aur Password dono jayega)"
@@ -4025,6 +4132,16 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     >
                       {copiedCode ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                       <span>{copiedCode ? 'Copied' : 'Copy Details'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSendAppInviteNotification(currentRoom)}
+                      disabled={sendingInviteNotif || inviteNotifSent}
+                      className="px-2.5 py-1 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] flex items-center gap-1 cursor-pointer shadow disabled:opacity-80"
+                      title="Class ke sabhi doston ko App Push Notification bhejein"
+                    >
+                      <Radio size={12} className={sendingInviteNotif ? "animate-spin text-amber-300" : inviteNotifSent ? "text-emerald-300" : "text-amber-300"} />
+                      <span>{sendingInviteNotif ? "Sending..." : inviteNotifSent ? "Sent!" : "App Notify"}</span>
                     </button>
                     <button
                       onClick={() => handleShareToWhatsApp(currentRoom)}
@@ -5494,13 +5611,28 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 </p>
                               </div>
                             );
-                          })() : (
+                          })() : (!currentRoom.liveMcq?.questions || currentRoom.liveMcq.questions.length === 0) ? (
+                            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-b from-amber-500/15 via-slate-900 to-slate-900 border border-amber-500/40 text-center space-y-3 shadow-lg">
+                              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-black animate-pulse">
+                                <Clock size={15} className="animate-spin text-amber-400" />
+                                <span>Host Sawal Select Kar Rahe Hain...</span>
+                              </div>
+                              <h4 className="text-sm font-black text-white">Room Active Hai — Aap Waiting Room Me Hain</h4>
+                              <p className="text-xs text-slate-300 font-medium leading-relaxed max-w-md mx-auto">
+                                Aap password enter karke safaltapoorvak room me join ho chuke hain! Host abhi is test ke liye questions chun rahe hain. Jaise hi Host test start karenge, aapka test screen par bina kisi delay ke turant shuru ho jayega!
+                              </p>
+                              <div className="flex items-center justify-center gap-2 text-[11px] text-emerald-400 font-bold bg-emerald-950/40 border border-emerald-500/30 py-1.5 px-3 rounded-xl max-w-xs mx-auto">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                                <span>Waiting for Host to Launch Test</span>
+                              </div>
+                            </div>
+                          ) : (
                             <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center space-y-2">
                               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-black animate-pulse">
                                 <Clock size={15} /> Host Ke Shuru Karne Ka Intezar Karein...
                               </div>
                               <p className="text-xs text-slate-300 font-medium leading-relaxed">
-                                Aap Study Room me safaltapoorvak jud chuke hain. Jaise hi Host session shuru karenge, pehla sawal aapke screen par turant aa jayega!
+                                Aap Study Room me safaltapoorvak jud chuke hain ({currentRoom.liveMcq.questions.length} sawal ready hain). Jaise hi Host session shuru karenge, pehla sawal aapke screen par turant aa jayega!
                               </p>
                             </div>
                           )}
@@ -5615,16 +5747,14 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     (currentRoom.liveMcq.status === 'QUESTION' || currentRoom.liveMcq.status === 'REVEAL') &&
                     (() => {
                       const isSelfPaced = currentRoom.liveMcq!.timerMode === 'TOTAL_TEST' || currentRoom.liveMcq!.timerMode === 'MIX';
-                      const qIdx = isSelfPaced
-                        ? Math.max(0, Math.min(studentActiveQIndex, (currentRoom.liveMcq!.questions?.length || 1) - 1))
-                        : currentRoom.liveMcq!.currentQuestionIndex;
+                      const totalQuestions = currentRoom.liveMcq!.totalQuestions || currentRoom.liveMcq!.questions?.length || 1;
+                      const qIdx = Math.max(0, Math.min(studentActiveQIndex, totalQuestions - 1));
                       const q = currentRoom.liveMcq!.questions[qIdx];
                       if (!q) return null;
 
                       const isReveal = currentRoom.liveMcq!.status === 'REVEAL';
                       const isProjector = currentRoom.mcqType === 'PROJECTOR_MODE';
                       const isRevision = currentRoom.mcqType === 'REVISION_HUB';
-                      const totalQuestions = currentRoom.liveMcq!.totalQuestions || currentRoom.liveMcq!.questions.length;
                       const duration = currentRoom.liveMcq!.durationPerQuestion || 20;
 
                       const currentQAnswers = currentRoom.liveMcq!.questionAnswers?.[qIdx] || {};
@@ -5636,9 +5766,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       const totalSecsRem = totalTestSecondsLeft % 60;
                       const formattedExamTime = `${String(totalMinutesRem).padStart(2, '0')}:${String(totalSecsRem).padStart(2, '0')}`;
                       const answeredQuestionsCount = Object.keys(localBattleStats.answers).length;
-                      const activeSelectedOption = isSelfPaced
-                        ? (localBattleStats.answers[qIdx]?.selectedOption ?? null)
-                        : selectedOption;
+                      const activeSelectedOption = localBattleStats.answers[qIdx]?.selectedOption ?? (qIdx === studentActiveQIndex ? selectedOption : null);
 
                       return (
                         <div
@@ -5646,522 +5774,510 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             isProjector ? 'p-2 sm:p-4 rounded-3xl bg-slate-950 border-2 border-cyan-500/40' : ''
                           }`}
                         >
-                          {/* Progress & Countdown Header */}
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between text-xs font-bold text-slate-300">
-                              <span className={isProjector ? 'text-sm font-black text-cyan-300' : ''}>
-                                Question {qIdx + 1} of {totalQuestions}
-                                {isRevision && (
-                                  <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-500/30 text-purple-300 border border-purple-500/50">
-                                    ⚡ MCQ + Sprint
+                          {/* ── EARLY SUBMITTED STATE: Waiting for Room Timer to Complete ── */}
+                          {hasStudentSubmittedEarly && !currentRoom.isExpired && currentRoom.liveMcq?.status !== 'ENDED' && totalTestSecondsLeft > 0 ? (
+                            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-5 rounded-3xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl animate-in zoom-in-95 duration-200">
+                              <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 text-emerald-400 flex items-center justify-center text-3xl shadow-lg">
+                                <CheckCircle2 size={36} className="text-emerald-400 animate-pulse" />
+                              </div>
+
+                              <div className="space-y-1">
+                                <span className="px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-black uppercase tracking-wider">
+                                  Test Submitted Successfully
+                                </span>
+                                <h3 className="text-xl sm:text-2xl font-black text-white pt-1">
+                                  Aapka Test Darj Ho Chuka Hai!
+                                </h3>
+                                <p className="text-xs text-slate-300 max-w-md mx-auto leading-relaxed">
+                                  Aapka score aur answers surakshit submit ho gaye hain. Room ka samay pura hote hi sabhi participants ka final result aur rank declare hogi.
+                                </p>
+                              </div>
+
+                              {/* Timer & Attempt Summary */}
+                              <div className="grid grid-cols-3 gap-3 w-full max-w-md">
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Kul Attempt</span>
+                                  <span className="text-lg font-black text-emerald-400">
+                                    {answeredQuestionsCount}
                                   </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Chhute Huye</span>
+                                  <span className="text-lg font-black text-amber-400">
+                                    {Math.max(0, totalQuestions - answeredQuestionsCount)}
+                                  </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Bacha Samay</span>
+                                  <span className="text-lg font-black text-cyan-300 font-mono">
+                                    {Math.floor(totalTestSecondsLeft / 60)}:{String(totalTestSecondsLeft % 60).padStart(2, '0')}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Actions while waiting */}
+                              <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                                {isHost && (
+                                  <button
+                                    type="button"
+                                    onClick={handleForceEndBattle}
+                                    className="px-4 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs transition cursor-pointer flex items-center gap-1.5 shadow-md active:scale-95"
+                                  >
+                                    🏁 End Test For All Now
+                                  </button>
                                 )}
-                              </span>
-
-                              {/* Timer Badge */}
-                              <div className="flex items-center gap-2">
-                                {isSelfPaced ? (
-                                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                                    {/* Overall Exam Timer */}
-                                    <span
-                                      className={`font-mono font-black px-2.5 py-1 rounded-xl border flex items-center gap-1.5 text-xs shadow-sm ${
-                                        totalTestSecondsLeft <= 120
-                                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
-                                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                                      }`}
-                                    >
-                                      <Timer size={14} className={totalTestSecondsLeft <= 120 ? 'text-rose-400' : 'text-emerald-400'} />
-                                      <span>Exam: {formattedExamTime}</span>
-                                    </span>
-
-                                    {/* Mix Mode Pace Badge */}
-                                    {currentRoom.liveMcq?.timerMode === 'MIX' && (
-                                      <span
-                                        className={`font-mono font-black px-2 py-1 rounded-xl border text-[11px] flex items-center gap-1 transition ${
-                                          paceSecondsLeft === 0
-                                            ? 'bg-purple-600 text-white border-purple-400 animate-bounce'
-                                            : 'bg-slate-800 text-purple-300 border-slate-700'
-                                        }`}
-                                        title="Ideal time for this question"
-                                      >
-                                        <Smartphone size={12} className={paceSecondsLeft === 0 ? 'text-white' : 'text-purple-400'} />
-                                        {paceSecondsLeft === 0 ? '📳 Pace Alert!' : `${paceSecondsLeft}s Pace`}
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {/* Progress & Countdown Header */}
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                                  <span className={isProjector ? 'text-sm font-black text-cyan-300' : ''}>
+                                    Question {qIdx + 1} of {totalQuestions}
+                                    {isRevision && (
+                                      <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-500/30 text-purple-300 border border-purple-500/50">
+                                        ⚡ MCQ + Sprint
                                       </span>
                                     )}
+                                  </span>
 
-                                    {/* Finish Button */}
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowSubmitConfirmModal(true)}
-                                      className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition cursor-pointer shadow flex items-center gap-1"
-                                    >
-                                      <CheckCircle2 size={13} /> Submit Test
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
-                                      {answeredCount}/{totalMembersCount} Answered
-                                    </span>
-                                    {isReveal ? (
-                                      <span className="font-mono font-black px-2.5 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 text-xs animate-pulse">
-                                        <FastForward size={14} /> Agla Sawal: {revealSecondsLeft}s
-                                      </span>
+                                  {/* Timer Badge */}
+                                  <div className="flex items-center gap-2">
+                                    {isSelfPaced ? (
+                                      <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                        {/* Overall Exam Timer */}
+                                        <span
+                                          className={`font-mono font-black px-2.5 py-1 rounded-xl border flex items-center gap-1.5 text-xs shadow-sm ${
+                                            totalTestSecondsLeft <= 120
+                                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 animate-pulse'
+                                              : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                          }`}
+                                        >
+                                          <Timer size={14} className={totalTestSecondsLeft <= 120 ? 'text-rose-400' : 'text-emerald-400'} />
+                                          <span>Exam: {formattedExamTime}</span>
+                                        </span>
+
+                                        {/* Mix Mode Pace Badge */}
+                                        {currentRoom.liveMcq?.timerMode === 'MIX' && (
+                                          <span
+                                            className={`font-mono font-black px-2 py-1 rounded-xl border text-[11px] flex items-center gap-1 transition ${
+                                              paceSecondsLeft === 0
+                                                ? 'bg-purple-600 text-white border-purple-400 animate-bounce'
+                                                : 'bg-slate-800 text-purple-300 border-slate-700'
+                                            }`}
+                                            title="Ideal time for this question"
+                                          >
+                                            <Smartphone size={12} className={paceSecondsLeft === 0 ? 'text-white' : 'text-purple-400'} />
+                                            {paceSecondsLeft === 0 ? '📳 Pace Alert!' : `${paceSecondsLeft}s Pace`}
+                                          </span>
+                                        )}
+
+                                        {/* Quick Finish Button */}
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowSubmitConfirmModal(true)}
+                                          className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs transition cursor-pointer shadow flex items-center gap-1"
+                                        >
+                                          <CheckCircle2 size={13} /> Submit Test
+                                        </button>
+                                      </div>
                                     ) : (
-                                      <span
-                                        className={`font-mono font-black flex items-center gap-1 ${
-                                          isProjector
-                                            ? 'text-xl sm:text-2xl text-cyan-300'
-                                            : mcqSecondsLeft <= 5
-                                            ? 'text-rose-400 animate-pulse text-base'
-                                            : 'text-amber-400 text-sm'
-                                        }`}
-                                      >
-                                        <Timer size={14} /> {mcqSecondsLeft}s
-                                      </span>
+                                      <>
+                                        <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
+                                          {answeredCount}/{totalMembersCount} Answered
+                                        </span>
+                                        {isReveal ? (
+                                          <span className="font-mono font-black px-2.5 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 text-xs animate-pulse">
+                                            <FastForward size={14} /> Agla Sawal: {revealSecondsLeft}s
+                                          </span>
+                                        ) : (
+                                          <span
+                                            className={`font-mono font-black flex items-center gap-1 ${
+                                              isProjector
+                                                ? 'text-xl sm:text-2xl text-cyan-300'
+                                                : mcqSecondsLeft <= 5
+                                                ? 'text-rose-400 animate-pulse text-base'
+                                                : 'text-amber-400 text-sm'
+                                            }`}
+                                          >
+                                            <Timer size={14} /> {mcqSecondsLeft}s
+                                          </span>
+                                        )}
+                                      </>
                                     )}
-                                  </>
-                                )}
-                              </div>
-                            </div>
+                                  </div>
+                                </div>
 
-                            {/* Progress Bars */}
-                            <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
-                              {isReveal ? (
-                                <div
-                                  className="h-full bg-emerald-400 transition-all duration-1000"
-                                  style={{
-                                    width: `${Math.max(10, ((2 - revealSecondsLeft) / 2) * 100)}%`,
-                                  }}
-                                />
-                              ) : isSelfPaced ? (
-                                <div
-                                  className="h-full bg-gradient-to-r from-emerald-500 to-indigo-500 transition-all duration-500"
-                                  style={{
-                                    width: `${Math.min(100, Math.max(5, (answeredQuestionsCount / totalQuestions) * 100))}%`,
-                                  }}
-                                />
-                              ) : (
-                                <div
-                                  className={`h-full transition-all duration-1000 ${
-                                    isProjector
-                                      ? 'bg-cyan-400'
-                                      : isRevision
-                                      ? 'bg-purple-500'
-                                      : mcqSecondsLeft <= 5
-                                      ? 'bg-rose-500 animate-pulse'
-                                      : 'bg-amber-400'
-                                  }`}
-                                  style={{
-                                    width: `${Math.max(0, Math.min(100, (mcqSecondsLeft / duration) * 100))}%`,
-                                  }}
-                                />
+                                {/* Progress Bars */}
+                                <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                                  {isReveal ? (
+                                    <div
+                                      className="h-full bg-emerald-400 transition-all duration-1000"
+                                      style={{
+                                        width: `${Math.max(10, ((2 - revealSecondsLeft) / 2) * 100)}%`,
+                                      }}
+                                    />
+                                  ) : isSelfPaced ? (
+                                    <div
+                                      className="h-full bg-gradient-to-r from-emerald-500 to-indigo-500 transition-all duration-500"
+                                      style={{
+                                        width: `${Math.min(100, Math.max(5, (answeredQuestionsCount / totalQuestions) * 100))}%`,
+                                      }}
+                                    />
+                                  ) : (
+                                    <div
+                                      className={`h-full transition-all duration-1000 ${
+                                        isProjector
+                                          ? 'bg-cyan-400'
+                                          : isRevision
+                                          ? 'bg-purple-500'
+                                          : mcqSecondsLeft <= 5
+                                          ? 'bg-rose-500 animate-pulse'
+                                          : 'bg-amber-400'
+                                      }`}
+                                      style={{
+                                        width: `${Math.max(0, Math.min(100, (mcqSecondsLeft / duration) * 100))}%`,
+                                      }}
+                                    />
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* ── QUESTION PALETTE / GRID (OPENS VIA BUTTON, CLOSED BY DEFAULT) ── */}
+                              {showQuestionPalette && (
+                                <div className="rounded-2xl bg-slate-900/95 border border-indigo-500/50 p-3 space-y-2 shadow-2xl animate-in slide-in-from-top duration-200">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5">
+                                      <LayoutGrid size={14} className="text-indigo-400" />
+                                      <span className="text-xs font-black text-white">
+                                        Question Palette (Sawal Grid)
+                                      </span>
+                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
+                                        Attempted: <b className="text-emerald-400">{answeredQuestionsCount}</b>/{totalQuestions}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                      <div className="flex items-center gap-2 text-[10px] text-slate-400 hidden sm:flex">
+                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Done</span>
+                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-500" /> Current</span>
+                                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-700" /> Left</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowQuestionPalette(false)}
+                                        className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center text-xs cursor-pointer"
+                                        title="Close Grid"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1.5 rounded-xl bg-slate-950/70 border border-slate-800">
+                                    {currentRoom.liveMcq!.questions.map((_, idx) => {
+                                      const isAnswered = localBattleStats.answers[idx] !== undefined;
+                                      const isCurrent = qIdx === idx;
+                                      return (
+                                        <button
+                                          key={`q_grid_btn_${idx}`}
+                                          type="button"
+                                          onClick={() => {
+                                            setStudentActiveQIndex(idx);
+                                            setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                            setHasPaceAlertTriggered(false);
+                                          }}
+                                          className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl text-xs font-black transition flex items-center justify-center cursor-pointer select-none ${
+                                            isCurrent
+                                              ? 'bg-indigo-600 text-white ring-2 ring-indigo-300 ring-offset-2 ring-offset-slate-950 scale-105 shadow-md z-10'
+                                              : isAnswered
+                                              ? 'bg-emerald-600 text-white border border-emerald-400 shadow-sm'
+                                              : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+                                          }`}
+                                        >
+                                          {idx + 1}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
                               )}
-                            </div>
-                          </div>
 
-                          {/* ── QUESTION PALETTE / GRID (JUMP TO ANY QUESTION) ── */}
-                          {isSelfPaced && (
-                            <div className="rounded-2xl bg-slate-900/95 border border-slate-700/80 p-3 space-y-2 shadow-lg">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-1.5">
-                                  <LayoutGrid size={14} className="text-indigo-400" />
-                                  <span className="text-xs font-black text-white">
-                                    Question Palette (Sawal Grid)
+                              {/* Mix Mode Alert Banner if pace is reached */}
+                              {isSelfPaced && currentRoom.liveMcq?.timerMode === 'MIX' && paceSecondsLeft === 0 && (
+                                <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/40 flex items-center justify-between text-xs text-purple-200 animate-in fade-in duration-150">
+                                  <span className="flex items-center gap-1.5 font-bold">
+                                    <Smartphone size={14} className="text-purple-400 animate-pulse" />
+                                    <b>Pace Alert:</b> Is sawal ka chuna hua time pura ho gaya! Mobile vibrate hua. Agle sawal par switch karein.
                                   </span>
-                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-                                    Attempted: <b className="text-emerald-400">{answeredQuestionsCount}</b>/{totalQuestions}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2 text-[10px] text-slate-400 hidden sm:flex">
-                                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" /> Done</span>
-                                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-500" /> Current</span>
-                                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-700" /> Left</span>
-                                </div>
-                              </div>
-
-                              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 rounded-xl bg-slate-950/70 border border-slate-800">
-                                {currentRoom.liveMcq!.questions.map((_, idx) => {
-                                  const isAnswered = localBattleStats.answers[idx] !== undefined;
-                                  const isCurrent = qIdx === idx;
-                                  return (
+                                  {qIdx < totalQuestions - 1 && (
                                     <button
-                                      key={`q_grid_btn_${idx}`}
                                       type="button"
                                       onClick={() => {
-                                        setStudentActiveQIndex(idx);
+                                        setStudentActiveQIndex(qIdx + 1);
                                         setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
                                         setHasPaceAlertTriggered(false);
                                       }}
-                                      className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl text-xs font-black transition flex items-center justify-center cursor-pointer select-none ${
-                                        isCurrent
-                                          ? 'bg-indigo-600 text-white ring-2 ring-indigo-300 ring-offset-2 ring-offset-slate-950 scale-105 shadow-md z-10'
-                                          : isAnswered
-                                          ? 'bg-emerald-600 text-white border border-emerald-400 shadow-sm'
-                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
-                                      }`}
+                                      className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black shrink-0 transition cursor-pointer"
                                     >
-                                      {idx + 1}
+                                      Next Q ➡
                                     </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Mix Mode Alert Banner if pace is reached */}
-                          {isSelfPaced && currentRoom.liveMcq?.timerMode === 'MIX' && paceSecondsLeft === 0 && (
-                            <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/40 flex items-center justify-between text-xs text-purple-200 animate-in fade-in duration-150">
-                              <span className="flex items-center gap-1.5 font-bold">
-                                <Smartphone size={14} className="text-purple-400 animate-pulse" />
-                                <b>Pace Alert:</b> Is sawal ka chuna hua time pura ho gaya! Mobile vibrate hua. Agle sawal par switch karein.
-                              </span>
-                              {qIdx < totalQuestions - 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setStudentActiveQIndex(qIdx + 1);
-                                    setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
-                                    setHasPaceAlertTriggered(false);
-                                  }}
-                                  className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black shrink-0 transition cursor-pointer"
-                                >
-                                  Next Q ➡
-                                </button>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Question Card */}
-                          <div
-                            className={`rounded-2xl p-4 sm:p-5 shadow-xl transition-all ${
-                              isProjector
-                                ? 'bg-slate-900 border border-cyan-500/50'
-                                : 'bg-slate-800/90 border border-slate-700'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-2 mb-2">
-                              <span
-                                className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                                  isProjector
-                                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                }`}
-                              >
-                                Live MCQ #{qIdx + 1}
-                              </span>
-                              <span className="text-[10px] font-bold text-slate-400">
-                                Sahi: <b className="text-emerald-400">+5 XP</b> | Galat: <b className="text-rose-400">-2 XP</b>
-                              </span>
-                            </div>
-
-                            {(() => {
-                              const parsed = parseMcqQuestion(q as any);
-                              const hasStatements = parsed.statements && parsed.statements.length > 0;
-                              return (
-                                <>
-                                  <h4
-                                    className={`font-black text-white leading-relaxed ${
-                                      isProjector
-                                        ? 'text-lg sm:text-2xl tracking-wide text-cyan-50'
-                                        : 'text-base sm:text-lg'
-                                    }`}
-                                    dangerouslySetInnerHTML={{
-                                      __html: parsed.questionHtml || q.question,
-                                    }}
-                                  />
-
-                                  {/* Render numbered statements for statement-based MCQs */}
-                                  {hasStatements && (
-                                    <div className="mt-3 space-y-2">
-                                      {parsed.statements.map((stmtHtml, sIdx) => (
-                                        <div
-                                          key={`live_stmt_${sIdx}`}
-                                          className={`p-2.5 sm:p-3 rounded-xl border flex items-start gap-2.5 leading-relaxed text-xs sm:text-sm font-semibold transition ${
-                                            isProjector
-                                              ? 'bg-slate-900/90 border-cyan-500/40 text-cyan-100 shadow-sm'
-                                              : 'bg-slate-900/80 border-indigo-500/40 text-indigo-100 shadow-sm'
-                                          }`}
-                                        >
-                                          <span
-                                            className={`w-6 h-6 rounded-lg font-black text-xs flex items-center justify-center shrink-0 mt-0.5 border ${
-                                              isProjector
-                                                ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50'
-                                                : 'bg-indigo-950 text-indigo-300 border-indigo-500/40'
-                                            }`}
-                                          >
-                                            {sIdx + 1}
-                                          </span>
-                                          <div
-                                            className="flex-1 select-text"
-                                            dangerouslySetInnerHTML={{ __html: stmtHtml }}
-                                          />
-                                        </div>
-                                      ))}
-                                    </div>
                                   )}
-
-                                  {/* Render closing suffix line if present */}
-                                  {parsed.suffixHtml && (
-                                    <div
-                                      className={`mt-2 font-bold italic ${
-                                        isProjector ? 'text-cyan-300 text-sm sm:text-base' : 'text-amber-300 text-xs sm:text-sm'
-                                      }`}
-                                      dangerouslySetInnerHTML={{ __html: parsed.suffixHtml }}
-                                    />
-                                  )}
-                                </>
-                              );
-                            })()}
-                          </div>
-
-                          {/* Options Grid */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {q.options.map((opt, optIdx) => {
-                              let btnStyle = isProjector
-                                ? 'bg-slate-900/90 border-slate-700 text-white hover:border-cyan-400 text-base sm:text-lg'
-                                : 'bg-slate-800/70 border-slate-700 text-slate-200 hover:bg-slate-700 text-xs md:text-sm';
-
-                              if (activeSelectedOption === optIdx) {
-                                btnStyle = isProjector
-                                  ? 'bg-cyan-600/50 border-cyan-400 text-white ring-2 ring-cyan-400'
-                                  : 'bg-indigo-600/40 border-indigo-400 text-white ring-2 ring-indigo-400';
-                              }
-
-                              if (isReveal) {
-                                if (optIdx === q.correctIndex) {
-                                  btnStyle =
-                                    'bg-emerald-600/40 border-emerald-500 text-emerald-200 ring-2 ring-emerald-500';
-                                } else if (activeSelectedOption === optIdx && optIdx !== q.correctIndex) {
-                                  btnStyle = 'bg-rose-600/40 border-rose-500 text-rose-200';
-                                }
-                              }
-
-                              return (
-                                <button
-                                  key={`battle_opt_${optIdx}`}
-                                  onClick={() => handleSelectOption(optIdx)}
-                                  disabled={(!isSelfPaced && hasAnsweredCurrentQ) || isReveal}
-                                  className={`p-3.5 sm:p-4 rounded-2xl border text-left font-bold flex items-center gap-3 transition active:scale-95 disabled:cursor-not-allowed cursor-pointer ${btnStyle}`}
-                                >
-                                  <span
-                                    className={`w-7 h-7 rounded-lg flex items-center justify-center font-black shrink-0 ${
-                                      isProjector
-                                        ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/40 text-sm'
-                                        : 'bg-slate-950/70 text-slate-300 text-xs'
-                                    }`}
-                                  >
-                                    {String.fromCharCode(65 + optIdx)}
-                                  </span>
-                                  <span className="flex-1 leading-snug">{opt}</span>
-                                  {isReveal && optIdx === q.correctIndex && (
-                                    <Check size={18} className="text-emerald-400 shrink-0" />
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-
-                          {/* Navigation Buttons for Self-Paced (Total Test and Mix modes) */}
-                          {isSelfPaced && (
-                            <div className="flex items-center justify-between gap-2 pt-1">
-                              <button
-                                type="button"
-                                disabled={qIdx === 0}
-                                onClick={() => {
-                                  if (qIdx > 0) {
-                                    setStudentActiveQIndex(qIdx - 1);
-                                    setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
-                                    setHasPaceAlertTriggered(false);
-                                  }
-                                }}
-                                className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-black text-slate-200 flex items-center gap-1.5 transition cursor-pointer"
-                              >
-                                <ChevronLeft size={16} /> Pichla Sawal
-                              </button>
-
-                              <span className="text-xs font-bold text-slate-400 hidden sm:inline">
-                                Q <b className="text-white">{qIdx + 1}</b> of {totalQuestions}
-                              </span>
-
-                              {qIdx < totalQuestions - 1 ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setStudentActiveQIndex(qIdx + 1);
-                                    setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
-                                    setHasPaceAlertTriggered(false);
-                                  }}
-                                  className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl border border-indigo-500 bg-indigo-600 hover:bg-indigo-500 text-xs font-black text-white flex items-center gap-1.5 transition cursor-pointer shadow-md"
-                                >
-                                  Agla Sawal <ChevronRight size={16} />
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => setShowSubmitConfirmModal(true)}
-                                  className="px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-xl border border-emerald-500 bg-emerald-600 hover:bg-emerald-500 text-xs font-black text-white flex items-center gap-1.5 transition cursor-pointer shadow-md"
-                                >
-                                  Test Submit Karein <CheckCircle2 size={16} />
-                                </button>
+                                </div>
                               )}
-                            </div>
-                          )}
 
-                          {/* Answer Status or Explanation */}
-                          {isReveal ? (
-                            <div className="rounded-xl bg-emerald-950/40 border border-emerald-500/40 p-3 text-xs text-emerald-200 space-y-1">
-                              <div className="flex items-center justify-between">
-                                <p className="font-black text-sm text-emerald-300 flex items-center gap-1.5">
-                                  <CheckCircle2 size={16} /> Sahi Uttar: Option {String.fromCharCode(65 + q.correctIndex)}
-                                </p>
-                                {autoAdvanceEnabled && (
-                                  <span className="text-[11px] font-black text-emerald-400 bg-emerald-900/50 px-2 py-0.5 rounded">
-                                    Agla Sawal {revealSecondsLeft}s me 🚀
-                                  </span>
-                                )}
-                              </div>
-                              {q.explanation && (
-                                <p className="text-xs text-emerald-300/90 pt-0.5">{q.explanation}</p>
-                              )}
-                            </div>
-                          ) : !isSelfPaced && hasAnsweredCurrentQ ? (
-                            <div className="text-center text-xs font-medium text-slate-400">
-                              <span className="text-indigo-300 font-black flex items-center justify-center gap-1.5">
-                                <CheckCircle2 size={15} /> Aapka Uttar Darj Ho Gaya! (Option {selectedOption !== null ? String.fromCharCode(65 + selectedOption) : ''} Chuna) • Timer khatam hote hi agla sawal aayega ({mcqSecondsLeft}s)...
-                              </span>
-                            </div>
-                          ) : null}
-
-                          {/* ── REAL-TIME PARTICIPANT LEADERBOARD: Kon Banaya Kon Nahi, Kitna Der Me ── */}
-                          <div className="rounded-2xl bg-slate-900/90 border border-slate-800 p-2.5 space-y-2">
-                            <div
-                              onClick={() => setShowLiveAnswersSheet(!showLiveAnswersSheet)}
-                              className="flex items-center justify-between cursor-pointer select-none"
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                                <h5 className="text-xs font-black text-white flex items-center gap-1.5">
-                                  <BarChart3 size={13} className="text-amber-400" /> Live Tracker (Q{qIdx + 1})
-                                </h5>
-                                <span className="text-[11px] font-bold text-slate-400">
-                                  • {answeredCount}/{totalMembersCount} Answered
-                                </span>
-                              </div>
-                              <span className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300">
-                                {showLiveAnswersSheet ? 'Hide ▴' : 'Show Details ▾'}
-                              </span>
-                            </div>
-
-                            {showLiveAnswersSheet && (
-                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-40 overflow-y-auto pr-1">
-                                {roomMembers.map((m, mIdx) => {
-                                  const ans = currentQAnswers[m.id];
-                                  const userScore = currentRoom.liveMcq?.scores?.[m.id];
-                                  const isCurrentUser = m.id === user?.id;
-
-                                  return (
-                                    <div
-                                      key={m?.id ? `member_${m.id}_${mIdx}` : `member_${mIdx}`}
-                                      className={`p-2 rounded-xl border flex items-center justify-between text-xs transition ${
-                                        isCurrentUser
-                                          ? 'bg-indigo-950/40 border-indigo-500/50 shadow-sm'
-                                          : 'bg-slate-800/60 border-slate-700/60'
+                              {/* ── SCROLLABLE QUESTION & OPTIONS CONTAINER (Prevents Layout Shifting) ── */}
+                              <div className="flex-1 overflow-y-auto px-0.5 py-1 space-y-3.5 max-h-[calc(100vh-320px)] sm:max-h-[calc(100vh-300px)]">
+                                {/* Question Card */}
+                                <div
+                                  className={`rounded-2xl p-4 sm:p-5 shadow-xl transition-all ${
+                                    isProjector
+                                      ? 'bg-slate-900 border border-cyan-500/50'
+                                      : 'bg-slate-800/90 border border-slate-700'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-2 mb-2">
+                                    <span
+                                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                        isProjector
+                                          ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                                       }`}
                                     >
-                                      <div className="flex items-center gap-2 min-w-0">
-                                        <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center font-bold text-xs text-white shrink-0 overflow-hidden">
-                                          {m.photoURL ? (
-                                            <img src={m.photoURL} alt={m.name} className="w-full h-full object-cover" />
-                                          ) : (
-                                            m.name.charAt(0).toUpperCase()
-                                          )}
-                                        </div>
-                                        <div className="min-w-0">
-                                          <p className="font-bold text-slate-200 truncate text-[11px]">
-                                            {m.name} {isCurrentUser && '(Aap)'}
-                                          </p>
-                                          {isReveal ? (
-                                            <p className="text-[10px] text-amber-400 font-black">
-                                              {userScore?.score || 0} pts • 🔥 {userScore?.currentStreak || 0}
-                                            </p>
-                                          ) : (
-                                            <p className="text-[10px] text-slate-400 font-semibold">
-                                              {m.id === currentRoom.hostId || m.isHost ? '👑 Host' : '🎓 Vidhyarthi'} • Live
-                                            </p>
-                                          )}
-                                        </div>
-                                      </div>
+                                      Live MCQ #{qIdx + 1}
+                                    </span>
+                                    <span className="text-[10px] font-bold text-slate-400">
+                                      Sahi: <b className="text-emerald-400">+5 XP</b> | Galat: <b className="text-rose-400">-2 XP</b>
+                                    </span>
+                                  </div>
 
-                                      {/* Live Response Status */}
-                                      <div className="text-right shrink-0">
-                                        {ans ? (
-                                          isReveal ? (
-                                            <div className="flex flex-col items-end">
-                                              <span
-                                                className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
-                                                  ans.isCorrect
-                                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                                    : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                                  {(() => {
+                                    const parsed = parseMcqQuestion(q as any);
+                                    const hasStatements = parsed.statements && parsed.statements.length > 0;
+                                    return (
+                                      <>
+                                        <h4
+                                          className={`font-black text-white leading-relaxed ${
+                                            isProjector
+                                              ? 'text-lg sm:text-2xl tracking-wide text-cyan-50'
+                                              : 'text-base sm:text-lg'
+                                          }`}
+                                          dangerouslySetInnerHTML={{
+                                            __html: parsed.questionHtml || q.question,
+                                          }}
+                                        />
+
+                                        {/* Render numbered statements for statement-based MCQs */}
+                                        {hasStatements && (
+                                          <div className="mt-3 space-y-2">
+                                            {parsed.statements.map((stmtHtml, sIdx) => (
+                                              <div
+                                                key={`live_stmt_${sIdx}`}
+                                                className={`p-2.5 sm:p-3 rounded-xl border flex items-start gap-2.5 leading-relaxed text-xs sm:text-sm font-semibold transition ${
+                                                  isProjector
+                                                    ? 'bg-slate-900/90 border-cyan-500/40 text-cyan-100 shadow-sm'
+                                                    : 'bg-slate-900/80 border-indigo-500/40 text-indigo-100 shadow-sm'
                                                 }`}
                                               >
-                                                {ans.isCorrect ? '✅ Sahi' : '❌ Galat'} ({String.fromCharCode(65 + ans.selectedOption)})
-                                              </span>
-                                              <span className="text-[9px] text-slate-400 font-mono mt-0.5">
-                                                ⚡ {ans.timeTakenSec.toFixed(1)}s me
-                                              </span>
-                                            </div>
-                                          ) : (
-                                            <div className="flex flex-col items-end">
-                                              <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                                                ✅ Attempted
-                                              </span>
-                                              <span className="text-[9px] text-slate-400 font-mono mt-0.5">
-                                                ⚡ {ans.timeTakenSec.toFixed(1)}s me
-                                              </span>
-                                            </div>
-                                          )
-                                        ) : (
-                                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-400 animate-pulse">
-                                            ⏳ Soch raha hai...
-                                          </span>
+                                                <span
+                                                  className={`w-6 h-6 rounded-lg font-black text-xs flex items-center justify-center shrink-0 mt-0.5 border ${
+                                                    isProjector
+                                                      ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50'
+                                                      : 'bg-indigo-950 text-indigo-300 border-indigo-500/40'
+                                                  }`}
+                                                >
+                                                  {sIdx + 1}
+                                                </span>
+                                                <div
+                                                  className="flex-1 select-text"
+                                                  dangerouslySetInnerHTML={{ __html: stmtHtml }}
+                                                />
+                                              </div>
+                                            ))}
+                                          </div>
                                         )}
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
 
-                          {/* Host Controls */}
-                          {isHost && (
-                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-800">
-                              <span className="text-[11px] text-slate-400 font-bold hidden sm:inline">
-                                Host Action Bar
-                              </span>
-                              <div className="flex items-center gap-2 ml-auto">
-                                {!isReveal ? (
-                                  <button
-                                    onClick={handleRevealAnswer}
-                                    className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs shadow active:scale-95 transition cursor-pointer flex items-center gap-1.5"
-                                  >
-                                    <Eye size={15} /> Show Answer (Reveal)
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={handleNextMcqQuestion}
-                                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg active:scale-95 transition flex items-center gap-1.5 cursor-pointer"
-                                  >
-                                    {qIdx + 1 >= totalQuestions ? (
-                                      <>Final Results & XP 🏆</>
-                                    ) : (
-                                      <>Next Question ➡️ ({revealSecondsLeft}s)</>
+                                        {/* Render closing suffix line if present */}
+                                        {parsed.suffixHtml && (
+                                          <div
+                                            className={`mt-2 font-bold italic ${
+                                              isProjector ? 'text-cyan-300 text-sm sm:text-base' : 'text-amber-300 text-xs sm:text-sm'
+                                            }`}
+                                            dangerouslySetInnerHTML={{ __html: parsed.suffixHtml }}
+                                          />
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+
+                                {/* Options Grid */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {q.options.map((opt, optIdx) => {
+                                    let btnStyle = isProjector
+                                      ? 'bg-slate-900/90 border-slate-700 text-white hover:border-cyan-400 text-base sm:text-lg'
+                                      : 'bg-slate-800/70 border-slate-700 text-slate-200 hover:bg-slate-700 text-xs md:text-sm';
+
+                                    if (activeSelectedOption === optIdx) {
+                                      btnStyle = isProjector
+                                        ? 'bg-cyan-600/50 border-cyan-400 text-white ring-2 ring-cyan-400'
+                                        : 'bg-indigo-600/40 border-indigo-400 text-white ring-2 ring-indigo-400';
+                                    }
+
+                                    // Only show answer colors if reveal is active!
+                                    if (isReveal) {
+                                      if (optIdx === q.correctIndex) {
+                                        btnStyle =
+                                          'bg-emerald-600/40 border-emerald-500 text-emerald-200 ring-2 ring-emerald-500';
+                                      } else if (activeSelectedOption === optIdx && optIdx !== q.correctIndex) {
+                                        btnStyle = 'bg-rose-600/40 border-rose-500 text-rose-200';
+                                      }
+                                    }
+
+                                    return (
+                                      <button
+                                        key={`battle_opt_${optIdx}`}
+                                        onClick={() => handleSelectOption(optIdx)}
+                                        disabled={(!isSelfPaced && hasAnsweredCurrentQ) || isReveal}
+                                        className={`p-3.5 sm:p-4 rounded-2xl border text-left font-bold flex items-center gap-3 transition active:scale-95 disabled:cursor-not-allowed cursor-pointer ${btnStyle}`}
+                                      >
+                                        <span
+                                          className={`w-7 h-7 rounded-lg flex items-center justify-center font-black shrink-0 ${
+                                            isProjector
+                                              ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/40 text-sm'
+                                              : 'bg-slate-950/70 text-slate-300 text-xs'
+                                          }`}
+                                        >
+                                          {String.fromCharCode(65 + optIdx)}
+                                        </span>
+                                        <span className="flex-1 leading-snug">{opt}</span>
+                                        {isReveal && optIdx === q.correctIndex && (
+                                          <Check size={18} className="text-emerald-400 shrink-0" />
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+
+                                {/* Answer Status or Explanation */}
+                                {isReveal ? (
+                                  <div className="rounded-xl bg-emerald-950/40 border border-emerald-500/40 p-3 text-xs text-emerald-200 space-y-1">
+                                    <div className="flex items-center justify-between">
+                                      <p className="font-black text-sm text-emerald-300 flex items-center gap-1.5">
+                                        <CheckCircle2 size={16} /> Sahi Uttar: Option {String.fromCharCode(65 + q.correctIndex)}
+                                      </p>
+                                      {autoAdvanceEnabled && (
+                                        <span className="text-[11px] font-black text-emerald-400 bg-emerald-900/50 px-2 py-0.5 rounded">
+                                          Agla Sawal {revealSecondsLeft}s me 🚀
+                                        </span>
+                                      )}
+                                    </div>
+                                    {q.explanation && (
+                                      <p className="text-xs text-emerald-300/90 pt-0.5">{q.explanation}</p>
                                     )}
-                                  </button>
-                                )}
+                                  </div>
+                                ) : !isSelfPaced && hasAnsweredCurrentQ ? (
+                                  <div className="text-center text-xs font-medium text-slate-400">
+                                    <span className="text-indigo-300 font-black flex items-center justify-center gap-1.5">
+                                      <CheckCircle2 size={15} /> Aapka Uttar Darj Ho Gaya! (Option {selectedOption !== null ? String.fromCharCode(65 + selectedOption) : ''} Chuna) • Timer khatam hote hi agla sawal aayega ({mcqSecondsLeft}s)...
+                                    </span>
+                                  </div>
+                                ) : null}
                               </div>
-                            </div>
+
+                              {/* ── FIXED BOTTOM NAVIGATION & ACTION BAR (Never shifts or jumps with MCQ height!) ── */}
+                              <div className="sticky bottom-0 z-20 mt-auto pt-3 pb-1 border-t border-slate-800 bg-slate-950/95 backdrop-blur-md flex items-center justify-between gap-2 shadow-2xl">
+                                <div className="flex items-center gap-1.5 sm:gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={qIdx === 0}
+                                    onClick={() => {
+                                      if (qIdx > 0) {
+                                        setStudentActiveQIndex(qIdx - 1);
+                                        setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                        setHasPaceAlertTriggered(false);
+                                      }
+                                    }}
+                                    className="px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-slate-700 bg-slate-800/90 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-black text-slate-200 flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-sm shrink-0"
+                                    title="Pichla Sawal"
+                                  >
+                                    <ChevronLeft size={16} /> <span className="hidden xs:inline">Pichla</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowQuestionPalette((prev) => !prev)}
+                                    className={`px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl border text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer shrink-0 ${
+                                      showQuestionPalette
+                                        ? 'bg-indigo-600 text-white border-indigo-400 shadow-md'
+                                        : 'bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border-indigo-500/40'
+                                    }`}
+                                    title="Sawal Grid kholein ya band karein"
+                                  >
+                                    <LayoutGrid size={15} />
+                                    <span className="hidden sm:inline">Sawal Grid</span>
+                                    <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-[10px] font-black text-white">
+                                      {answeredQuestionsCount}/{totalQuestions}
+                                    </span>
+                                  </button>
+                                </div>
+
+                                <span className="text-xs font-bold text-slate-400 hidden md:inline">
+                                  Sawal <b className="text-white">{qIdx + 1}</b> / {totalQuestions}
+                                </span>
+
+                                <div className="flex items-center gap-1.5 sm:gap-2 ml-auto">
+                                  {/* Show Answer button: STRICTLY for Admin / Host only! */}
+                                  {isHost && (
+                                    !isReveal ? (
+                                      <button
+                                        type="button"
+                                        onClick={handleRevealAnswer}
+                                        className="px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow active:scale-95 transition cursor-pointer flex items-center gap-1 shrink-0"
+                                        title="Admin only: Sahi answer sabko reveal karein"
+                                      >
+                                        <Eye size={14} /> <span className="hidden sm:inline">Reveal</span>
+                                      </button>
+                                    ) : !isSelfPaced ? (
+                                      <button
+                                        type="button"
+                                        onClick={handleNextMcqQuestion}
+                                        className="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
+                                      >
+                                        {qIdx + 1 >= totalQuestions ? (
+                                          <>Podium 🏆</>
+                                        ) : (
+                                          <>Sync Next ➡️ ({revealSecondsLeft}s)</>
+                                        )}
+                                      </button>
+                                    ) : null
+                                  )}
+
+                                  {/* Next Question / Submit Test Button */}
+                                  {qIdx < totalQuestions - 1 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setStudentActiveQIndex(qIdx + 1);
+                                        setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                        setHasPaceAlertTriggered(false);
+                                      }}
+                                      className="px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl border border-indigo-500 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-600 text-xs font-black text-white flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-lg shadow-indigo-600/30 shrink-0"
+                                    >
+                                      <span>Agla</span> <ChevronRight size={16} />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowSubmitConfirmModal(true)}
+                                      className="px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl border border-emerald-500 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-600 text-xs font-black text-white flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-lg shadow-emerald-600/30 shrink-0"
+                                    >
+                                      <span>Submit</span> <CheckCircle2 size={16} />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </>
                           )}
                         </div>
                       );
@@ -6734,15 +6850,16 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               )}
             </div>
 
-            {/* ── SIDE PANEL / BOTTOM BAR: ROOM CHAT & DOUBTS (Hide / Expand on Tap) ── */}
-            <div className={`w-full md:w-80 flex flex-col bg-slate-950/90 shrink-0 border-t md:border-t-0 md:border-l border-slate-800 transition-all duration-200 ${
-              isDiscussionCollapsed ? 'h-auto' : 'h-64 md:h-auto'
-            }`}>
-              <div
-                onClick={() => toggleDiscussionCollapsed()}
-                className="flex items-center justify-between px-3 py-2 sm:py-2.5 border-b border-slate-800 bg-slate-900/90 cursor-pointer select-none hover:bg-slate-800/80 transition"
-                title={isDiscussionCollapsed ? "Live Discussion kholne ke liye tap karein" : "Live Discussion hide/niche karne ke liye tap karein"}
-              >
+            {/* ── SIDE PANEL / BOTTOM BAR: ROOM CHAT & DOUBTS (Only visible before test starts and after test ends) ── */}
+            {!isMcqRunning && (
+              <div className={`w-full md:w-80 flex flex-col bg-slate-950/90 shrink-0 border-t md:border-t-0 md:border-l border-slate-800 transition-all duration-200 ${
+                isDiscussionCollapsed ? 'h-auto' : 'h-64 md:h-auto'
+              }`}>
+                <div
+                  onClick={() => toggleDiscussionCollapsed()}
+                  className="flex items-center justify-between px-3 py-2 sm:py-2.5 border-b border-slate-800 bg-slate-900/90 cursor-pointer select-none hover:bg-slate-800/80 transition"
+                  title={isDiscussionCollapsed ? "Live Discussion kholne ke liye tap karein" : "Live Discussion hide/niche karne ke liye tap karein"}
+                >
                 <div className="flex items-center gap-1.5 sm:gap-2">
                   <MessageSquare size={14} className="text-indigo-400 shrink-0" />
                   <span className="text-xs font-black text-white whitespace-nowrap">Live Discussion</span>
@@ -6840,20 +6957,40 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           );
                         }
 
+                        const isHostSender = msg.userId === currentRoom.hostId;
+                        const displayName = isMe ? `${user?.name?.trim() || 'Aap'} (You)` : (msg.userName?.trim() || 'Student');
+
                         return (
-                          <div key={msg?.id ? `msg_${msg.id}_${msgIdx}` : `msg_${msgKey}_${msgIdx}`} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                            <span className="text-[9px] text-slate-400 mb-0.5 px-1">{isMe ? 'You' : msg.userName}</span>
+                          <div key={msg?.id ? `msg_${msg.id}_${msgIdx}` : `msg_${msgKey}_${msgIdx}`} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-0.5`}>
+                            <div className="flex items-center gap-1.5 px-1">
+                              <span className="w-4 h-4 rounded-full bg-slate-800 text-indigo-300 font-bold text-[9px] flex items-center justify-center shrink-0">
+                                {displayName.charAt(0).toUpperCase()}
+                              </span>
+                              <span className={`text-[11px] font-black ${isMe ? 'text-indigo-300' : 'text-slate-200'}`}>
+                                {displayName}
+                              </span>
+                              {isHostSender && (
+                                <span className="px-1.5 py-0.2 rounded text-[8px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  👑 Host
+                                </span>
+                              )}
+                              {msg.timestamp && (
+                                <span className="text-[8px] text-slate-500 font-mono">
+                                  {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
+                            </div>
                             <div
-                              className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-snug break-words ${
+                              className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-snug break-words shadow-sm ${
                                 isDoubt
-                                  ? 'bg-amber-950/50 border border-amber-500/40 text-amber-200'
+                                  ? 'bg-amber-950/60 border border-amber-500/50 text-amber-100'
                                   : isMe
-                                  ? 'bg-indigo-600 text-white'
-                                  : 'bg-slate-800 text-slate-200'
+                                  ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 text-white'
+                                  : 'bg-slate-800/90 border border-slate-700/80 text-slate-100'
                               }`}
                             >
                               {isDoubt && (
-                                <span className="block text-[9px] font-black text-amber-400 uppercase tracking-wide mb-0.5">
+                                <span className="block text-[9px] font-black text-amber-300 uppercase tracking-wide mb-0.5">
                                   💡 Doubt
                                 </span>
                               )}
@@ -6895,12 +7032,13 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </form>
               </div>
             </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* ── MOBILE DEDICATED LIVE DISCUSSION DRAWER (During active MCQ battle) ── */}
-      {showMobileChat && isMcqRunning && currentRoom && (
+      {/* ── MOBILE DEDICATED LIVE DISCUSSION DRAWER (Before and After MCQ battle only) ── */}
+      {showMobileChat && !isMcqRunning && currentRoom && (
         <div className="fixed inset-0 z-[10002] md:hidden flex flex-col bg-slate-950/95 backdrop-blur-md animate-in slide-in-from-bottom duration-200">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900">
             <div className="flex items-center gap-2">
@@ -6959,9 +7097,29 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     );
                   }
 
+                  const isHostSender = msg.userId === currentRoom.hostId;
+                  const displayName = isMe ? `${user?.name?.trim() || 'Aap'} (You)` : (msg.userName?.trim() || 'Student');
+
                   return (
-                    <div key={msg?.id ? `msg_${msg.id}_${msgIdx}` : `msg_${msgKey}_${msgIdx}`} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                      <span className="text-[9px] text-slate-400 mb-0.5 px-1">{isMe ? 'You' : msg.userName}</span>
+                    <div key={msg?.id ? `msg_${msg.id}_${msgIdx}` : `msg_${msgKey}_${msgIdx}`} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-0.5`}>
+                      <div className="flex items-center gap-1.5 px-1">
+                        <span className="w-4 h-4 rounded-full bg-slate-800 text-indigo-300 font-bold text-[9px] flex items-center justify-center shrink-0">
+                          {displayName.charAt(0).toUpperCase()}
+                        </span>
+                        <span className={`text-[10px] font-black ${isMe ? 'text-indigo-300' : 'text-slate-200'}`}>
+                          {displayName}
+                        </span>
+                        {isHostSender && (
+                          <span className="px-1.5 py-0.2 rounded text-[8px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                            👑 Host
+                          </span>
+                        )}
+                        {msg.timestamp && (
+                          <span className="text-[8px] text-slate-500 font-mono">
+                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                      </div>
                       <div
                         className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-snug break-words ${
                           isDoubt
@@ -7815,22 +7973,47 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 type="button"
                 onClick={async () => {
                   setShowSubmitConfirmModal(false);
-                  if (isElectedRunner) {
-                    await endLiveMcqBattle(currentRoom.id).catch(console.warn);
-                  } else {
-                    setCurrentRoom((prev) => {
-                      if (!prev || !prev.liveMcq) return prev;
-                      const updated = {
-                        ...prev,
-                        liveMcq: {
-                          ...prev.liveMcq,
-                          status: 'ENDED' as const,
-                          isActive: false,
-                        },
+
+                  // 1. Immediately submit student score to RTDB
+                  if (currentRoom?.id && user?.id) {
+                    await submitFinalBatchScore(currentRoom.id, user.id, user.name || 'Student', {
+                      score: localBattleStats.score,
+                      correctCount: localBattleStats.correctCount,
+                      wrongCount: localBattleStats.wrongCount,
+                      totalAnswered: localBattleStats.totalAnswered,
+                      maxStreak: localBattleStats.maxStreak,
+                      userXp: localBattleStats.userXp,
+                      streakBonusXp: localBattleStats.streakBonusXp,
+                      userPhotoURL: user.photoURL || '',
+                      answers: localBattleStats.answers,
+                    }).catch(console.warn);
+
+                    if (localBattleStats.userXp > 0) {
+                      const currentXp = user.xp || user.totalScore || 0;
+                      const newXp = Math.max(0, currentXp + localBattleStats.userXp);
+                      const newLevel = getLevelFromScore(newXp);
+                      const updatedUser = {
+                        ...user,
+                        xp: newXp,
+                        totalScore: newXp,
+                        level: newLevel,
                       };
-                      saveCachedRoom(updated);
-                      return updated;
-                    });
+                      try {
+                        localStorage.setItem('nst_current_user', JSON.stringify(updatedUser));
+                        localStorage.setItem(`nst_user_profile_${user.id}`, JSON.stringify(updatedUser));
+                      } catch (_) {}
+                      saveUserToLive(updatedUser, { immediate: true }).catch(() => {});
+                      onUserUpdate?.(updatedUser);
+                    }
+                  }
+
+                  // 2. Mark this student as submitted
+                  setHasStudentSubmittedEarly(true);
+                  setHasBatchSubmitted(true);
+
+                  // 3. If host or if timer is up, end battle for all
+                  if (isHost || totalTestSecondsLeft <= 0) {
+                    await endLiveMcqBattle(currentRoom.id).catch(console.warn);
                   }
                 }}
                 className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition cursor-pointer shadow-lg"

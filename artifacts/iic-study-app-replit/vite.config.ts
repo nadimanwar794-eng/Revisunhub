@@ -185,6 +185,77 @@ function mediaProxyPlugin() {
         const tgUrl = `https://api.telegram.org/file/bot${DEFAULT_TG_BOT_TOKEN}/${filePath}`;
         handleStream(tgUrl, req, res);
       });
+
+      // /api/telegram/health
+      server.middlewares.use('/api/telegram/health', async (_req: any, res: any) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json');
+        try {
+          const tgRes = await fetch(`https://api.telegram.org/bot${DEFAULT_TG_BOT_TOKEN}/getMe`);
+          const data: any = await tgRes.json();
+          if (data && data.ok) {
+            res.end(JSON.stringify({
+              ok: true,
+              bot: { username: data.result?.username, first_name: data.result?.first_name },
+              storageChatId: '7849468653',
+            }));
+            return;
+          }
+          res.statusCode = 502;
+          res.end(JSON.stringify({ ok: false, error: data?.description || 'Telegram bot response not OK' }));
+        } catch (err: any) {
+          res.statusCode = 502;
+          res.end(JSON.stringify({ ok: false, error: err?.message || 'Failed to reach Telegram API' }));
+        }
+      });
+
+      // /api/telegram/sendMessage
+      server.middlewares.use('/api/telegram/sendMessage', async (req: any, res: any) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+          return;
+        }
+        let body = '';
+        req.on('data', (chunk: any) => { body += chunk; });
+        req.on('end', async () => {
+          try {
+            const parsed = JSON.parse(body || '{}');
+            const content = parsed.message || parsed.text;
+            if (!content) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: "Missing 'message' in request body" }));
+              return;
+            }
+            const targetChat = parsed.chatId || '-1004290996442';
+            const botToken = process.env.TELEGRAM_CHAT_BOT_TOKEN || '8932524192:AAGVxYSuKPZX6sOQFkXz0U7ESVQ2NcHmJZw';
+            const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: targetChat,
+                text: content,
+                parse_mode: 'HTML',
+                disable_web_page_preview: false,
+              }),
+            });
+            const data = await tgRes.json();
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify(data));
+          } catch (err: any) {
+            res.statusCode = 502;
+            res.end(JSON.stringify({ error: err?.message || 'Failed to post message to Telegram' }));
+          }
+        });
+      });
     },
   };
 }
@@ -262,6 +333,22 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
     emptyOutDir: true,
+    sourcemap: false,
+    rollupOptions: {
+      maxParallelFileOps: 1,
+      cache: false,
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('lucide-react')) return 'vendor-icons';
+            if (id.includes('firebase')) return 'vendor-firebase';
+            if (id.includes('katex')) return 'vendor-katex';
+            if (id.includes('@radix-ui')) return 'vendor-radix';
+            return 'vendor-libs';
+          }
+        },
+      },
+    },
   },
   server: {
     port,

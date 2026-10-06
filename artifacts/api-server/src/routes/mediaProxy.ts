@@ -18,12 +18,12 @@ router.options("/media-proxy", (_req: Request, res: Response) => {
  * Resolves Google Drive URLs to direct download stream URLs
  */
 function resolveGoogleDriveUrl(rawUrl: string): string {
-  if (rawUrl.includes("drive.google.com")) {
+  if (rawUrl.includes("drive.google.com") || rawUrl.includes("drive.usercontent.google.com")) {
     const fileIdMatch =
       rawUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
       rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
     if (fileIdMatch && fileIdMatch[1]) {
-      return `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}&confirm=t`;
+      return `https://drive.usercontent.google.com/download?id=${fileIdMatch[1]}&export=download&confirm=t`;
     }
   }
   return rawUrl;
@@ -104,7 +104,7 @@ function streamRemoteMedia(
             (body.match(/id=([a-zA-Z0-9_-]+)/) ? body.match(/id=([a-zA-Z0-9_-]+)/)![1] : null);
 
           if (confirmMatch && idMatch) {
-            const confirmedUrl = `https://drive.google.com/uc?export=download&id=${idMatch}&confirm=${confirmMatch[1]}`;
+            const confirmedUrl = `https://drive.usercontent.google.com/download?id=${idMatch}&export=download&confirm=${confirmMatch[1]}`;
             return streamRemoteMedia(confirmedUrl, clientReq, clientRes, redirectCount + 1);
           }
 

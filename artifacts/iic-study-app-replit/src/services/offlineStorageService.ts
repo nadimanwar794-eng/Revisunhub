@@ -65,16 +65,19 @@ function normalizeDownloadUrl(rawUrl: string): string {
   if (!rawUrl) return '';
   let url = resolveTelegramUrl(rawUrl.trim());
 
-  // Handle relative URLs: prepend origin if needed
-  if (url.startsWith('/') && typeof window !== 'undefined') {
-    url = `${window.location.origin}${url}`;
+  // Strip origin if it points to current host so it stays a safe relative path
+  if (typeof window !== 'undefined' && url.startsWith(window.location.origin)) {
+    url = url.substring(window.location.origin.length);
   }
 
-  // Handle Google Drive links: convert view/sharing link to direct download
-  if (url.includes('drive.google.com') && !url.includes('export=download')) {
+  // Handle Google Drive links: convert view/sharing link to direct usercontent download
+  if (
+    (url.includes('drive.google.com') || url.includes('drive.usercontent.google.com')) &&
+    !url.includes('confirm=')
+  ) {
     const fileIdMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
     if (fileIdMatch && fileIdMatch[1]) {
-      return `https://drive.google.com/uc?export=download&id=${fileIdMatch[1]}&confirm=t`;
+      return `https://drive.usercontent.google.com/download?id=${fileIdMatch[1]}&export=download&confirm=t`;
     }
   }
 
@@ -140,17 +143,24 @@ export async function downloadAndSaveOfflineMedia(
   const targetUrl = normalizeDownloadUrl(rawUrl);
 
   const fetchBlobWithStreams = async (urlToFetch: string): Promise<Blob> => {
-    // 1. Try modern Fetch with streaming progress if body ReadableStream is supported
+    const isSameOriginOrRelative =
+      urlToFetch.startsWith('/') ||
+      (typeof window !== 'undefined' && urlToFetch.includes(window.location.host));
+    const credentialsMode: RequestCredentials = isSameOriginOrRelative ? 'same-origin' : 'omit';
+
+    // 1. Modern Fetch with streaming progress
     try {
-      const resp = await fetch(urlToFetch, { mode: 'cors', credentials: 'omit' });
+      const resp = await fetch(urlToFetch, { mode: 'cors', credentials: credentialsMode });
       if (resp.ok) {
         const contentLength = resp.headers.get('content-length');
         const total = contentLength ? parseInt(contentLength, 10) : 0;
-        const contentType = resp.headers.get('content-type') || (meta.kind === 'video' ? 'video/mp4' : 'application/octet-stream');
+        const contentType =
+          resp.headers.get('content-type') ||
+          (meta.kind === 'video' ? 'video/mp4' : meta.kind === 'audio' ? 'audio/mpeg' : 'application/octet-stream');
 
         // Check for HTML error response instead of media
         if (contentType.includes('text/html') && total < 100000) {
-          throw new Error('Server returned HTML instead of video stream');
+          throw new Error('Server returned HTML error page instead of video stream');
         }
 
         if (resp.body && total > 0 && onProgress) {
@@ -168,16 +178,24 @@ export async function downloadAndSaveOfflineMedia(
               onProgress(pct);
             }
           }
-          return new Blob(chunks, { type: contentType });
+          return new Blob(chunks as any, { type: contentType });
         } else {
           // Fallback to resp.blob() directly
           if (onProgress) onProgress(45);
           const b = await resp.blob();
+          if (b.type && b.type.includes('text/html') && b.size < 50000) {
+            throw new Error('Received HTML error response instead of media');
+          }
           if (onProgress) onProgress(90);
           return b;
         }
+      } else {
+        throw new Error(`Server returned HTTP ${resp.status}`);
       }
-    } catch (fetchErr) {
+    } catch (fetchErr: any) {
+      if (fetchErr?.message?.includes('HTTP ') || fetchErr?.message?.includes('HTML error')) {
+        throw fetchErr;
+      }
       console.log('[OfflineStorage] Fetch attempt error, trying XHR fallback:', urlToFetch, fetchErr);
     }
 
@@ -186,14 +204,17 @@ export async function downloadAndSaveOfflineMedia(
       const xhr = new XMLHttpRequest();
       xhr.open('GET', urlToFetch, true);
       xhr.responseType = 'blob';
-      xhr.timeout = 600000; // 10 minutes timeout for large media files
+      xhr.timeout = 180000; // 3 minutes timeout
+
+      if (isSameOriginOrRelative) {
+        xhr.withCredentials = true;
+      }
 
       xhr.onprogress = (e) => {
         if (e.lengthComputable && onProgress) {
           const pct = Math.round((e.loaded / e.total) * 100);
           onProgress(Math.min(99, pct));
         } else if (onProgress && e.loaded > 0) {
-          // If total length not sent by server (chunked transfer), simulate smooth progress
           const approxMb = e.loaded / (1024 * 1024);
           const simulated = Math.min(95, Math.round(15 + Math.atan(approxMb / 6) * (80 / (Math.PI / 2))));
           onProgress(simulated);
@@ -213,7 +234,7 @@ export async function downloadAndSaveOfflineMedia(
         }
       };
 
-      xhr.onerror = () => reject(new Error('Network error or CORS restriction during media download'));
+      xhr.onerror = () => reject(new Error('Network error or CORS restriction'));
       xhr.ontimeout = () => reject(new Error('Media download timed out'));
       xhr.send();
     });
@@ -222,56 +243,86 @@ export async function downloadAndSaveOfflineMedia(
   let blob: Blob | null = null;
   let lastError: any = null;
 
-  // 1. Try Direct Download (Works for same-origin or CORS-enabled CDNs)
-  try {
-    blob = await fetchBlobWithStreams(targetUrl);
-  } catch (directErr) {
-    lastError = directErr;
-    console.log('[OfflineStorage] Direct download skipped/blocked by CORS, trying internal proxy...', directErr);
+  // Build prioritized candidate download URLs
+  const candidateUrls: string[] = [];
+
+  // Candidate 1: Direct targetUrl (works for same-origin or CORS-enabled CDNs like Cloudinary)
+  candidateUrls.push(targetUrl);
+
+  // Candidate 2: If external absolute URL, route via internal /api/media-proxy
+  if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
+    candidateUrls.push(`/api/media-proxy?url=${encodeURIComponent(targetUrl)}`);
   }
 
-  // 2. Try Internal Streamer Route (/api/media-proxy?url=...)
-  if (!blob) {
-    try {
-      const internalProxyUrl = `/api/media-proxy?url=${encodeURIComponent(targetUrl)}`;
-      blob = await fetchBlobWithStreams(internalProxyUrl);
-    } catch (intProxyErr) {
-      lastError = intProxyErr;
-      console.warn('[OfflineStorage] Internal media-proxy failed for targetUrl, trying rawUrl...', intProxyErr);
+  // Candidate 3: Try rawUrl via internal proxy if different
+  if (rawUrl !== targetUrl && (rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
+    candidateUrls.push(`/api/media-proxy?url=${encodeURIComponent(rawUrl)}`);
+  }
+
+  // Candidate 4: If Google Drive link, add alternative direct endpoints
+  if (
+    targetUrl.includes('drive.google.com') ||
+    targetUrl.includes('drive.usercontent.google.com') ||
+    rawUrl.includes('drive.google.com')
+  ) {
+    const full = targetUrl + ' ' + rawUrl;
+    const driveMatch = full.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || full.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (driveMatch && driveMatch[1]) {
+      const gId = driveMatch[1];
+      const gDirect1 = `https://drive.usercontent.google.com/download?id=${gId}&export=download&confirm=t`;
+      const gDirect2 = `https://drive.google.com/uc?id=${gId}&export=download`;
+      candidateUrls.push(`/api/media-proxy?url=${encodeURIComponent(gDirect1)}`);
+      candidateUrls.push(`/api/media-proxy?url=${encodeURIComponent(gDirect2)}`);
     }
   }
 
-  // 3. Try rawUrl through Internal Streamer Route if different from targetUrl
-  if (!blob && rawUrl !== targetUrl) {
-    try {
-      const internalRawProxyUrl = `/api/media-proxy?url=${encodeURIComponent(rawUrl)}`;
-      blob = await fetchBlobWithStreams(internalRawProxyUrl);
-    } catch (intRawErr) {
-      lastError = intRawErr;
-      console.warn('[OfflineStorage] Internal media-proxy for rawUrl failed:', intRawErr);
+  // Candidate 5: If Telegram bot link, ensure /api/telegram/file route is tested
+  if (targetUrl.includes('api.telegram.org/file/bot') || rawUrl.includes('api.telegram.org/file/bot')) {
+    const full = targetUrl.includes('api.telegram.org/file/bot') ? targetUrl : rawUrl;
+    const tgMatch = full.match(/\/file\/bot([^/]+)\/(.+)$/);
+    if (tgMatch) {
+      candidateUrls.push(
+        `/api/telegram/file?path=${encodeURIComponent(tgMatch[2])}&token=${encodeURIComponent(tgMatch[1])}`
+      );
+      candidateUrls.push(`/api/telegram/file?path=${encodeURIComponent(tgMatch[2])}`);
     }
   }
 
-  // 4. Fallback to resilient CORS proxies if needed
-  if (!blob) {
-    const fallbackProxies = [
-      `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-    ];
-    for (const pUrl of fallbackProxies) {
-      try {
-        blob = await fetchBlobWithStreams(pUrl);
-        if (blob && blob.size > 1000) break;
-      } catch (err) {
-        lastError = err;
-        console.warn('[OfflineStorage] Fallback proxy attempt failed:', pUrl, err);
+  // Candidate 6: Public CORS proxy fallback
+  if (targetUrl.startsWith('http://') || targetUrl.startsWith('https://')) {
+    candidateUrls.push(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`);
+  }
+
+  // Deduplicate candidates preserving priority order
+  const uniqueCandidates = Array.from(new Set(candidateUrls.filter(Boolean)));
+
+  for (let i = 0; i < uniqueCandidates.length; i++) {
+    const candidate = uniqueCandidates[i];
+    try {
+      blob = await fetchBlobWithStreams(candidate);
+      if (blob && blob.size > 1000) {
+        break;
       }
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`[OfflineStorage] Attempt ${i + 1}/${uniqueCandidates.length} failed (${candidate}):`, err?.message);
     }
   }
 
   if (!blob || blob.size < 1000) {
-    const detail = lastError?.message ? ` (${lastError.message})` : '';
-    throw new Error(`Video/Media offline download nahi ho paya${detail}. Kripya internet connection check karein.`);
+    let cleanDetail = '';
+    if (lastError?.message) {
+      if (lastError.message.includes('CORS') || lastError.message.includes('Network error')) {
+        cleanDetail = 'Media host dwara download block kiya gaya ya link expired hai.';
+      } else if (lastError.message.includes('404')) {
+        cleanDetail = 'Media file server par nahi mili (File not found).';
+      } else if (lastError.message.includes('timed out')) {
+        cleanDetail = 'Download time limit exceed ho gaya. Kripya tezi internet par dobara koshish karein.';
+      } else {
+        cleanDetail = lastError.message;
+      }
+    }
+    throw new Error(cleanDetail || 'Media download nahi ho paya. Kripya apna internet connection check karein.');
   }
 
   const mimeType = blob.type || (meta.kind === 'video' ? 'video/mp4' : meta.kind === 'audio' ? 'audio/mpeg' : 'application/pdf');

@@ -269,7 +269,7 @@ router.post("/notifications/push", async (req, res) => {
     const token = bearerToken(req);
     if (!token) return res.status(401).json({ error: "Authentication required" });
     const caller = await getAuth(app).verifyIdToken(token);
-    if (broadcast && caller.admin !== true && caller.role !== "ADMIN" && caller.role !== "SUB_ADMIN") {
+    if (broadcast && type !== "STUDY_ROOM" && caller.admin !== true && caller.role !== "ADMIN" && caller.role !== "SUB_ADMIN") {
       return res.status(403).json({ error: "Only admins can broadcast notifications" });
     }
     const result = await sendPush(app, {

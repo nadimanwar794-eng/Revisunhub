@@ -66,6 +66,22 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, 'dist/public'),
     emptyOutDir: true,
+    sourcemap: false,
+    rollupOptions: {
+      maxParallelFileOps: 1,
+      cache: false,
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('lucide-react')) return 'vendor-icons';
+            if (id.includes('firebase')) return 'vendor-firebase';
+            if (id.includes('katex')) return 'vendor-katex';
+            if (id.includes('@radix-ui')) return 'vendor-radix';
+            return 'vendor-libs';
+          }
+        },
+      },
+    },
   },
   server: {
     port,

@@ -237,7 +237,6 @@ export const getSubjectsList = (classLevel: string, stream: string | null, board
           pool.speedyScience,
           pool.speedySocialScience,
           pool.sarSangrah,
-          pool.mcq,
       ].filter(Boolean);
 
       // Admin-defined Custom Books (Sar Sangrah / Speedy ki tarah). Stored under

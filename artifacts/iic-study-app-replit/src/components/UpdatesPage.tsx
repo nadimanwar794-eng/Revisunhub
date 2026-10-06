@@ -46,6 +46,7 @@ interface Props {
   appLogo?: string;
   onRestoreBottomNav?: () => void;
   isBottomNavVisible?: boolean;
+  initialSectionTab?: 'ADVANCE_TOOLS' | 'UPDATES';
 }
 
 interface EventItem {
@@ -116,11 +117,18 @@ export const UpdatesPage: React.FC<Props> = ({
   appLogo,
   onRestoreBottomNav,
   isBottomNavVisible = false,
+  initialSectionTab,
 }) => {
   const [activeBannerIdx, setActiveBannerIdx] = useState(0);
-  const [activeSectionTab, setActiveSectionTab] = useState<'ADVANCE_TOOLS' | 'UPDATES'>('ADVANCE_TOOLS');
+  const [activeSectionTab, setActiveSectionTab] = useState<'ADVANCE_TOOLS' | 'UPDATES'>(initialSectionTab || 'ADVANCE_TOOLS');
   const [now, setNow] = useState(Date.now());
   const [isClaiming, setIsClaiming] = useState(false);
+
+  useEffect(() => {
+    if (initialSectionTab) {
+      setActiveSectionTab(initialSectionTab);
+    }
+  }, [initialSectionTab]);
 
   const hasSchool = Boolean(userSchool || (user as any)?.schoolId);
   const hasCoaching = Boolean(userCoachingId || (user as any)?.coachingId || isCoachingAdmin);
@@ -644,9 +652,15 @@ export const UpdatesPage: React.FC<Props> = ({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <Sparkles size={16} className="text-amber-500 fill-amber-500 animate-pulse shrink-0" />
-              <h1 className="text-sm sm:text-base font-black tracking-tight truncate">Pro+</h1>
+              <h1 className="text-sm sm:text-base font-black tracking-tight truncate">
+                {activeSectionTab === 'UPDATES' ? 'Events & Offers' : 'Pro+'}
+              </h1>
             </div>
-            <p className="text-[10px] text-slate-400 font-medium hidden md:block truncate">1st: Advance Tools • 2nd: Updates</p>
+            <p className="text-[10px] text-slate-400 font-medium hidden md:block truncate">
+              {activeSectionTab === 'UPDATES'
+                ? 'All Live & Upcoming App Events • Exclusive Boosts & Discounts'
+                : '1st: Advance Tools • 2nd: Events & Updates'}
+            </p>
           </div>
         </div>
 
@@ -676,7 +690,7 @@ export const UpdatesPage: React.FC<Props> = ({
             </button>
           )}
           <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-            PRO+
+            {activeSectionTab === 'UPDATES' ? 'EVENT' : 'PRO+'}
           </span>
         </div>
       </div>
@@ -710,7 +724,7 @@ export const UpdatesPage: React.FC<Props> = ({
           }`}
           style={activeSectionTab === 'UPDATES' ? { background: themeBtnGrad } : {}}
         >
-          <span>📢 2nd: Updates ({eventsList.length} Events)</span>
+          <span>⚡ 2nd: Events ({eventsList.length})</span>
         </button>
       </div>
 

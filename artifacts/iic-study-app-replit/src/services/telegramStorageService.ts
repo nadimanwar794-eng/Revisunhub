@@ -82,7 +82,22 @@ function dataUrlToBlob(dataUrl: string, defaultMime = 'image/jpeg'): Blob {
  */
 export function resolveTelegramUrl(rawUrl: string): string {
   if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
-  return rawUrl.trim();
+  const trimmed = rawUrl.trim();
+
+  // If already a local proxy route, return as-is
+  if (trimmed.startsWith('/api/telegram/file') || trimmed.startsWith('/api/media-proxy')) {
+    return trimmed;
+  }
+
+  // Convert raw Telegram bot file URLs to local proxy URLs with full CORS & Range support
+  const tgMatch = trimmed.match(/\/file\/bot([^/]+)\/(.+)$/);
+  if (tgMatch) {
+    const token = tgMatch[1];
+    const path = tgMatch[2];
+    return `/api/telegram/file?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+  }
+
+  return trimmed;
 }
 
 /**
@@ -152,7 +167,7 @@ export async function uploadDirectToTelegram(
 
           const directUrl = filePath ? `https://api.telegram.org/file/bot${DEFAULT_BOT_TOKEN}/${filePath}` : '';
           const proxyUrl = filePath ? `/api/telegram/file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(fileName)}` : directUrl;
-          const resolvedUrl = directUrl || proxyUrl;
+          const resolvedUrl = proxyUrl || directUrl;
 
           if (opts.onProgress) opts.onProgress(100);
 

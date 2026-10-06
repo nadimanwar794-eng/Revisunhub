@@ -458,7 +458,7 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
       console.error('Download error:', err);
       setIsDownloading(false);
       const detail = err?.message ? `\n\nKaran: ${err.message}` : '';
-      alert(`Video in-app offline download nahi ho paya.${detail}\n\nKripya apna internet check karein ya thodi der baad dobara koshish karein.`);
+      alert(`Video in-app offline download nahi ho paya.${detail}\n\nKripya apna internet connection check karein ya thodi der baad dobara koshish karein.`);
     }
   };
 

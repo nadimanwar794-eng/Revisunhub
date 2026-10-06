@@ -9,8 +9,10 @@ export interface NstaQuickWheelModalProps {
   onQuickAccess: (action: 'VIDEO' | 'PROGRESS' | 'STARRED' | 'READING' | 'FLASHCARDS' | 'OFFLINE' | 'ACTIVITY' | 'CREDITS' | 'MISTAKES' | 'LEADERBOARD') => void;
   onOpenPedro?: () => void;
   onOpenPedro360?: () => void;
+  onOpenEvents?: () => void;
   onGoHome?: () => void;
   mistakeCount?: number;
+  activeEventsCount?: number;
   appName?: string;
   appLogo?: string;
   themePrimary?: string;
@@ -27,7 +29,7 @@ interface WheelToolItem {
   borderGlow: string;
   badge?: string;
   isPremium?: boolean;
-  type: 'MESSENGER' | 'QUICK' | 'PEDRO' | 'PEDRO_360';
+  type: 'MESSENGER' | 'QUICK' | 'PEDRO' | 'PEDRO_360' | 'EVENTS';
   action?: 'VIDEO' | 'PROGRESS' | 'STARRED' | 'READING' | 'FLASHCARDS' | 'OFFLINE' | 'ACTIVITY' | 'CREDITS' | 'MISTAKES' | 'LEADERBOARD';
 }
 
@@ -38,8 +40,10 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
   onQuickAccess,
   onOpenPedro,
   onOpenPedro360,
+  onOpenEvents,
   onGoHome,
   mistakeCount = 0,
+  activeEventsCount = 0,
   appName = 'NSTA',
   appLogo = '/branding/nsta-logo.svg',
   themePrimary = '#6366f1',
@@ -84,6 +88,17 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
       borderGlow: '#ec4899',
       isPremium: true,
       type: 'MESSENGER',
+    },
+    {
+      id: 'EVENTS',
+      title: 'Events & Offers',
+      fullName: 'Event',
+      shortLabel: 'Event',
+      emoji: '⚡',
+      bgGrad: 'linear-gradient(135deg, #f59e0b, #ef4444)',
+      borderGlow: '#f59e0b',
+      badge: activeEventsCount > 0 ? (activeEventsCount === 1 ? 'LIVE' : `${activeEventsCount} LIVE`) : undefined,
+      type: 'EVENTS',
     },
     {
       id: 'VIDEO',
@@ -163,6 +178,17 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
       borderGlow: '#06b6d4',
       type: 'PEDRO_360',
     },
+    {
+      id: 'OFFLINE',
+      title: 'Offline Storage & Downloads',
+      fullName: 'Offline Storage & Downloads',
+      shortLabel: 'Downloads',
+      emoji: '📥',
+      bgGrad: 'linear-gradient(135deg, #0284c7, #2563eb)',
+      borderGlow: '#0ea5e9',
+      type: 'QUICK',
+      action: 'OFFLINE',
+    },
   ];
 
   const totalTools = tools.length;
@@ -171,7 +197,11 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
   const handleLaunch = useCallback((tool: WheelToolItem) => {
     hapticStrong();
     onClose();
-    if (tool.type === 'PEDRO_360') {
+    if (tool.type === 'EVENTS') {
+      if (onOpenEvents) {
+        onOpenEvents();
+      }
+    } else if (tool.type === 'PEDRO_360') {
       if (onOpenPedro360) {
         onOpenPedro360();
       }
@@ -190,7 +220,7 @@ export const NstaQuickWheelModal: React.FC<NstaQuickWheelModalProps> = ({
     } else if (tool.action) {
       onQuickAccess(tool.action);
     }
-  }, [onClose, onOpenMessenger, onQuickAccess, onOpenPedro, onOpenPedro360]);
+  }, [onClose, onOpenMessenger, onQuickAccess, onOpenPedro, onOpenPedro360, onOpenEvents]);
 
   // Pointer drag to rotate wheel
   const handlePointerDown = (e: React.PointerEvent) => {

@@ -11,7 +11,7 @@ const DEFAULT_CHAT_BOT_TOKEN = process.env.TELEGRAM_CHAT_BOT_TOKEN || "893252419
 const DEFAULT_CHAT_CHANNEL_ID = process.env.TELEGRAM_CHAT_CHANNEL_ID || "-1004290996442";
 
 // Handle preflight OPTIONS for telegram routes
-router.options(["/telegram/file", "/telegram/upload", "/telegram/sendMessage", "/telegram/health"], (_req: Request, res: Response) => {
+router.options(["/telegram/file", "/telegram/upload", "/telegram/sendMessage", "/telegram/health"], (_req: Request, res: Response): void => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept, Authorization");
@@ -20,12 +20,12 @@ router.options(["/telegram/file", "/telegram/upload", "/telegram/sendMessage", "
 });
 
 // GET /api/telegram/health
-router.get("/telegram/health", async (_req: Request, res: Response) => {
+router.get("/telegram/health", async (_req: Request, res: Response): Promise<void> => {
   try {
     const tgRes = await fetch(`https://api.telegram.org/bot${DEFAULT_BOT_TOKEN}/getMe`);
     const data: any = await tgRes.json();
     if (data && data.ok) {
-      return res.json({
+      res.json({
         ok: true,
         bot: {
           username: data.result?.username,
@@ -33,18 +33,20 @@ router.get("/telegram/health", async (_req: Request, res: Response) => {
         },
         storageChatId: DEFAULT_STORAGE_CHAT_ID,
       });
+      return;
     }
-    return res.status(502).json({ ok: false, error: data?.description || "Telegram bot response not OK" });
+    res.status(502).json({ ok: false, error: data?.description || "Telegram bot response not OK" });
   } catch (err: any) {
-    return res.status(502).json({ ok: false, error: err?.message || "Failed to reach Telegram API" });
+    res.status(502).json({ ok: false, error: err?.message || "Failed to reach Telegram API" });
   }
 });
 
 // GET /api/telegram/file?path=...
-router.get("/telegram/file", (req: Request, res: Response) => {
+router.get("/telegram/file", (req: Request, res: Response): void => {
   const filePath = (req.query.path as string) || "";
   if (!filePath) {
-    return res.status(400).json({ error: "Missing 'path' query parameter" });
+    res.status(400).json({ error: "Missing 'path' query parameter" });
+    return;
   }
 
   const tgUrl = `https://api.telegram.org/file/bot${DEFAULT_BOT_TOKEN}/${filePath}`;
@@ -52,7 +54,8 @@ router.get("/telegram/file", (req: Request, res: Response) => {
   try {
     parsedUrl = new URL(tgUrl);
   } catch {
-    return res.status(400).json({ error: "Invalid target URL" });
+    res.status(400).json({ error: "Invalid target URL" });
+    return;
   }
 
   const requestHeaders: Record<string, string> = {
@@ -68,7 +71,8 @@ router.get("/telegram/file", (req: Request, res: Response) => {
     // Handle redirects
     if (remoteRes.statusCode && [301, 302, 303, 307, 308].includes(remoteRes.statusCode) && remoteRes.headers.location) {
       remoteRes.resume();
-      return res.redirect(remoteRes.headers.location);
+      res.redirect(remoteRes.headers.location);
+      return;
     }
 
     res.status(remoteRes.statusCode || 200);
@@ -101,11 +105,12 @@ router.get("/telegram/file", (req: Request, res: Response) => {
 });
 
 // POST /api/telegram/sendMessage
-router.post("/telegram/sendMessage", async (req: Request, res: Response) => {
+router.post("/telegram/sendMessage", async (req: Request, res: Response): Promise<void> => {
   const { message, text, chatId } = req.body || {};
   const content = message || text;
   if (!content) {
-    return res.status(400).json({ error: "Missing 'message' in request body" });
+    res.status(400).json({ error: "Missing 'message' in request body" });
+    return;
   }
 
   const targetChat = chatId || DEFAULT_CHAT_CHANNEL_ID;
@@ -123,9 +128,9 @@ router.post("/telegram/sendMessage", async (req: Request, res: Response) => {
       }),
     });
     const data = await tgRes.json();
-    return res.json(data);
+    res.json(data);
   } catch (err: any) {
-    return res.status(502).json({ error: err?.message || "Failed to post message to Telegram" });
+    res.status(502).json({ error: err?.message || "Failed to post message to Telegram" });
   }
 });
 

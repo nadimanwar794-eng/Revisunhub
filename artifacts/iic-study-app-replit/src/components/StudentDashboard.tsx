@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { SUPPORT_EMAIL } from '../constants';
 import { CustomPlayer } from './CustomPlayer';
 import { ModernVideoPlayer } from './ModernVideoPlayer';
@@ -84,7 +84,7 @@ import { isSequentialReadingEnforced, isFirstLessonOfSubject, SEQUENTIAL_STEPS }
 import { recordLogin, updateSessionDuration, getLoginHistory, formatDuration, formatLoginTime, type LoginSession } from "../utils/loginHistory";
 import { getNewContentItems, markContentItemSeen, markAllContentItemsSeen, formatContentDate, type ContentNotifItem } from "../utils/contentNotifications";
 import { clearAllRecentReads, saveRecentHomework, getRecentHomeworks, removeRecentHomework, getRecentChapters, removeRecentChapter, saveRecentLucent, getRecentLucent, removeRecentLucent, markNoteFullyRead, getFullyReadMap, markReadToday, getReadingStreak, getReadDates, getBestReadingDay, getTodayItemCount, type RecentChapterEntry, type RecentHwEntry, type RecentLucentEntry, type StreakInfo, type BestDay } from "../utils/recentReads";
-import { markRoutinePageRead, markRoutineMcqDone, isRoutinePageRead, isRoutineMcqDone, updateRoutineMcqScore, recordMistake, addPageTime, resetPageTime, calculatePageRequiredReadingSec, isLessonAutoComplete, isLessonRewarded, markLessonRewarded, markRoutinePageMcqDone, updateRoutinePageMcqScore, isRoutinePageMcqDone, getRoutinePageMcqScore, getAutoPageBoxState, getPageTime, getLessonStats, getMultiLessonStats, getProgressColor5, getProgressTicks, markRoutineSameTopicRevDone, isRoutineSameTopicRevDone, markRoutineTodayTopicRevDone, isRoutineTodayTopicRevDone, markRoutineMistakeRevDone, isRoutineMistakeRevDone, getSequentialPageStep, isPageSequenceCompleted, isSequentialLearningCompletedForLesson } from "../utils/routineAutoTrack";
+import { markRoutinePageRead, markRoutineMcqDone, isRoutinePageRead, isRoutineMcqDone, updateRoutineMcqScore, recordMistake, addPageTime, resetPageTime, calculatePageRequiredReadingSec, isLessonAutoComplete, isLessonRewarded, markLessonRewarded, markRoutinePageMcqDone, updateRoutinePageMcqScore, isRoutinePageMcqDone, getRoutinePageMcqScore, getAutoPageBoxState, getPageTime, getLessonStats, getMultiLessonStats, getProgressColor5, getProgressTicks, markRoutineSameTopicRevDone, isRoutineSameTopicRevDone, markRoutineTodayTopicRevDone, isRoutineTodayTopicRevDone, markRoutineMistakeRevDone, isRoutineMistakeRevDone, getSequentialPageStep, isPageSequenceCompleted, isSequentialLearningCompletedForLesson, getAutoTrackSnapshot } from "../utils/routineAutoTrack";
 import { loadRoutineData, saveRoutineData, checkAndResetDaily, generateDailyTask, advanceLessonInCycle, getDiscountFactor, hasActiveDiscount, getPageReadReward, LESSON_COMPLETE_REWARD, unlockRevisionLesson, getUserSubTier, getDailyClaimAmount, getUnclaimedCoins, ensureTodayClaimEntry, claimAllPendingCoins } from "../utils/routineStorage";
 import { SubscriptionEngine } from "../utils/engines/subscriptionEngine";
 import { PedroEngine } from "../utils/engines/pedroEngine";
@@ -775,6 +775,15 @@ export const StudentDashboard: React.FC<Props> = ({
     const handler = () => setThemeRevision(v => v + 1);
     window.addEventListener('nst-dark-theme-change', handler);
     return () => window.removeEventListener('nst-dark-theme-change', handler);
+  }, []);
+
+  useEffect(() => {
+    const handleOpenEventsPage = () => {
+      setUpdatesPageSectionTab('UPDATES');
+      setShowUpdatesPage(true);
+    };
+    window.addEventListener('nst-open-events-page', handleOpenEventsPage);
+    return () => window.removeEventListener('nst-open-events-page', handleOpenEventsPage);
   }, []);
 
   // Safe settings updater to prevent 'setSettings is not defined' crashes during inline edit / admin page edit
@@ -2595,6 +2604,7 @@ export const StudentDashboard: React.FC<Props> = ({
   const [allSchools, setAllSchools] = useState<any[]>([]);
   const [showSchoolPicker, setShowSchoolPicker] = useState(false);
   const [showCoachingPicker, setShowCoachingPicker] = useState(false);
+  const [showClassPickerDrawer, setShowClassPickerDrawer] = useState(false);
   const [rtdbCoachingList, setRtdbCoachingList] = useState<{ id: string; name: string; emoji?: string }[]>([]);
   const [coachingPickerLoading, setCoachingPickerLoading] = useState(false);
   const [isCoachingAdmin, setIsCoachingAdmin] = useState(false);
@@ -4828,6 +4838,13 @@ export const StudentDashboard: React.FC<Props> = ({
     } else if (action === 'FLASHCARDS') {
       onTabChange?.('FLASHCARDS_PAGE' as any);
     } else if (action === 'OFFLINE') {
+      setShowStarredPage(false);
+      setShowChat(false);
+      setShowRevisionHubScreen(false);
+      setShowProgressDashboard(false);
+      setShowMyRoutine(false);
+      setShowDailyEventPage(false);
+      setShowDownloadsHub(true);
       onTabChange?.('OFFLINE_PAGE' as any);
     } else if (action === 'ACTIVITY') {
       onTabChange?.('LOGIN_HISTORY_PAGE' as any);
@@ -5162,6 +5179,27 @@ export const StudentDashboard: React.FC<Props> = ({
 
   const [showRevisionHubScreen, setShowRevisionHubScreen] = useState(false);
   const [showUpdatesPage, setShowUpdatesPage] = useState(false);
+  const [updatesPageSectionTab, setUpdatesPageSectionTab] = useState<'ADVANCE_TOOLS' | 'UPDATES'>('ADVANCE_TOOLS');
+
+  // Count active events for badge on NSTA Quick Wheel and event indicators
+  const activeEventsCount = useMemo(() => {
+    let count = 0;
+    const nowMs = Date.now();
+    const chk = (en?: boolean, s?: string, e?: string) => {
+      if (!en) return false;
+      const st = s ? new Date(s).getTime() : 0;
+      const en2 = e ? new Date(e).getTime() : Infinity;
+      return nowMs >= st && nowMs < en2;
+    };
+    if (chk(settings?.scoreBoostEvent?.enabled, settings?.scoreBoostEvent?.startsAt, settings?.scoreBoostEvent?.endsAt)) count++;
+    if (chk(settings?.specialDiscountEvent?.enabled, settings?.specialDiscountEvent?.startsAt, settings?.specialDiscountEvent?.endsAt)) count++;
+    if (chk(settings?.globalFreeAccessEvent?.enabled ?? (settings?.isGlobalFreeMode as any), settings?.globalFreeAccessEvent?.startsAt, settings?.globalFreeAccessEvent?.endsAt)) count++;
+    if (chk(settings?.creditFreeEvent?.enabled ?? (settings?.isCreditFreeEvent as any), (settings?.creditFreeEvent as any)?.startsAt, (settings?.creditFreeEvent as any)?.endsAt)) count++;
+    if (chk((settings as any)?.dailyLimitBoostEvent?.enabled, (settings as any)?.dailyLimitBoostEvent?.startsAt, (settings as any)?.dailyLimitBoostEvent?.endsAt)) count++;
+    if (chk(settings?.themeStudioEvent?.enabled, settings?.themeStudioEvent?.startsAt, settings?.themeStudioEvent?.endsAt)) count++;
+    if (chk(settings?.creditBonusEvent?.enabled, settings?.creditBonusEvent?.startsAt, settings?.creditBonusEvent?.endsAt)) count++;
+    return count;
+  }, [settings]);
   const [forceShowBottomNav, setForceShowBottomNav] = useState(true);
 
   useEffect(() => {
@@ -6154,6 +6192,33 @@ export const StudentDashboard: React.FC<Props> = ({
                 }
                 saveRoutineData(_fu.id, _rdNew);
                 _rd = _rdNew;
+
+                // Dynamic Syllabus Completion % Notification
+                try {
+                  let _calcSyllabusPct = 100;
+                  const _allL = (_lucentNotes as any[]) || [];
+                  const _totP = _allL.reduce((s: number, l: any) => s + (l.pages?.length || 0), 0);
+                  if (_totP > 0) {
+                    const _snap = getAutoTrackSnapshot();
+                    const _rP = _allL.reduce((s: number, l: any) => {
+                      const _tp = l.pages?.length || 0;
+                      return s + Array.from({ length: _tp }, (_, i) => _snap.pageReads[`${l.id}__${i}`] ? 1 : 0).reduce((a: number, b: number) => a + b, 0);
+                    }, 0);
+                    const _mP = _allL.reduce((s: number, l: any) => {
+                      const _tp = l.pages?.length || 0;
+                      return s + Array.from({ length: _tp }, (_, i) => !!_snap.pageMcqDone?.[`${l.id}__${i}`] ? 1 : 0).reduce((a: number, b: number) => a + b, 0);
+                    }, 0);
+                    _calcSyllabusPct = Math.max(1, Math.min(100, Math.round(((_rP / _totP) * 100 + (_mP / _totP) * 100) / 2)));
+                  }
+                  void notifyStudyProgressMilestone({
+                    recipientIds: [_fuNow.id],
+                    senderId: _fuNow.id,
+                    milestone: 100,
+                    lessonTitle: _note?.lessonTitle || lessonId,
+                    subjectName: _note?.subject,
+                    percentComplete: _calcSyllabusPct,
+                  });
+                } catch {}
               }
             };
             checkLesson(_task.scienceLessonId);
@@ -10224,7 +10289,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   <button
                     onClick={() => {
                       if (_isEntryLocked) {
-                        showAlert('������ This lesson is locked! Get a Redeem Code from your Admin and enter it in Profile → Redeem tab.', 'INFO');
+                        showAlert('🔒 This lesson is locked! Get a Redeem Code from your Admin and enter it in Profile → Redeem tab.', 'INFO');
                         return;
                       }
                       if (_showEntryRoutineLock) {
@@ -13429,6 +13494,18 @@ export const StudentDashboard: React.FC<Props> = ({
 
               const goToClassHome = (c: string) => {
                 hapticStrong();
+                if (c === 'COMPETITION') {
+                  setSyllabusMode('COMPETITION');
+                  setActiveSessionClass('COMPETITION');
+                  setActiveSessionBoard(_board);
+                  setContentViewStep('SUBJECTS');
+                  setInitialParentSubject(null);
+                  setClass612SubjectView(null);
+                  setHomeworkSubjectView(null);
+                  setLucentCategoryView(false);
+                  onTabChange('COURSES');
+                  return;
+                }
                 setSyllabusMode('SCHOOL');
                 setActiveSessionClass(c as any);
                 setActiveSessionBoard(_board);
@@ -13452,288 +13529,864 @@ export const StudentDashboard: React.FC<Props> = ({
               // In dark mode the border color is too dark to use as text — use a bright tier color instead
               const tbTextColor = isDarkMode ? tierTheme.border : tbBorderColor;
 
-              const _c612Bg  = settings?.homeClass612CardBg     || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
-              const _c612Bdr = settings?.homeClass612CardBorder  || tierTheme.primary || '#6366f1';
-              const _cmpBg   = settings?.homeCompetitionCardBg   || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
-              const _cmpBdr  = settings?.homeCompetitionCardBorder || tierTheme.primary || '#2563eb';
               const _masterAll3D = settings?.homeAllCards3D ?? false;
-              const _cmp3D   = _masterAll3D || (settings?.homeCompetitionCard3D ?? false);
               const _card3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
-              const _scBg    = settings?.homeSchoolCardBg     || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
-              const _scBdr   = settings?.homeSchoolCardBorder  || tierTheme.primary;
-              const _sc3D    = _masterAll3D || (settings?.homeSchoolCard3D ?? false);
 
-              const ClassBtn = ({ c }: { c: string }) => {
-                const subjectCount = getSubjectsList(c, _stream, _board, settings).length;
-                const isBoard = boardClasses.includes(c);
-                const cardStyle3D = _card3D ? {
-                  background: _c612Bg,
-                  border: `2px solid ${_c612Bdr}`,
-                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${_c612Bdr}bb, 0 7px 18px ${_c612Bdr}28`,
-                  transform: 'translateY(-1px)',
-                } : {
-                  background: _c612Bg,
-                  border: `2px solid ${_c612Bdr}`,
-                  boxShadow: isDarkMode ? `0 4px 16px ${_c612Bdr}20` : '0 2px 8px rgba(0,0,0,0.05)',
-                };
-                return (
-                  <button
-                    key={c}
-                    onClick={() => goToClassHome(c)}
-                    className="nst-card-animated relative flex flex-col p-2.5 rounded-xl active:scale-95 transition-all text-left group"
-                    style={cardStyle3D}
-                  >
-                    {isBoard ? (
-                      <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-full text-[7px] font-black bg-amber-400 text-amber-900 leading-none shadow-xs">👑</span>
-                    ) : (
-                      <span className="absolute top-1.5 right-1.5 text-sm leading-none select-none opacity-70 group-hover:scale-110 transition-transform">{classEmojis[c]}</span>
-                    )}
-                    <p className="text-[7px] font-black uppercase tracking-widest mb-0.5" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>CLASS</p>
-                    <p className="text-2xl font-black leading-none mb-1" style={{ color: _c612Bdr }}>{c}</p>
-                    <p className="text-[9px] font-bold leading-tight" style={{ color: isDarkMode ? '#cbd5e1' : tierTheme.textPrimary || '#334155' }}>{subjectCount} Subj.</p>
-                  </button>
-                );
-              };
+              const isCompetitionSelected = String(activeSessionClass || user.classLevel) === 'COMPETITION' || syllabusMode === 'COMPETITION';
+              const currentSelectedClass = isCompetitionSelected ? 'COMPETITION' : String(activeSessionClass || user.classLevel || '10');
+              const classSubjects = getSubjectsList(currentSelectedClass, _stream, _board, settings);
+              const classSubjectCount = classSubjects.length;
+
+              const currentClassLessons = ((settings?.lucentNotes || []) as LucentNoteEntry[]).filter(
+                n => String(n.classLevel) === currentSelectedClass && (n.board === _board || !n.board)
+              );
+              const classLessonCount = currentClassLessons.length;
+
+              let classMcqCount = 0;
+              currentClassLessons.forEach((l: any) => {
+                (l.pages || []).forEach((p: any) => {
+                  if (Array.isArray(p.mcqs)) classMcqCount += p.mcqs.length;
+                });
+              });
+              const classAdminMcqLessons = ((settings?.mcqLessons || []) as any[]).filter(
+                (l: any) => String(l.classLevel) === currentSelectedClass
+              );
+              classAdminMcqLessons.forEach((l: any) => {
+                if (Array.isArray(l.mcqs)) classMcqCount += l.mcqs.length;
+              });
+
+              // Competition lessons & MCQs for Govt. Exams mode
+              const compLessons = ((settings?.lucentNotes || []) as LucentNoteEntry[]).filter(
+                n => n.classLevel === 'COMPETITION' || !n.classLevel
+              );
+              let compMcqCount = 0;
+              compLessons.forEach((l: any) => {
+                (l.pages || []).forEach((p: any) => {
+                  if (Array.isArray(p.mcqs)) compMcqCount += p.mcqs.length;
+                });
+              });
+              (compMcqPracticeLessons || []).forEach((l: any) => {
+                if (Array.isArray(l.mcqs)) compMcqCount += l.mcqs.length;
+              });
+
+              let classTimeSecs = 0;
+              try {
+                const statsMap = computeAllSubjectStats(currentClassLessons, currentSelectedClass, _board);
+                Object.values(statsMap).forEach((s: any) => {
+                  classTimeSecs += (s.totalTimeSecs || 0);
+                });
+              } catch {}
+
+              const formattedClassStudyTime = classTimeSecs < 60
+                ? `${classTimeSecs}s`
+                : classTimeSecs < 3600
+                ? `${Math.round(classTimeSecs / 60)} min`
+                : `${(classTimeSecs / 3600).toFixed(1)} hrs`;
+
+              // Dynamic theme-derived styles so all Home page cards adapt when theme updates
+              const themePrimary = tierTheme.primary || '#6366f1';
+              const themeMid = tierTheme.mid || tierTheme.primary || '#8b5cf6';
+              const themeBorder = (tierTheme as any).cardBorder || (tierTheme as any).border || themePrimary;
+              const themeCardBg = isDarkMode
+                ? ((tierTheme as any).cardBg && (tierTheme as any).cardBg !== '#ffffff'
+                    ? (tierTheme as any).cardBg
+                    : `linear-gradient(135deg, ${tierTheme.borderSoft || 'rgba(99,102,241,0.12)'} 0%, rgba(15,23,42,0.92) 100%)`)
+                : ((tierTheme as any).cardBg || '#ffffff');
+              const themeBtnGrad = tierTheme.btnGrad || `linear-gradient(135deg, ${themePrimary}, ${themeMid})`;
+              const themeShadow = isDarkMode
+                ? `0 4px 22px ${tierTheme.shadowColor || `${themePrimary}30`}`
+                : `0 4px 18px ${tierTheme.shadowColor || 'rgba(0,0,0,0.06)'}`;
+              const themeChipBg = isDarkMode ? 'rgba(255,255,255,0.08)' : `${themePrimary}12`;
+              const themeChipBorder = isDarkMode ? 'rgba(255,255,255,0.14)' : `${themePrimary}25`;
+              const themeChipText = isDarkMode ? '#e2e8f0' : (tierTheme.textPrimary || '#1e293b');
 
               return (
-                <div className="space-y-5 mb-2">
+                <div className="space-y-4 mb-2">
+                  {/* ── 1. SELECTED TARGET / CLASS CARD (DYNAMIC SCHOOL OR GOVT. EXAM) ── */}
                   <div id="home-class-6-12-card" className="space-y-2">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="flex-1 h-px" style={{ background: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
-                      <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>Select Your Class</span>
-                      <span className="flex-1 h-px" style={{ background: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
-                    </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      {rows[0].map(c => <ClassBtn key={c} c={c} />)}
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {rows[1].map(c => <ClassBtn key={c} c={c} />)}
-                    </div>
-                  </div>
-
-                  {/* ── COMPETITIVE · GOVT. EXAMS ── */}
-                  {isHomeSectionVisible('home_govt_exams', settings) && (
-                    <div>
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="flex-1 h-px" style={{ background: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
-                        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>Competitive · Govt. Exams</span>
-                        <span className="flex-1 h-px" style={{ background: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
+                          {isCompetitionSelected ? 'Competitive Mode' : 'Academic Class'}
+                        </span>
                       </div>
                       <button
-                        id="home-competition-card"
-                        onClick={() => { hapticStrong(); setSyllabusMode('COMPETITION'); setActiveSessionClass('COMPETITION'); setActiveSessionBoard(_board); setContentViewStep('SUBJECTS'); setInitialParentSubject(null); setClass612SubjectView(null); setHomeworkSubjectView(null); setLucentCategoryView(false); onTabChange('COURSES'); }}
-                        className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all group"
-                        style={_cmp3D ? { background: _cmpBg, border: `2px solid ${_cmpBdr}`, boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${_cmpBdr}bb, 0 7px 18px ${_cmpBdr}28`, transform: 'translateY(-1px)' } : { background: _cmpBg, border: `2px solid ${_cmpBdr}`, boxShadow: isDarkMode ? `0 4px 20px ${_cmpBdr}20` : '0 2px 10px rgba(0,0,0,0.06)' }}
+                        type="button"
+                        onClick={() => setShowClassPickerDrawer(true)}
+                        className="px-2.5 py-1 rounded-xl text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-xs border"
+                        style={{
+                          background: isDarkMode ? 'rgba(255,255,255,0.06)' : `${themePrimary}14`,
+                          color: themePrimary,
+                          borderColor: `${themePrimary}40`,
+                        }}
                       >
-                        <div className="flex items-center justify-between px-4 py-4">
-                          <div className="flex-1 min-w-0 pr-2">
-                            <div className="flex items-center gap-1.5 mb-1">
+                        <span>{isCompetitionSelected ? '🏛️ Govt. Exams' : `Class ${currentSelectedClass}`}</span>
+                        <ChevronDown size={13} className="text-slate-400" />
+                        <span className="text-[10px] opacity-75 font-bold">Change</span>
+                      </button>
+                    </div>
+
+                    <button
+                      id="home-selected-class-card"
+                      onClick={() => goToClassHome(isCompetitionSelected ? 'COMPETITION' : currentSelectedClass)}
+                      className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all group cursor-pointer"
+                      style={_card3D ? {
+                        background: themeCardBg,
+                        border: `2px solid ${themeBorder}`,
+                        boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
+                        transform: 'translateY(-1px)',
+                      } : {
+                        background: themeCardBg,
+                        border: `2px solid ${themeBorder}`,
+                        boxShadow: themeShadow,
+                      }}
+                    >
+                      <div className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0 pr-1">
+                            <div className="flex items-center gap-1.5 mb-1.5">
                               <span
                                 className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0"
                                 style={{
-                                  background: `${_cmpBdr}18`,
-                                  color: _cmpBdr,
-                                  border: `1px solid ${_cmpBdr}35`
+                                  background: `${themePrimary}18`,
+                                  color: themePrimary,
+                                  border: `1px solid ${themePrimary}35`,
                                 }}
                               >
-                                Competitive Mode
+                                {isCompetitionSelected ? 'Competitive Mode · Govt. Exams' : `Class ${currentSelectedClass} · Academic Mode`}
                               </span>
+                              {!isCompetitionSelected && boardClasses.includes(currentSelectedClass) && (
+                                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-amber-400 text-amber-900 shadow-xs">
+                                  👑 Board Class
+                                </span>
+                              )}
                             </div>
-                            <h3 className="text-[24px] font-black leading-tight mb-1" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>Govt. Exams</h3>
-                            <div className="mb-3 flex items-center flex-wrap gap-1.5">
-                              <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-700'}`}>
-                                📚 7 Books
-                              </span>
-                              <span className="text-[10px] font-medium" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
-                                SSC · UPSC · Railway · BPSC · BSSC · Police
-                              </span>
+                            <h3 className="text-[22px] sm:text-[24px] font-black leading-tight mb-1.5" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                              {isCompetitionSelected ? 'Govt. Exams' : `Class ${currentSelectedClass}`}
+                            </h3>
+                            <div className="flex items-center flex-wrap gap-1.5">
+                              {isCompetitionSelected ? (
+                                <>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    📚 7 Books
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    🎯 SSC · UPSC · Railway · Police
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    ⚡ {compMcqCount > 0 ? `${compMcqCount}+ MCQs` : '10,000+ MCQs'}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    ⏱️ General Studies
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    📚 {classSubjectCount} Subjects
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    📖 {classLessonCount} Lessons
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    ⚡ {classMcqCount} MCQs
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    ⏱️ {formattedClassStudyTime} Studied
+                                  </span>
+                                </>
+                              )}
                             </div>
-                            <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-[11px] font-black text-white shadow-xs group-hover:translate-x-0.5 transition-transform" style={{ background: tierTheme.btnGrad || _cmpBdr }}>
-                              <span>Tap to open</span>
-                              <span>→</span>
-                            </span>
                           </div>
-                          <div className="text-[56px] leading-none shrink-0 select-none group-hover:scale-105 transition-transform">🏛️</div>
+                          <div className="text-[44px] sm:text-[50px] leading-none shrink-0 select-none group-hover:scale-105 transition-transform pt-0.5">
+                            {isCompetitionSelected ? '🏛️' : (classEmojis[currentSelectedClass] || '🎓')}
+                          </div>
                         </div>
-                      </button>
-                    </div>
+
+                        {/* Standard unified bottom button */}
+                        <div className="mt-3.5 pt-2.5 border-t w-full" style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                          <div
+                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                            style={{
+                              background: themeBtnGrad,
+                              color: '#ffffff',
+                              boxShadow: `0 4px 14px ${themePrimary}35`
+                            }}
+                          >
+                            <BookOpen size={14} />
+                            <span>{isCompetitionSelected ? 'Open Govt. Exams Syllabus' : `Open Class ${currentSelectedClass} Syllabus`}</span>
+                            <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {/* ── SELECT CLASS OR TARGET EXAM POPUP (MATCHES 3-DOT MENU SIZE & STYLE) ── */}
+                  {showClassPickerDrawer && createPortal(
+                    <div className="fixed inset-0 z-[999999] pointer-events-auto flex items-center justify-center p-3 sm:p-4">
+                      {/* Backdrop — tap anywhere outside to close */}
+                      <div
+                        className="fixed inset-0 bg-black/40 backdrop-blur-[2px] animate-in fade-in duration-150"
+                        onClick={() => setShowClassPickerDrawer(false)}
+                        onTouchStart={() => setShowClassPickerDrawer(false)}
+                      />
+                      {/* Compact popup panel matching the exact width & styling of the 3-dot menu */}
+                      <div
+                        data-no-topbar-swipe
+                        className={`relative w-72 sm:w-80 max-w-[calc(100vw-24px)] rounded-2xl shadow-2xl border z-[1000000] animate-in fade-in zoom-in-95 duration-150 overflow-y-auto max-h-[calc(100dvh-80px)] ${
+                          isCurrentBlue
+                            ? 'bg-[#0d1726] border-[#1e2f4f] text-white'
+                            : isCurrentDark
+                            ? 'bg-[#111827] border-slate-800 text-white'
+                            : 'bg-white border-slate-200 text-slate-800'
+                        }`}
+                        style={
+                          isCurrentBlue && settings?.blueThemeBackground
+                            ? { backgroundColor: settings.blueThemeBackground }
+                            : isCurrentDark && settings?.darkThemeBackground
+                            ? { backgroundColor: settings.darkThemeBackground }
+                            : isCurrentLight && settings?.lightThemeBackground
+                            ? { backgroundColor: settings.lightThemeBackground }
+                            : undefined
+                        }
+                      >
+                        {/* Header matching 3-dot menu */}
+                        <div className={`flex items-center justify-between px-4 py-3 border-b ${isCurrentBlue ? 'border-[#1e2f4f]' : isCurrentDark ? 'border-slate-800' : 'border-slate-100'}`}>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm">🎯</span>
+                            <span className="text-xs font-black uppercase tracking-wider text-slate-400">Select Class / Target</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowClassPickerDrawer(false)}
+                            className={`p-1.5 rounded-full transition-colors ${isDarkMode ? 'hover:bg-white/10 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+                          </button>
+                        </div>
+
+                        {/* School & Board Classes Grid */}
+                        <div className={`px-3.5 py-3 border-b ${isCurrentBlue ? 'border-[#1e2f4f]' : isCurrentDark ? 'border-slate-800' : 'border-slate-100'}`}>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">School & Board Classes</p>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {['6', '7', '8', '9', '10', '11', '12'].map((c) => {
+                              const isSelected = !isCompetitionSelected && String(c) === currentSelectedClass;
+                              const isBoard = boardClasses.includes(c);
+                              const subjCount = getSubjectsList(c, _stream, _board, settings).length;
+                              return (
+                                <button
+                                  key={c}
+                                  type="button"
+                                  onClick={() => {
+                                    hapticMedium();
+                                    setActiveSessionClass(c as any);
+                                    setSyllabusMode('SCHOOL');
+                                    try {
+                                      localStorage.setItem('nst_user_class', c);
+                                      localStorage.setItem('nst_session_class', c);
+                                    } catch {}
+                                    setShowClassPickerDrawer(false);
+                                  }}
+                                  className={`flex items-center justify-between px-2.5 py-2 rounded-xl text-left border transition-all cursor-pointer active:scale-95 ${
+                                    isSelected
+                                      ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/60 shadow-xs'
+                                      : isCurrentBlue
+                                      ? 'border-[#1e2f4f] bg-[#132038]/70 hover:bg-[#182744] text-slate-200'
+                                      : isCurrentDark
+                                      ? 'border-slate-800 bg-slate-800/60 hover:bg-slate-800 text-slate-200'
+                                      : 'border-slate-200 bg-slate-50/80 hover:bg-slate-100 text-slate-800'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-base shrink-0">{classEmojis[c]}</span>
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-xs font-black truncate">Class {c}</span>
+                                        {isBoard && <span className="text-[10px]">👑</span>}
+                                      </div>
+                                      <span className="text-[9px] font-semibold text-slate-400 block -mt-0.5">
+                                        {subjCount} Subj
+                                      </span>
+                                    </div>
+                                  </div>
+                                  {isSelected && (
+                                    <span className="w-4 h-4 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] shrink-0 font-bold">
+                                      ✓
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Competitive Exams Section */}
+                        <div className="px-3.5 py-3">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Competitive Exams</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              hapticMedium();
+                              setActiveSessionClass('COMPETITION');
+                              setSyllabusMode('COMPETITION');
+                              try {
+                                localStorage.setItem('nst_user_class', 'COMPETITION');
+                                localStorage.setItem('nst_session_class', 'COMPETITION');
+                              } catch {}
+                              setShowClassPickerDrawer(false);
+                            }}
+                            className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left border transition-all cursor-pointer active:scale-95 ${
+                              isCompetitionSelected
+                                ? 'border-amber-500 bg-amber-50/80 dark:bg-amber-950/60 shadow-xs'
+                                : isCurrentBlue
+                                ? 'border-[#1e2f4f] bg-[#132038]/70 hover:bg-[#182744] text-slate-200'
+                                : isCurrentDark
+                                ? 'border-slate-800 bg-slate-800/60 hover:bg-slate-800 text-slate-200'
+                                : 'border-slate-200 bg-slate-50/80 hover:bg-slate-100 text-slate-800'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <span className="text-2xl shrink-0">🏛️</span>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-black truncate">Govt. Exams & Competition</span>
+                                  <span className="px-1 py-0.2 rounded-full text-[8px] font-black bg-amber-400 text-amber-900">
+                                    Special
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 font-medium truncate mt-0.5">
+                                  SSC · Railway · UPSC · BPSC · Police
+                                </p>
+                              </div>
+                            </div>
+                            {isCompetitionSelected ? (
+                              <span className="w-5 h-5 rounded-full bg-amber-500 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                                ✓
+                              </span>
+                            ) : (
+                              <span className="text-[11px] font-bold text-slate-400 shrink-0">
+                                Select →
+                              </span>
+                            )}
+                          </button>
+
+                          {/* Quick CTA button */}
+                          <div className="pt-2.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowClassPickerDrawer(false);
+                                goToClassHome(isCompetitionSelected ? 'COMPETITION' : currentSelectedClass);
+                              }}
+                              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black transition cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+                            >
+                              <span>{isCompetitionSelected ? 'Open Govt. Exams Syllabus' : `Open Class ${currentSelectedClass} Syllabus`}</span>
+                              <span>→</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>,
+                    document.body
                   )}
 
+                  {/* ── 2. PRACTICE SET CARD (COMPETITION MCQ PRACTICE EXTRACTED TO HOME PAGE) ── */}
+                  <div id="home-practice-set-card" className="w-full">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        hapticStrong();
+                        setSyllabusMode('COMPETITION');
+                        setActiveSessionClass('COMPETITION');
+                        setSelectedSubject({ id: 'mcq', name: 'Practice Set' } as any);
+                        setHomeworkSubjectView('mcq');
+                        setHwSubjectOpenedFrom('HOME');
+                        setContentViewStep('SUBJECTS');
+                        onTabChange('COURSES');
+                      }}
+                      className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all group cursor-pointer"
+                      style={_card3D ? {
+                        background: themeCardBg,
+                        border: `2px solid ${themeBorder}`,
+                        boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
+                        transform: 'translateY(-1px)',
+                      } : {
+                        background: themeCardBg,
+                        border: `2px solid ${themeBorder}`,
+                        boxShadow: themeShadow,
+                      }}
+                    >
+                      <div className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0 pr-1">
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <span
+                                className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0"
+                                style={{
+                                  background: `${themePrimary}18`,
+                                  color: themePrimary,
+                                  border: `1px solid ${themePrimary}35`,
+                                }}
+                              >
+                                Interactive Drill · Live MCQs
+                              </span>
+                              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-emerald-500 text-white shadow-xs">
+                                ⚡ High Yield
+                              </span>
+                            </div>
+                            <h3 className="text-[22px] sm:text-[24px] font-black leading-tight mb-1.5" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                              Practice Set
+                            </h3>
+                            <div className="flex items-center flex-wrap gap-1.5">
+                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                🧠 {compMcqPracticeLessons.length > 0 ? `${compMcqPracticeLessons.length} Practice Sets` : '10+ Practice Sets'}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                🎯 Topic-wise & Mixed
+                              </span>
+                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                ⚡ Speed & Accuracy
+                              </span>
+                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                🏆 Leaderboard & Review
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-[44px] sm:text-[50px] leading-none shrink-0 select-none group-hover:scale-105 transition-transform pt-0.5">
+                            📝
+                          </div>
+                        </div>
 
+                        {/* Standard unified bottom button */}
+                        <div className="mt-3.5 pt-2.5 border-t w-full" style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                          <div
+                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                            style={{
+                              background: themeBtnGrad,
+                              color: '#ffffff',
+                              boxShadow: `0 4px 14px ${themePrimary}35`
+                            }}
+                          >
+                            <Sparkles size={14} />
+                            <span>Start Practice Set</span>
+                            <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  </div>
 
-
-                  {/* ── REVISION HUB & MY ROUTINE CARDS (HOME PAGE) ── */}
-                  {(isHomeSectionVisible('home_revision_hub', settings) || isHomeSectionVisible('home_my_routine', settings)) && (
+                  {/* ── 3. DAILY CHALLENGE, LIVE STUDY ROOM, REVISION HUB & MY MISTAKES (HOME PAGE) ── */}
+                  {(isHomeSectionVisible('home_revision_hub', settings) || isHomeSectionVisible('home_my_routine', settings) || isHomeSectionVisible('home_promo_banners', settings)) && (
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="flex-1 h-px" style={{ background: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
-                        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>Routine & Revision Tools</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>Daily Challenge, Study Room, Revision & Mistakes</span>
                         <span className="flex-1 h-px" style={{ background: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }} />
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {/* ── 1. MY ROUTINE CARD (ABOVE REVISION HUB & ANIMATES FIRST) ── */}
-                        {isHomeSectionVisible('home_my_routine', settings) && (() => {
-                          const _rtBg  = settings?.homeMyRoutineCardBg || settings?.homeClass612CardBg || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
-                          const _rtBdr = settings?.homeMyRoutineCardBorder || settings?.homeClass612CardBorder || tierTheme.primary || '#2563eb';
-                          const _rt3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
+                        {/* ── DAILY CHALLENGE CARD (HOME PAGE) ── */}
+                        {(() => {
+                          const activeDaily = (activeChallenges20 || []).find(c => {
+                            const isDC = isDailyChallenge20(c);
+                            if (!isDC) return false;
+                            const targetClass = String(activeSessionClass || (user as any)?.classLevel || '10');
+                            return !c.classLevel || String(c.classLevel) === targetClass;
+                          }) || (activeChallenges20 || []).find(c => isDailyChallenge20(c));
+
+                          const dailyAttempt = activeDaily ? testAttempts[activeDaily.id] : null;
+                          const isDailyDone = dailyAttempt?.isCompleted === true;
+                          const isDailyClaimed = Boolean(dailyAttempt?.rewardClaimed);
+
                           return (
-                            <div id="home-routine-card" className="w-full home-routine-card-anim flex flex-col">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  hapticStrong();
-                                  setShowMyRoutine(true);
+                            <div id="home-daily-challenge-card" className="w-full home-routine-card-anim flex flex-col">
+                              <div
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
+                                style={_card3D ? {
+                                  background: themeCardBg,
+                                  border: `2px solid ${themeBorder}`,
+                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
+                                  transform: 'translateY(-1px)'
+                                } : {
+                                  background: themeCardBg,
+                                  border: `2px solid ${themeBorder}`,
+                                  boxShadow: themeShadow
                                 }}
-                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
-                                    style={_rt3D ? {
-                                      background: _rtBg,
-                                      border: `2px solid ${_rtBdr}`,
-                                      boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${_rtBdr}bb, 0 7px 18px ${_rtBdr}28`,
-                                      transform: 'translateY(-1px)'
-                                    } : {
-                                      background: _rtBg,
-                                      border: `2px solid ${_rtBdr}`,
-                                      boxShadow: isDarkMode ? `0 4px 20px ${_rtBdr}20` : '0 2px 10px rgba(0,0,0,0.06)'
-                                    }}
-                                  >
-                                    <div className="space-y-3 w-full">
-                                      <div className="flex items-start justify-between gap-2">
-                                        <div className="flex items-center gap-3">
-                                          <div
-                                            className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
-                                            style={{ background: `${_rtBdr}18`, color: _rtBdr }}
-                                          >
-                                            📅
-                                          </div>
-                                          <div>
-                                            <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
-                                              My Routine
-                                            </h4>
-                                            <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
-                                              Daily timetable & study target
-                                            </p>
-                                          </div>
-                                        </div>
-                                        <span
-                                          className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
-                                          style={{
-                                            background: `${_rtBdr}18`,
-                                            color: _rtBdr,
-                                            border: `1px solid ${_rtBdr}35`
-                                          }}
-                                        >
-                                          Daily Planner
-                                        </span>
+                              >
+                                <div className="space-y-3 w-full">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-3">
+                                      <div
+                                        className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
+                                        style={{ background: `${themePrimary}18`, color: themePrimary }}
+                                      >
+                                        🚀
                                       </div>
+                                      <div>
+                                        <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                                          Daily Challenge
+                                        </h4>
+                                        <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
+                                          100 MCQs timed test • Live daily test
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          window.dispatchEvent(new CustomEvent('iic-open-daily-challenge-leaderboard'));
+                                        }}
+                                        className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer active:scale-95 transition-transform"
+                                        style={{
+                                          background: `${themePrimary}18`,
+                                          color: themePrimary,
+                                          border: `1px solid ${themePrimary}35`
+                                        }}
+                                        title="View Leaderboard & Result"
+                                      >
+                                        🏆 Result
+                                      </button>
+                                      <span
+                                        className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider flex items-center gap-1"
+                                        style={{
+                                          background: `${themePrimary}18`,
+                                          color: themePrimary,
+                                          border: `1px solid ${themePrimary}35`
+                                        }}
+                                      >
+                                        +100 XP
+                                      </span>
+                                    </div>
+                                  </div>
 
                                   <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-bold">
-                                    <span className={`px-2 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-600'}`}>
-                                      📅 Daily Timetable
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      🎯 100 MCQs
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-600'}`}>
-                                      ⏱️ Study Targets
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      ⏱️ 60 Min
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-600'}`}>
-                                      🔥 Habit Streak
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      🏆 Fair Seeded
                                     </span>
                                   </div>
                                 </div>
 
-                                <div
-                                  className="mt-3.5 pt-2.5 border-t w-full flex items-center justify-between"
-                                  style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
-                                >
-                                  <span className="text-[11px] font-black" style={{ color: _rtBdr }}>
-                                    Open My Routine →
-                                  </span>
+                                <div className="mt-3.5 pt-2.5 border-t w-full" style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                                  {isDailyDone ? (
+                                    isDailyClaimed ? (
+                                      <div className="w-full py-2.5 px-4 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center justify-center gap-1.5 text-xs font-black text-emerald-700 dark:text-emerald-300">
+                                        <span>✅ Aaj Ka Challenge Complete (+100 XP Claimed)</span>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (activeDaily) handleClaimDailyChallenge20(activeDaily.id);
+                                        }}
+                                        className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98"
+                                        style={{ background: themeBtnGrad, color: '#ffffff', boxShadow: `0 4px 14px ${themePrimary}35` }}
+                                      >
+                                        <span>🎁 Claim +100 XP Reward</span>
+                                      </button>
+                                    )
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        hapticStrong();
+                                        if (activeDaily && onStartWeeklyTest) {
+                                          onStartWeeklyTest({
+                                            id: activeDaily.id,
+                                            name: activeDaily.title,
+                                            description: activeDaily.description || "Aaj ka Daily Challenge 2.0",
+                                            date: new Date().toISOString(),
+                                            durationMinutes: Math.min(activeDaily.durationMinutes || 60, 60),
+                                            isCompleted: false,
+                                            score: 0,
+                                            totalQuestions: activeDaily.questions.length,
+                                            questions: activeDaily.questions,
+                                            classLevel: activeDaily.classLevel,
+                                            challengeType: isDailyChallenge20(activeDaily) ? 'DAILY_CHALLENGE' : 'WEEKLY_TEST',
+                                          } as any);
+                                        } else {
+                                          setShowDailyEventPage(true);
+                                        }
+                                      }}
+                                      className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98"
+                                      style={{
+                                        background: themeBtnGrad,
+                                        color: '#ffffff',
+                                        boxShadow: `0 4px 14px ${themePrimary}35`
+                                      }}
+                                    >
+                                      <Rocket size={14} />
+                                      <span>Start Daily Challenge</span>
+                                      <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                                    </button>
+                                  )}
                                 </div>
-                              </button>
+                              </div>
                             </div>
                           );
                         })()}
 
-                    {/* ── 2. REVISION HUB CARD (BELOW ROUTINE & ANIMATES AFTER ROUTINE) ── */}
-                    {isHomeSectionVisible('home_revision_hub', settings) && (() => {
-                      const _revBg  = settings?.homeClass612CardBg     || (tierTheme as any).cardBg || tierTheme.profileCardBg || '#ffffff';
-                      const _revBdr = settings?.homeClass612CardBorder || tierTheme.primary || '#6366f1';
-                      const _rev3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
-                      return (
-                        <div id="home-revision-card" className="w-full home-revhub-card-anim flex flex-col">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              hapticStrong();
-                              openRevisionHubSafely({ isFromRoutine: false });
-                            }}
-                            className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
-                            style={_rev3D ? {
-                              background: _revBg,
-                              border: `2px solid ${_revBdr}`,
-                              boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${_revBdr}bb, 0 7px 18px ${_revBdr}28`,
-                              transform: 'translateY(-1px)'
-                            } : {
-                              background: _revBg,
-                              border: `2px solid ${_revBdr}`,
-                              boxShadow: isDarkMode ? `0 4px 20px ${_revBdr}20` : '0 2px 10px rgba(0,0,0,0.06)'
-                            }}
-                          >
-                            <div className="space-y-3 w-full">
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-center gap-3">
-                                  <div
-                                    className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
-                                    style={{ background: `${_revBdr}18`, color: _revBdr }}
-                                  >
-                                    🧠
+                        {/* ── LIVE STUDY ROOM CARD (HOME PAGE) ── */}
+                        {(() => {
+                          return (
+                            <div id="home-study-room-card" className="w-full home-routine-card-anim flex flex-col">
+                              <div
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
+                                style={_card3D ? {
+                                  background: themeCardBg,
+                                  border: `2px solid ${themeBorder}`,
+                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
+                                  transform: 'translateY(-1px)'
+                                } : {
+                                  background: themeCardBg,
+                                  border: `2px solid ${themeBorder}`,
+                                  boxShadow: themeShadow
+                                }}
+                              >
+                                <div className="space-y-3 w-full">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-3">
+                                      <div
+                                        className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
+                                        style={{ background: `${themePrimary}18`, color: themePrimary }}
+                                      >
+                                        👥
+                                      </div>
+                                      <div>
+                                        <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                                          Live Study Room
+                                        </h4>
+                                        <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
+                                          Virtual study room with peers & timer
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <span
+                                      className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
+                                      style={{
+                                        background: `${themePrimary}18`,
+                                        color: themePrimary,
+                                        border: `1px solid ${themePrimary}35`
+                                      }}
+                                    >
+                                      1-Tap Invite
+                                    </span>
                                   </div>
-                                  <div>
-                                    <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
-                                      Revision Hub
-                                    </h4>
-                                    <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
-                                      Spaced repetition & memory drill
-                                    </p>
-                                  </div>
-                                </div>
-                                <span
-                                  className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
-                                  style={{
-                                    background: `${_revBdr}18`,
-                                    color: _revBdr,
-                                    border: `1px solid ${_revBdr}35`
-                                  }}
-                                >
-                                  Memory Engine
-                                </span>
-                              </div>
 
                                   <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-bold">
-                                    <span className={`px-2 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-600'}`}>
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      ⏱️ Pomodoro Timer
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      👥 Live Classmates
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      📢 Instant Push
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3.5 pt-2.5 border-t w-full" style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      hapticStrong();
+                                      setShowGroupStudyModal(true);
+                                    }}
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98"
+                                    style={{
+                                      background: themeBtnGrad,
+                                      color: '#ffffff',
+                                      boxShadow: `0 4px 14px ${themePrimary}35`
+                                    }}
+                                  >
+                                    <Users size={14} />
+                                    <span>Join / Create Study Room</span>
+                                    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* ── REVISION HUB CARD ── */}
+                        {isHomeSectionVisible('home_revision_hub', settings) && (() => {
+                          return (
+                            <div id="home-revision-card" className="w-full home-revhub-card-anim flex flex-col">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  hapticStrong();
+                                  openRevisionHubSafely({ isFromRoutine: false });
+                                }}
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                                style={_card3D ? {
+                                  background: themeCardBg,
+                                  border: `2px solid ${themeBorder}`,
+                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
+                                  transform: 'translateY(-1px)'
+                                } : {
+                                  background: themeCardBg,
+                                  border: `2px solid ${themeBorder}`,
+                                  boxShadow: themeShadow
+                                }}
+                              >
+                                <div className="space-y-3 w-full">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-3">
+                                      <div
+                                        className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
+                                        style={{ background: `${themePrimary}18`, color: themePrimary }}
+                                      >
+                                        🧠
+                                      </div>
+                                      <div>
+                                        <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                                          Revision Hub
+                                        </h4>
+                                        <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
+                                          Spaced repetition & memory drill
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <span
+                                      className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
+                                      style={{
+                                        background: `${themePrimary}18`,
+                                        color: themePrimary,
+                                        border: `1px solid ${themePrimary}35`
+                                      }}
+                                    >
+                                      Memory Engine
+                                    </span>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-bold">
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
                                       🧠 Spaced Repetition
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-600'}`}>
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
                                       📝 Quick Notes
                                     </span>
-                                    <span className={`px-2 py-0.5 rounded-lg ${isDarkMode ? 'bg-white/10 border border-white/10 text-slate-300' : 'bg-slate-100/90 border border-slate-200/60 text-slate-600'}`}>
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
                                       🎯 Weak Area Drill
                                     </span>
                                   </div>
                                 </div>
 
                                 <div
-                                  className="mt-3.5 pt-2.5 border-t w-full flex items-center justify-between"
+                                  className="mt-3.5 pt-2.5 border-t w-full"
                                   style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
                                 >
-                                  <span className="text-[11px] font-black" style={{ color: _revBdr }}>
-                                    Open Revision Hub →
-                                  </span>
-                                  <span
-                                    className="w-7 h-7 rounded-xl flex items-center justify-center text-white text-xs font-black shadow-xs group-hover:translate-x-0.5 transition-transform"
-                                    style={{ background: tierTheme.btnGrad || _revBdr }}
+                                  <div
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                                    style={{
+                                      background: themeBtnGrad,
+                                      color: '#ffffff',
+                                      boxShadow: `0 4px 14px ${themePrimary}35`
+                                    }}
                                   >
-                                    →
-                                  </span>
+                                    <Brain size={14} />
+                                    <span>Open Revision Hub</span>
+                                    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                                  </div>
+                                </div>
+                              </button>
+                            </div>
+                          );
+                        })()}
+
+                        {/* ── MY MISTAKES CARD ── */}
+                        {(() => {
+                          return (
+                            <div id="home-mistakes-card" className="w-full home-revhub-card-anim flex flex-col">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  hapticStrong();
+                                  onTabChange('MY_MISTAKES_PAGE' as any);
+                                }}
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                                style={_card3D ? {
+                                  background: themeCardBg,
+                                  border: `2px solid ${themeBorder}`,
+                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
+                                  transform: 'translateY(-1px)'
+                                } : {
+                                  background: themeCardBg,
+                                  border: `2px solid ${themeBorder}`,
+                                  boxShadow: themeShadow
+                                }}
+                              >
+                                <div className="space-y-3 w-full">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-3">
+                                      <div
+                                        className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 shadow-xs text-2xl"
+                                        style={{ background: `${themePrimary}18`, color: themePrimary }}
+                                      >
+                                        ❌
+                                      </div>
+                                      <div>
+                                        <h4 className="text-base font-black leading-tight" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                                          My Mistakes
+                                        </h4>
+                                        <p className="text-[11px] mt-0.5 font-medium leading-tight" style={{ color: isDarkMode ? '#94a3b8' : tierTheme.textSecondary || '#64748b' }}>
+                                          Weak topics & re-test practice notebook
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <span
+                                      className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1"
+                                      style={{
+                                        background: mistakeCount > 0 ? 'rgba(239, 68, 68, 0.15)' : `${themePrimary}18`,
+                                        color: mistakeCount > 0 ? '#ef4444' : themePrimary,
+                                        border: `1px solid ${mistakeCount > 0 ? 'rgba(239, 68, 68, 0.35)' : `${themePrimary}35`}`
+                                      }}
+                                    >
+                                      {mistakeCount > 0 ? `${mistakeCount} Pending` : 'All Clear ✨'}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex flex-wrap items-center gap-1.5 text-[9px] font-bold">
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      🎯 Error Rectify
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      📚 MCQ Re-test
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded-lg font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                      💡 Step Solutions
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div
+                                  className="mt-3.5 pt-2.5 border-t w-full"
+                                  style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
+                                >
+                                  <div
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                                    style={{
+                                      background: themeBtnGrad,
+                                      color: '#ffffff',
+                                      boxShadow: `0 4px 14px ${themePrimary}35`
+                                    }}
+                                  >
+                                    <RotateCcw size={14} />
+                                    <span>Review Mistakes ({mistakeCount})</span>
+                                    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                                  </div>
                                 </div>
                               </button>
                             </div>
@@ -16955,12 +17608,12 @@ export const StudentDashboard: React.FC<Props> = ({
                 onClick: () => switchToLogicalTab("HOME"),
               },
               {
-                id: "UPDATES" as any,
-                label: "Pro+",
-                Icon: Sparkles,
+                id: "ROUTINE" as any,
+                label: "Routine",
+                Icon: Calendar,
                 filledOnActive: true,
                 activeColor: "#8b5cf6",
-                isActive: showUpdatesPage,
+                isActive: showMyRoutine,
                 onClick: () => {
                   try { stopSpeech(); } catch (_) {}
                   setSpeakingId(null);
@@ -16976,7 +17629,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   }
                   setShowChat(false);
                   setShowStarredPage(false);
-                  setShowMyRoutine(false);
+                  setShowUpdatesPage(false);
                   setShowDailyEventPage(false);
                   setShowRevisionHubScreen(false);
                   setShowWhatsAppChatModal(false);
@@ -16985,7 +17638,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     setShowCommunityStarsPage(false);
                   }
                   hapticMedium();
-                  setShowUpdatesPage(true);
+                  setShowMyRoutine(true);
                 },
               },
               {
@@ -16995,7 +17648,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 filledOnActive: true,
                 badge: incomingFriendRequestsCount > 0,
                 activeColor: "#10b981",
-                isActive: !showUpdatesPage && showChat && chatMode === 'COMMUNITY',
+                isActive: !showMyRoutine && !showUpdatesPage && showChat && chatMode === 'COMMUNITY',
                 onClick: () => {
                   try { stopSpeech(); } catch (_) {}
                   setSpeakingId(null);
@@ -17032,7 +17685,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 Icon: BookOpen,
                 filledOnActive: true,
                 activeColor: "#f59e0b",
-                isActive: !showUpdatesPage && showChat && chatMode === 'MCQ',
+                isActive: !showMyRoutine && !showUpdatesPage && showChat && chatMode === 'MCQ',
                 onClick: () => {
                   try { stopSpeech(); } catch (_) {}
                   setSpeakingId(null);
@@ -17475,37 +18128,12 @@ export const StudentDashboard: React.FC<Props> = ({
                 return `${m}m ${s}s`;
               };
 
+              // Topbar event button has been moved into NSTA Quick Wheel; render portal when drawer is open
+              if (!showEventDrawer) return null;
+
               return (
                 <>
-                  {activeEvents.length > 0 ? (
-                    <button
-                      id="topbar-events-btn"
-                      onClick={() => setShowEventDrawer(true)}
-                      className="relative inline-flex items-center gap-0.5 px-2 py-1 rounded-full text-[10px] font-black shrink-0 active:scale-90 transition-all"
-                      style={hasEndingEvent
-                        ? { color: '#fca5a5', border: '1px solid rgba(239,68,68,0.55)', boxShadow: '0 0 8px rgba(239,68,68,0.45)' }
-                        : { color: '#fcd34d', border: '1px solid rgba(245,158,11,0.5)' }}
-                      title={hasEndingEvent ? 'An event is ending soon!' : `${activeEvents.length} event(s) active`}
-                    >
-                      <span className="text-[11px] leading-none">⚡</span>
-                      <span>{activeEvents.length}</span>
-                      <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full animate-ping ${hasEndingEvent ? 'bg-red-400' : 'bg-amber-400'}`} />
-                      <span className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${hasEndingEvent ? 'bg-red-400' : 'bg-amber-400'}`} />
-                    </button>
-                  ) : (
-                    <button
-                      id="topbar-events-btn"
-                      onClick={() => setShowEventDrawer(true)}
-                      className="relative inline-flex items-center gap-0.5 px-2 py-1 rounded-full text-[10px] font-black shrink-0 active:scale-90 transition-all"
-                      style={{ color: '#a5b4fc', border: '1px solid rgba(99,102,241,0.4)' }}
-                      title={`Upcoming event: ${upcomingEvents[0].label}`}
-                    >
-                      <span className="text-[11px] leading-none">📅</span>
-                      <span>{cdText(upcomingEvents[0].startsAt)}</span>
-                    </button>
-                  )}
-
-                  {showEventDrawer && createPortal(
+                  {createPortal(
                     <>
                       <div className="fixed inset-0 z-[99997] bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
                         onClick={() => setShowEventDrawer(false)} />
@@ -18007,15 +18635,6 @@ export const StudentDashboard: React.FC<Props> = ({
             {/* Notification settings — moved into the top bar */}
             <NotificationSettings userId={user.id} placement="topbar" />
 
-            {/* My Offline Downloads Hub button */}
-            <button
-              onClick={() => setShowDownloadsHub(true)}
-              className="p-1.5 rounded-xl transition-all text-white hover:bg-white/10 active:scale-95 shrink-0"
-              title="My Offline Downloads Hub"
-            >
-              <Download size={17} className="text-white" />
-            </button>
-
             {/* 3-dot menu */}
             <div className="relative shrink-0">
               <button
@@ -18222,6 +18841,14 @@ export const StudentDashboard: React.FC<Props> = ({
                             label: 'Theme',
                             isTheme: true,
                             action: handleThemeCycle,
+                          },
+                          {
+                            label: '📢 Content Demand',
+                            right: 'Request',
+                            action: () => {
+                              setShowDotsMenu(false);
+                              setShowRequestModal(true);
+                            },
                           },
                           {
                             label: '📥 My Offline Downloads',
@@ -19336,11 +19963,15 @@ export const StudentDashboard: React.FC<Props> = ({
       {/* DAILY GK & GLOBAL CHALLENGE (Only on Home) */}
       {activeTab === "HOME" && isHomeSectionVisible('home_promo_banners', settings) && (() => {
         const banners: React.ReactNode[] = [];
+        const currentActiveCls = String(activeSessionClass || user?.classLevel || '10').trim();
 
         // 1. GLOBAL CHALLENGE MCQ
         if (
           settings?.globalChallengeMcq &&
-          settings.globalChallengeMcq.length > 0
+          settings.globalChallengeMcq.length > 0 &&
+          (!settings.globalChallengeMcq[0].classLevel ||
+            String(settings.globalChallengeMcq[0].classLevel).trim() === currentActiveCls ||
+            settings.globalChallengeMcq[0].classLevel === 'ALL')
         ) {
               banners.push(
                 <div
@@ -19428,6 +20059,7 @@ export const StudentDashboard: React.FC<Props> = ({
               activeChallenges20
                 .filter(
                   (c) =>
+                    (!c.classLevel || String(c.classLevel).trim() === currentActiveCls || c.classLevel === 'ALL') &&
                     !isDailyChallenge20(c) &&
                     (!testAttempts[c.id] ||
                       testAttempts[c.id].isCompleted !== true),
@@ -27025,6 +27657,7 @@ RULES:
             settings={settings}
             tierTheme={tierTheme}
             isDarkMode={isDarkMode}
+            initialSectionTab={updatesPageSectionTab}
             onBack={() => {
               setShowUpdatesPage(false);
             }}
@@ -33104,6 +33737,12 @@ Explanation: Yahan explanation...`}</p>
       <NstaQuickWheelModal
         isOpen={showNstaQuickWheel}
         onClose={() => setShowNstaQuickWheel(false)}
+        onOpenEvents={() => {
+          setShowNstaQuickWheel(false);
+          setUpdatesPageSectionTab('UPDATES');
+          setShowUpdatesPage(true);
+        }}
+        activeEventsCount={activeEventsCount}
         onOpenMessenger={() => {
           if (!_isPaidUser) {
             setShowNstaQuickWheel(false);
