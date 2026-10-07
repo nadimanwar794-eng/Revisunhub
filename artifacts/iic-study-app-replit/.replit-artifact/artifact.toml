@@ -1,7 +1,7 @@
 kind = "web"
 previewPath = "/"
 title = "NSTA Study App"
-description = "A comprehensive learning platform for students with syllabus tracking, notes, audio study tools, MCQs, progress tracking, community features, and friend messaging with push notifications."
+description = "A student learning platform for school and competition preparation, with book-style notes, premium notes, MCQ practice, homework, study tools, and progress tracking."
 version = "1.0.0"
 id = "artifacts/iic-study-app-replit"
 router = "path"

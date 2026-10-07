@@ -3964,14 +3964,9 @@ export const StudentDashboard: React.FC<Props> = ({
       contentViewStep === 'PLAYER' &&
       (activeTab === 'PDF' || activeTab === 'MCQ' || activeTab === 'VIDEO' || (activeTab as any) === 'AUDIO');
     setIsTopBarHidden(inPlayer);
-    // Competition mode: auto-hide all chrome when opening notes/MCQ
-    if (syllabusMode === 'COMPETITION' && inPlayer) {
-      setIsLandscapeUiHidden(true);
-    } else if (syllabusMode === 'COMPETITION' && !inPlayer) {
-      setIsLandscapeUiHidden(false);
-    }
-    // Always reset landscape-hidden when leaving player so bottom nav reappears
-    if (!inPlayer && syllabusMode !== 'COMPETITION') {
+    // Keep the in-reader mode switch visible in Competition mode. Hiding the
+    // dashboard's landscape UI also hid the reader's own slim tab bar.
+    if (syllabusMode === 'COMPETITION' || !inPlayer) {
       setIsLandscapeUiHidden(false);
     }
   }, [activeTab, contentViewStep, syllabusMode]);
