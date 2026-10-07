@@ -48,6 +48,7 @@ import { SevenDayRoutineModal } from './SevenDayRoutineModal';
 import { SmartRoutineWizard } from './SmartRoutineWizard';
 import { getSlotUnlockStatus } from '../utils/routineStorage';
 import { CLASS_10_FAKE_LESSONS } from '../constants/class10SeedLessons';
+import { resolveTelegramUrl } from '../services/telegramStorageService';
 
 const TASK_COMPLETE_PTS = 50; // (25 pts Notes + 25 pts MCQ per lesson)
 
@@ -2365,9 +2366,11 @@ interface MyRoutineProps {
   onStartChallenge20?: (challenge: any) => void;
   onClaimChallenge20?: (challenge: any) => void | Promise<void>;
   challenge20s?: any[];
+  isTopBarHidden?: boolean;
+  bottomNav?: React.ReactNode;
 }
 
-export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeClass, lucentNotes = [], onBack, onUserUpdate, onGoToRevision, settings, onOpenRevisionHub, onPracticeMistakes, onOpenLesson, onStartChallenge20, onClaimChallenge20, challenge20s = [] }) => {
+export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeClass, lucentNotes = [], onBack, onUserUpdate, onGoToRevision, settings, onOpenRevisionHub, onPracticeMistakes, onOpenLesson, onStartChallenge20, onClaimChallenge20, challenge20s = [], isTopBarHidden = false, bottomNav }) => {
   const theme = useAppTheme();
   const userId = user?.id || 'guest';
   const mcqHistory: any[] = user?.mcqHistory || [];
@@ -2841,9 +2844,23 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex flex-col h-[100dvh] w-screen overflow-hidden transition-colors"
-      style={{ background: theme.appBg || theme.appBgColor || '#f8fafc' }}
+      id="my-routine-fullscreen-root"
+      data-wallpaper-active={settings?.routineBackgroundImage ? "true" : undefined}
+      className="fixed inset-0 z-[9999] flex flex-col h-[100dvh] w-screen overflow-hidden transition-colors"
+      style={{ background: settings?.routineBackgroundImage ? 'transparent' : (theme.appBg || theme.appBgColor || '#f8fafc') }}
     >
+      {/* Background Wallpaper (Admin Configured Live Wallpaper) */}
+      {settings?.routineBackgroundImage && (
+        <div
+          className="absolute inset-0 pointer-events-none z-0 overflow-hidden"
+          style={{
+            backgroundImage: `url(${resolveTelegramUrl(settings.routineBackgroundImage)})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: typeof settings.routineBackgroundOpacity === 'number' ? settings.routineBackgroundOpacity : 0.22,
+          }}
+        />
+      )}
 
       {showRoutineSetup && (
         <RoutineSetupSheet
@@ -3012,129 +3029,131 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
       )}
 
       {/* Header */}
-      <div
-        className="sticky top-0 z-10 border-b shrink-0 transition-colors shadow-xs"
-        style={{
-          background: theme.cardBg || '#ffffff',
-          borderColor: `${theme.primary}20`,
-        }}
-      >
-        {/* Row 1: back · title · actions */}
-        <div className="px-4 pt-3 pb-2 flex items-center gap-2">
-          <button
-            id="routine-back-btn"
-            onClick={onBack}
-            className="w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition shrink-0"
-            style={{ background: `${theme.primary}12`, color: theme.primary }}
-          >
-            <ChevronLeft size={20} />
-          </button>
-          <div className="flex-1 min-w-0 flex items-center gap-2">
-            <h1 className="font-black text-sm flex items-center gap-1.5" style={{ color: theme.textPrimary || '#0f172a' }}>
-              <CalendarCheck size={16} className="shrink-0" style={{ color: theme.primary }} /> My Routine
-            </h1>
+      {!isTopBarHidden && (
+        <div
+          className="sticky top-0 z-10 border-b shrink-0 transition-colors shadow-xs"
+          style={{
+            background: theme.cardBg || '#ffffff',
+            borderColor: `${theme.primary}20`,
+          }}
+        >
+          {/* Row 1: back · title · actions */}
+          <div className="px-4 pt-3 pb-2 flex items-center gap-2">
             <button
-              id="routine-pedro-listen-btn"
-              onClick={handleSpeakPedroRoutine}
-              className="px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 transition active:scale-95 border cursor-pointer shrink-0"
-              style={{
-                background: isSpeakingRoutine ? `${theme.primary}25` : `${theme.primary}10`,
-                borderColor: `${theme.primary}35`,
-                color: theme.primary,
-              }}
-              title="Pedro se routine summary suniye"
-            >
-              <span>{isSpeakingRoutine ? '🔊' : '🎙️'}</span>
-              <span>Pedro se suniye</span>
-            </button>
-          </div>
-          {/* Routine ON/OFF toggle — compact */}
-          <button
-            id="routine-toggle-switch"
-            onClick={toggleRoutine}
-            className="relative w-12 h-6 rounded-full transition-all duration-300 shrink-0"
-            style={{ background: data.enabled ? (theme.btnGrad || theme.primary) : '#cbd5e1' }}
-            title={data.enabled ? 'Routine ON' : 'Routine OFF'}>
-            <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${data.enabled ? 'left-6' : 'left-0.5'}`} />
-          </button>
-          <button
-            id="routine-info-btn"
-            onClick={() => setShowInfo(true)} className="w-8 h-8 rounded-full border flex items-center justify-center active:scale-90 shrink-0 transition"
-            style={{ background: `${theme.primary}12`, borderColor: `${theme.primary}25`, color: theme.primary }}>
-            <HelpCircle size={15} />
-          </button>
-          {/* Settings button — Class & Category */}
-          <div className="relative shrink-0">
-            <button
-              id="routine-settings-btn"
-              onClick={() => setShowSettingsMenu(s => !s)}
-              className="w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition"
+              id="routine-back-btn"
+              onClick={onBack}
+              className="w-9 h-9 rounded-full flex items-center justify-center active:scale-90 transition shrink-0"
               style={{ background: `${theme.primary}12`, color: theme.primary }}
             >
-              <Settings size={15} />
+              <ChevronLeft size={20} />
             </button>
-            {showSettingsMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowSettingsMenu(false)} />
-                <div className="absolute right-0 top-10 z-50 bg-white rounded-2xl shadow-xl border w-52 overflow-hidden" style={{ borderColor: `${theme.primary}25` }}>
-                  <p className="text-[9px] font-black uppercase tracking-widest px-4 pt-3 pb-1" style={{ color: theme.primary }}>Settings</p>
-                  <button
-                    onClick={() => { setShowSettingsMenu(false); setShowSmartWizard(true); }}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 active:bg-slate-100 transition text-left"
-                  >
-                    <span className="text-base">🎯</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-black text-slate-800">Smart Setup (Q&A)</p>
-                      <p className="text-[10px] text-slate-400">Questions se routine banayein</p>
-                    </div>
-                    <span className="text-slate-400 text-xs">✨</span>
-                  </button>
-                  <div className="h-px bg-slate-100 mx-4" />
-                  <button
-                    onClick={() => { setShowSettingsMenu(false); setShow7DayModal(true); }}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 active:bg-slate-100 transition text-left"
-                  >
-                    <span className="text-base">📅</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-black text-slate-800">7-Day Routine</p>
-                      <p className="text-[10px] text-slate-400">Full 7 days schedule timetable</p>
-                    </div>
-                    <span className="text-slate-400 text-xs">↗</span>
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-        {/* Tab bar — always visible */}
-        {(() => {
-          return (
-            <div className="mx-4 mb-2 flex rounded-2xl p-1 gap-1" style={{ background: `${theme.primary}12` }}>
+            <div className="flex-1 min-w-0 flex items-center gap-2">
+              <h1 className="font-black text-sm flex items-center gap-1.5" style={{ color: theme.textPrimary || '#0f172a' }}>
+                <CalendarCheck size={16} className="shrink-0" style={{ color: theme.primary }} /> My Routine
+              </h1>
               <button
-                id="routine-tab-daily-hub"
-                onClick={() => setActiveView('home')}
-                className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'home' ? 'shadow-sm' : 'text-slate-500'}`}
-                style={activeView === 'home' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
-                🎯 Daily Hub
-              </button>
-              <button
-                id="routine-tab-subjects"
-                onClick={() => setActiveView('subjects')}
-                className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'subjects' ? 'shadow-sm' : 'text-slate-500'}`}
-                style={activeView === 'subjects' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
-                📚 Subjects
-              </button>
-              <button
-                id="routine-tab-syllabus"
-                onClick={() => setActiveView('tracking')}
-                className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'tracking' ? 'shadow-sm' : 'text-slate-500'}`}
-                style={activeView === 'tracking' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
-                📖 My Syllabus
+                id="routine-pedro-listen-btn"
+                onClick={handleSpeakPedroRoutine}
+                className="px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1 transition active:scale-95 border cursor-pointer shrink-0"
+                style={{
+                  background: isSpeakingRoutine ? `${theme.primary}25` : `${theme.primary}10`,
+                  borderColor: `${theme.primary}35`,
+                  color: theme.primary,
+                }}
+                title="Pedro se routine summary suniye"
+              >
+                <span>{isSpeakingRoutine ? '🔊' : '🎙️'}</span>
+                <span>Pedro se suniye</span>
               </button>
             </div>
-          );
-        })()}
-      </div>
+            {/* Routine ON/OFF toggle — compact */}
+            <button
+              id="routine-toggle-switch"
+              onClick={toggleRoutine}
+              className="relative w-12 h-6 rounded-full transition-all duration-300 shrink-0"
+              style={{ background: data.enabled ? (theme.btnGrad || theme.primary) : '#cbd5e1' }}
+              title={data.enabled ? 'Routine ON' : 'Routine OFF'}>
+              <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow-md transition-all duration-300 ${data.enabled ? 'left-6' : 'left-0.5'}`} />
+            </button>
+            <button
+              id="routine-info-btn"
+              onClick={() => setShowInfo(true)} className="w-8 h-8 rounded-full border flex items-center justify-center active:scale-90 shrink-0 transition"
+              style={{ background: `${theme.primary}12`, borderColor: `${theme.primary}25`, color: theme.primary }}>
+              <HelpCircle size={15} />
+            </button>
+            {/* Settings button — Class & Category */}
+            <div className="relative shrink-0">
+              <button
+                id="routine-settings-btn"
+                onClick={() => setShowSettingsMenu(s => !s)}
+                className="w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition"
+                style={{ background: `${theme.primary}12`, color: theme.primary }}
+              >
+                <Settings size={15} />
+              </button>
+              {showSettingsMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowSettingsMenu(false)} />
+                  <div className="absolute right-0 top-10 z-50 bg-white rounded-2xl shadow-xl border w-52 overflow-hidden" style={{ borderColor: `${theme.primary}25` }}>
+                    <p className="text-[9px] font-black uppercase tracking-widest px-4 pt-3 pb-1" style={{ color: theme.primary }}>Settings</p>
+                    <button
+                      onClick={() => { setShowSettingsMenu(false); setShowSmartWizard(true); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 active:bg-slate-100 transition text-left"
+                    >
+                      <span className="text-base">🎯</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-black text-slate-800">Smart Setup (Q&A)</p>
+                        <p className="text-[10px] text-slate-400">Questions se routine banayein</p>
+                      </div>
+                      <span className="text-slate-400 text-xs">✨</span>
+                    </button>
+                    <div className="h-px bg-slate-100 mx-4" />
+                    <button
+                      onClick={() => { setShowSettingsMenu(false); setShow7DayModal(true); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 active:bg-slate-100 transition text-left"
+                    >
+                      <span className="text-base">📅</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-black text-slate-800">7-Day Routine</p>
+                        <p className="text-[10px] text-slate-400">Full 7 days schedule timetable</p>
+                      </div>
+                      <span className="text-slate-400 text-xs">↗</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+          {/* Tab bar — always visible */}
+          {(() => {
+            return (
+              <div className="mx-4 mb-2 flex rounded-2xl p-1 gap-1" style={{ background: `${theme.primary}12` }}>
+                <button
+                  id="routine-tab-daily-hub"
+                  onClick={() => setActiveView('home')}
+                  className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'home' ? 'shadow-sm' : 'text-slate-500'}`}
+                  style={activeView === 'home' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
+                  🎯 Daily Hub
+                </button>
+                <button
+                  id="routine-tab-subjects"
+                  onClick={() => setActiveView('subjects')}
+                  className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'subjects' ? 'shadow-sm' : 'text-slate-500'}`}
+                  style={activeView === 'subjects' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
+                  📚 Subjects
+                </button>
+                <button
+                  id="routine-tab-syllabus"
+                  onClick={() => setActiveView('tracking')}
+                  className={`flex-1 flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer ${activeView === 'tracking' ? 'shadow-sm' : 'text-slate-500'}`}
+                  style={activeView === 'tracking' ? { background: '#ffffff', color: theme.primary, border: `1px solid ${theme.primary}25`, boxShadow: `0 2px 8px ${theme.primary}20` } : {}}>
+                  📖 My Syllabus
+                </button>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {toast && (
         <div className={`fixed top-16 left-4 right-4 z-[600] py-3 px-4 rounded-2xl font-black text-sm text-center shadow-xl ${
@@ -3337,6 +3356,13 @@ export const MyRoutine: React.FC<MyRoutineProps> = ({ user, activeBoard, activeC
             showToast('🎉 Routine Safalta Se Ban Gaya!', 'success');
           }}
         />
+      )}
+
+      {/* Persistent Bottom Navigation */}
+      {bottomNav && (
+        <div className="shrink-0 z-[650] relative w-full border-t border-slate-200/50 dark:border-slate-800/50 shadow-md">
+          {bottomNav}
+        </div>
       )}
     </div>
   );

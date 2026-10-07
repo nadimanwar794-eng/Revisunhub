@@ -61,6 +61,7 @@ interface Props {
   hideProjectorLabel?: boolean;
   /** Trigger to open Group Study / Live Room modal for this flashcard set */
   onOpenGroupStudy?: () => void;
+  isTopBarHidden?: boolean;
   /** Optional competition lesson ID for syncing stats back to lesson cards */
   compLessonId?: string;
   /** True when practicing mistaken questions */
@@ -107,7 +108,7 @@ const addTodayCount = (userId: string, n: number) => {
 };
 
 export const FlashcardMcqView: React.FC<Props> = ({
-  questions, title, subtitle, subject, onBack, user, settings, onUpdateUser, sourceMeta, sourceKey, startInProjectorMode, onProjectorModeChange, tabBar, bottomNav, hideProjectorLabel, onOpenGroupStudy,
+  questions, title, subtitle, subject, onBack, user, settings, onUpdateUser, sourceMeta, sourceKey, startInProjectorMode, onProjectorModeChange, tabBar, bottomNav, hideProjectorLabel, onOpenGroupStudy, isTopBarHidden = false,
   compLessonId, isMistakeMode, rawIndices, onStatsUpdate, onUpdateQuestions
 }) => {
   const isMountedRef = useRef(true);
@@ -960,7 +961,7 @@ export const FlashcardMcqView: React.FC<Props> = ({
   return (
     <>
     <div className="fixed inset-0 z-[200] flex flex-col h-[100dvh]" style={tierBgStyle}>
-      {!fcFocused && !isEffectiveLandscape && tabBar}
+      {!isTopBarHidden && !fcFocused && !projectorRotated && tabBar}
       {/* MCQ Score Popup */}
       {mcqScorePopup !== null && (
         <div style={{
@@ -1454,8 +1455,8 @@ export const FlashcardMcqView: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* App Bottom Navigation Bar (Visible in flashcard mode, hidden in landscape/focus mode) */}
-      {!fcFocused && !isEffectiveLandscape && bottomNav && (
+      {/* App Bottom Navigation Bar (Visible in flashcard mode, hidden when rotated) */}
+      {!projectorRotated && bottomNav && (
         <div className="shrink-0 w-full z-20">
           {bottomNav}
         </div>
@@ -1520,10 +1521,10 @@ export const FlashcardMcqView: React.FC<Props> = ({
 
         return createPortal(
           <div style={overlayStyle}>
-            {!projectorFocused && !isEffectiveLandscape && tabBar}
+            {!isTopBarHidden && !projectorFocused && !projectorRotated && tabBar}
 
             {/* Standard Comprehensive Top Bar: 1/20 (5vh in landscape/rotated) */}
-            {!projectorFocused && (
+            {!isTopBarHidden && !projectorFocused && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -2590,8 +2591,8 @@ export const FlashcardMcqView: React.FC<Props> = ({
               </div>
             )}
 
-            {/* App Bottom Navigation Bar (Visible in projector mode, hidden in landscape/focus mode) */}
-            {!projectorFocused && !isEffectiveLandscape && bottomNav && (
+            {/* App Bottom Navigation Bar (Visible in projector mode, hidden when rotated) */}
+            {!projectorRotated && bottomNav && (
               <div style={{ zIndex: 25, flexShrink: 0, width: '100%' }}>
                 {bottomNav}
               </div>

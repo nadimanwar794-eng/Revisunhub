@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User } from '../types';
+import { User, SystemSettings } from '../types';
 import { buildSubColorsFromHex } from '../utils/tierTheme';
 import { useAppTheme } from '../utils/themeContext';
 import { Send, MessageSquare, Shield, Users, X, Trash2, Crown, Zap, Lock, Megaphone, BookOpen, CheckCircle, ThumbsUp, ThumbsDown, Award, Flag, ChevronDown, ChevronUp, MessageCircle, Globe, ArrowLeft, Search, Plus, Wrench, Rocket } from 'lucide-react';
@@ -37,6 +37,7 @@ interface Props {
     appLogo?: string;
     appName?: string;
     initialCommunityFilter?: 'ALL' | 'OFFICIAL' | 'BUG_REPORT' | 'DOUBT' | 'MINE' | 'UNDER_REVIEW' | 'NOTES_FIX';
+    settings?: SystemSettings;
 }
 
 interface McqDraft {
@@ -49,7 +50,7 @@ interface McqDraft {
 
 const EMPTY_MCQ: McqDraft = { question: '', statements: undefined, options: ['', '', '', ''], correctAnswer: 0, explanation: '' };
 
-export const UniversalChat: React.FC<Props> = ({ user, onClose, isAdmin, targetUser, roomId, roomName, allowStudentMcq, initialMcqDraft, defaultTab, hideGlobalTab, hideSupportTab, isFeedOnly, isMcqOnly, isSupportOnly, onSpendCoins, onSpendDiamonds, onUpdateUser, themeColor, onRestoreBottomNav, isBottomNavVisible = false, appLogo, appName, initialCommunityFilter }) => {
+export const UniversalChat: React.FC<Props> = ({ user, onClose, isAdmin, targetUser, roomId, roomName, allowStudentMcq, initialMcqDraft, defaultTab, hideGlobalTab, hideSupportTab, isFeedOnly, isMcqOnly, isSupportOnly, onSpendCoins, onSpendDiamonds, onUpdateUser, themeColor, onRestoreBottomNav, isBottomNavVisible = false, appLogo, appName, initialCommunityFilter, settings }) => {
     const appTheme = useAppTheme();
     // Determine effective color: prop override > subscription tier
     const _baseSubColor = (user.subscriptionLevel === 'ULTRA' && user.isPremium) ? '#1d4ed8'
@@ -771,6 +772,8 @@ export const UniversalChat: React.FC<Props> = ({ user, onClose, isAdmin, targetU
                             externalShowComposer={communityComposerOpen}
                             onShowComposerChange={setCommunityComposerOpen}
                             onUserUpdate={onUpdateUser}
+                            communityBackgroundImage={settings?.communityBackgroundImage}
+                            communityBackgroundOpacity={settings?.communityBackgroundOpacity}
                         />
                     </div>
                 ) : activeTab === 'TOOLS' && !roomId ? (

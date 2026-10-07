@@ -990,11 +990,26 @@ export interface SystemSettings {
   appBackground?: string;
   appBackgroundImage?: string;
   profileBackground?: string;
+  // ── 5 Pages Background Wallpapers (Admin Live Telegram / Image Wallpapers) ──
+  homeBackgroundImage?: string; // Wallpaper for Home page
+  homeBackgroundOpacity?: number; // 0.05 to 1.0 (default 0.22)
+  mcqHubBackgroundImage?: string; // Wallpaper for MCQhub page
+  mcqHubBackgroundOpacity?: number; // 0.05 to 1.0 (default 0.25)
+  communityBackgroundImage?: string; // Wallpaper for Community page
+  communityBackgroundOpacity?: number; // 0.05 to 1.0 (default 0.22)
+  routineBackgroundImage?: string; // Wallpaper for Routine page
+  routineBackgroundOpacity?: number; // 0.05 to 1.0 (default 0.22)
+  profileBackgroundImage?: string; // Wallpaper for Profile page
+  profileBackgroundOpacity?: number; // 0.05 to 1.0 (default 0.25)
   themeColor?: string;
   // ── Home Page Section Card Colors (Advanced Theme) ──
   homeClass612CardBg?: string;
   homeClass612CardBorder?: string;
   globalCards3D?: boolean;
+  cardDepth3D?: 'subtle' | 'medium' | 'deep';
+  appCardBackground?: string;
+  appCardBorderColor?: string;
+  appCardRadius?: 'xl' | '2xl' | '3xl';
   homeAllCards3D?: boolean;
   homeClass612Card3D?: boolean;
   homeCompetitionCardBg?: string;
@@ -1003,6 +1018,31 @@ export interface SystemSettings {
   homeQuickAccessCard3D?: boolean;
   homeQuickAccessCardBg?: string;
   homeQuickAccessCardBorder?: string;
+  // ── New Home Cards: Academic, Practice Set, Daily Challenge, Study Room, Revision Hub, My Mistakes ──
+  homeAcademicCard3D?: boolean;
+  homeAcademicCardBg?: string;
+  homeAcademicCardBorder?: string;
+  homePracticeCard3D?: boolean;
+  homePracticeCardBg?: string;
+  homePracticeCardBorder?: string;
+  homeDailyChallengeCard3D?: boolean;
+  homeDailyChallengeCardBg?: string;
+  homeDailyChallengeCardBorder?: string;
+  homeStudyRoomCard3D?: boolean;
+  homeStudyRoomCardBg?: string;
+  homeStudyRoomCardBorder?: string;
+  homeLiveRoomCard3D?: boolean;
+  homeLiveRoomCardBg?: string;
+  homeLiveRoomCardBorder?: string;
+  homeRevisionCard3D?: boolean;
+  homeRevisionCardBg?: string;
+  homeRevisionCardBorder?: string;
+  homeRevisionHubCard3D?: boolean;
+  homeRevisionHubCardBg?: string;
+  homeRevisionHubCardBorder?: string;
+  homeMistakesCard3D?: boolean;
+  homeMistakesCardBg?: string;
+  homeMistakesCardBorder?: string;
   // ── School & Coaching Home Cards ──────────────────────────────────────────
   homeSchoolCardBg?: string;
   homeSchoolCardBorder?: string;

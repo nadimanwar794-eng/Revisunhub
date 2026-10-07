@@ -1,4 +1,4 @@
-import { uploadImageToTelegram } from './telegramStorageService';
+import { uploadImageToTelegram, resolveTelegramUrl } from './telegramStorageService';
 
 /**
  * Universal Image Upload Service powered by Telegram Cloud Storage (@nsta_vault_bot)
@@ -122,7 +122,7 @@ export async function uploadImageToImgBB(
       'NSTA App Media'
     );
     if (directTelegramUrl && typeof directTelegramUrl === 'string' && directTelegramUrl.trim()) {
-      return directTelegramUrl.trim();
+      return resolveTelegramUrl(directTelegramUrl.trim());
     }
   } catch (tgErr: any) {
     console.warn('[Image Upload Service] Telegram storage attempt error:', tgErr?.message || tgErr);

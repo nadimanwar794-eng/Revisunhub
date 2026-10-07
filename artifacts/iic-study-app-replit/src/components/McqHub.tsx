@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { User, SystemSettings, MCQItem } from '../types';
+import { resolveTelegramUrl } from '../services/telegramStorageService';
 import {
   Trophy,
   CheckCircle2,
@@ -1695,11 +1696,24 @@ export const McqHub: React.FC<McqHubProps> = ({
   return (
     <div
       id="mcq-hub-root-container"
-      className={`w-full h-full flex-1 flex flex-col overflow-y-auto overscroll-contain ${
-        isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'
+      data-wallpaper-active={settings?.mcqHubBackgroundImage ? "true" : undefined}
+      className={`w-full h-full flex-1 flex flex-col overflow-y-auto overscroll-contain relative ${
+        settings?.mcqHubBackgroundImage ? 'bg-transparent text-slate-800 dark:text-slate-100' : isDarkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'
       }`}
       style={{ WebkitOverflowScrolling: 'touch' }}
     >
+      {/* Background Wallpaper (Admin Configured Live Wallpaper) */}
+      {settings?.mcqHubBackgroundImage && (
+        <div
+          className="fixed inset-0 pointer-events-none z-0 overflow-hidden"
+          style={{
+            backgroundImage: `url(${resolveTelegramUrl(settings.mcqHubBackgroundImage)})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: typeof settings.mcqHubBackgroundOpacity === 'number' ? settings.mcqHubBackgroundOpacity : 0.25,
+          }}
+        />
+      )}
       {/* ── Top Header: Back button (Left) + Mode Switcher (Fills top bar) + Close button (Right) ── */}
       <header
         className={`sticky top-0 z-30 px-2 sm:px-4 py-1.5 border-b backdrop-blur-md shrink-0 flex items-center justify-between gap-2 w-full ${

@@ -236,6 +236,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasLongPressRef = useRef(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const doubleTapTopicRef = useRef<{ text: string; time: number; timer?: any } | null>(null);
 
   const NOTE_PAGES = useMemo(() => {
     if (!noteSections) return [] as { key: 'book' | 'smart' | 'explain'; label: string; badge?: string; badgeColor?: string; locked: boolean; text: string }[];
@@ -2446,22 +2447,51 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     e.stopPropagation();
                     return;
                   }
-                  try { if (navigator.vibrate) navigator.vibrate(isActive ? 30 : 50); } catch {}
-                  if (isActive) {
-                    stopAll();
-                  } else {
-                    // Manual tap → Touch Protection (10 sec stay → +2)
-                    // Auto TTS rewards are disabled for manual-tap sessions.
-                    ttsIsAutoRef.current = false;
-                    if (scoreSessionRef.current && !topic.isHeading && readingScoreConfig) {
-                      scoreSessionRef.current.onManualTopicEnter(idx);
-                      trackManualTap();
+
+                  const now = Date.now();
+                  // User requirement: Point par 2 baar tap (double-tap) pe Save hoga aur 2 baar tap pe wapis Unsave hoga
+                  if (
+                    doubleTapTopicRef.current &&
+                    doubleTapTopicRef.current.text === topic.text &&
+                    (now - doubleTapTopicRef.current.time) < 380
+                  ) {
+                    if (doubleTapTopicRef.current.timer) {
+                      clearTimeout(doubleTapTopicRef.current.timer);
                     }
-                    startFromIndex(idx);
+                    doubleTapTopicRef.current = null;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    try { if (navigator.vibrate) navigator.vibrate([30, 40, 50]); } catch {}
+                    executeStarToggle(topic.text);
+                    return;
                   }
+
+                  // Single-tap: 220ms debounce before executing TTS start/stop to allow double-tap
+                  const singleTapTimer = setTimeout(() => {
+                    doubleTapTopicRef.current = null;
+                    try { if (navigator.vibrate) navigator.vibrate(isActive ? 30 : 50); } catch {}
+                    if (isActive) {
+                      stopAll();
+                    } else {
+                      // Manual tap → Touch Protection (10 sec stay → +2)
+                      // Auto TTS rewards are disabled for manual-tap sessions.
+                      ttsIsAutoRef.current = false;
+                      if (scoreSessionRef.current && !topic.isHeading && readingScoreConfig) {
+                        scoreSessionRef.current.onManualTopicEnter(idx);
+                        trackManualTap();
+                      }
+                      startFromIndex(idx);
+                    }
+                  }, 220);
+
+                  doubleTapTopicRef.current = {
+                    text: topic.text,
+                    time: now,
+                    timer: singleTapTimer,
+                  };
                 }}
-                aria-label={isActive ? 'Stop reading this line' : 'Read from this line (tap) or Save Important (hold)'}
-                title={isActive ? 'Tap to stop' : 'Tap: Read | Hold: Save Important ⭐'}
+                aria-label={isActive ? 'Stop reading this line' : 'Double tap: Save/Unsave Important ⭐ | Single tap: Read'}
+                title={isActive ? 'Tap to stop' : '2 Taps: Save/Unsave ⭐ | 1 Tap: Read'}
                 className="w-full text-left pl-4 pr-10 py-2 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 select-none"
                 style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', touchAction: 'pan-y' }}
               >

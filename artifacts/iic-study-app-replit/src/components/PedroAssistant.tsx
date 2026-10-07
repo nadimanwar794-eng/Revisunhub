@@ -229,19 +229,23 @@ export const PEDRO_PAGE_KNOWLEDGE: Record<string, PedroPageConfig> = {
         id: 'FUTURE_WHEEL',
         title: 'Future Wheel',
         icon: '🎡',
-        description: 'Screen par floating quick actions wheel.',
-        targetSelector: '#nsta-quick-fab',
+        description: 'Screen par 3 seconds hold karne par NSTA Quick Wheel aayega.',
+        targetSelector: '#home-selected-class-card',
         actionKey: 'SIMULATE_WHEEL',
-        speechText: 'Screen par floating tools ka quick wheel hai.',
+        speechText: 'Home screen par teen second dabaye rakhne par Quick Wheel khulega. Baaki pages par do second hold karne par focus mode toggle hoga.',
         items: [
           {
             id: 'FUTURE_WHEEL_ITEM',
-            title: 'NSTA Quick Wheel',
+            title: 'NSTA Quick Wheel & Gestures',
             icon: '🎡',
-            summary: '10 tools & messenger in floating wheel.',
-            speechText: 'Screen par floating tools ka quick wheel hai.',
-            bullets: ['10 tools instant finger reach par.', 'Floating draggable icon.'],
-            targetSelector: '#nsta-quick-fab',
+            summary: 'Screen hold gesture se instant quick tools aur focus study mode.',
+            speechText: 'Home screen par 3s hold se NSTA wheel aayega, aur notes ya mcq me 2s hold se study mode toggle hoga. Pedro ko pause karne ke liye Pedro par 2 baar tap karein.',
+            bullets: [
+              'Home page par 3 seconds hold karne par 10 tools ka quick wheel.',
+              'Notes & MCQ me 2s hold se study mode toggle aur cancel.',
+              'Pedro ko pause / hide karne ke liye Pedro par 2 baar tap karein.'
+            ],
+            targetSelector: '#home-selected-class-card',
             actionKey: 'SIMULATE_WHEEL'
           }
         ]
@@ -3291,13 +3295,13 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
 
   const [isDragging, setIsDragging] = useState(false);
   const [hasMoved, setHasMoved] = useState(false);
+  // User request: "pedro bhi agar na hoga screen pe to aayega agar hoga to koi baat nahi aur pedro ko bhagana ho to pedro pe abhi ke jaisa tap karna hoga 2 baar"
   const [isHidden, setIsHidden] = useState<boolean>(() => {
     if (hidden) return true;
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('nst_pedro_hidden') === 'true';
-    }
     return false;
   });
+  const singleTapTimerRef = useRef<any>(null);
+  const lastTapRef = useRef<number>(0);
   const [speechBubbleText, setSpeechBubbleText] = useState<string | null>(null);
   const [isSpeakingLive, setIsSpeakingLive] = useState(false);
   const dragStartRef = useRef<{ startX: number; startY: number; initX: number; initY: number }>({
@@ -3605,45 +3609,72 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
 
     // Tap detected
     if (!hasMoved) {
-      if (guidePowerEnabled === false) {
-        setSpeechBubbleText(`Namaste ${userName || 'Dost'}! Main aapka friendly study mascot hoon. Interactive App Guide abhi Admin dwara off hai.`);
-        setIsSpeakingLive(true);
-        playSoftChime();
-        pedroSpeak(`Namaste! Main aapka Pedro study companion hoon. App guide abhi off hai.`, {
-          rate: 1.15,
-          showBubble: false,
-          onEnd: () => setIsSpeakingLive(false)
-        });
-        setTimeout(() => {
-          setSpeechBubbleText(null);
-          setIsSpeakingLive(false);
-        }, 3200);
+      const now = Date.now();
+      const timeSinceLastTap = now - lastTapRef.current;
+
+      // Double tap detected (within 380ms): Bhaga do Pedro ko!
+      if (timeSinceLastTap < 380) {
+        lastTapRef.current = 0;
+        if (singleTapTimerRef.current) {
+          clearTimeout(singleTapTimerRef.current);
+          singleTapTimerRef.current = null;
+        }
+        setIsHidden(true);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('nst_pedro_hidden', 'true');
+          window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: true } }));
+          playSoftChime();
+          pedroSpeak('Pedro paused.', { rate: 1.2, showBubble: false });
+        }
         return;
       }
 
-      if (energyStatus.isSleeping) {
-        pedroSpeak('Zzz... Main thak gaya hoon, thoda aaram karne dijiye.');
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('nst-pedro-open-energy'));
+      lastTapRef.current = now;
+      if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+      singleTapTimerRef.current = setTimeout(() => {
+        singleTapTimerRef.current = null;
+        if (guidePowerEnabled === false) {
+          setSpeechBubbleText(`Namaste ${userName || 'Dost'}! Main aapka friendly study mascot hoon. Interactive App Guide abhi Admin dwara off hai.`);
+          setIsSpeakingLive(true);
+          playSoftChime();
+          pedroSpeak(`Namaste! Main aapka Pedro study companion hoon. App guide abhi off hai.`, {
+            rate: 1.15,
+            showBubble: false,
+            onEnd: () => setIsSpeakingLive(false)
+          });
+          setTimeout(() => {
+            setSpeechBubbleText(null);
+            setIsSpeakingLive(false);
+          }, 3200);
+          return;
+        }
+
+        if (energyStatus.isSleeping) {
+          pedroSpeak('Zzz... Main thak gaya hoon, thoda aaram karne dijiye.');
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('nst-pedro-open-energy'));
+          }
+          onOpen();
+          return;
         }
         onOpen();
-        return;
-      }
-      onOpen();
+      }, 260);
     }
   };
 
-  // Double tap to hide Pedro ("Pedro jab disable hoga tab wo top baar ke 3 dot ke paas ja ke baithega")
-  const lastTapRef = useRef<number>(0);
+  // Double tap backup for mouse double clicks
   const handleDoubleTapCheck = (e: React.MouseEvent) => {
     e.stopPropagation();
     const now = Date.now();
     if (now - lastTapRef.current < 380) {
+      if (singleTapTimerRef.current) {
+        clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
       setIsHidden(true);
       if (typeof window !== 'undefined') {
         localStorage.setItem('nst_pedro_hidden', 'true');
         window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: true } }));
-        // User request: Sound Effect Only (Soft chime) ya 0.5s audio: "Pedro paused."
         playSoftChime();
         pedroSpeak('Pedro paused.', { rate: 1.2, showBubble: false });
       }

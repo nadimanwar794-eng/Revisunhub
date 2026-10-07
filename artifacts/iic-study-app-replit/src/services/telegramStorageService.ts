@@ -76,25 +76,42 @@ function dataUrlToBlob(dataUrl: string, defaultMime = 'image/jpeg'): Blob {
 }
 
 /**
- * Checks if a URL is a direct Telegram CDN link or proxy link.
- * Both direct Telegram CDN links (which support CORS and Range streaming)
- * and /api/telegram/file proxy links work seamlessly.
+ * Resolves Telegram and media URLs for browser loading.
+ * Converts local proxy URLs (/api/telegram/file?path=...) back to direct Telegram CDN links
+ * so images and videos can load directly in the browser even without a backend proxy server.
+ * Also handles t.me links, base64 data URLs, and standard image URLs.
  */
 export function resolveTelegramUrl(rawUrl: string): string {
   if (!rawUrl || typeof rawUrl !== 'string') return rawUrl;
   const trimmed = rawUrl.trim();
 
-  // If already a local proxy route, return as-is
-  if (trimmed.startsWith('/api/telegram/file') || trimmed.startsWith('/api/media-proxy')) {
+  // If already base64 data URL, return as-is
+  if (trimmed.startsWith('data:image/') || trimmed.startsWith('data:video/')) {
     return trimmed;
   }
 
-  // Convert raw Telegram bot file URLs to local proxy URLs with full CORS & Range support
-  const tgMatch = trimmed.match(/\/file\/bot([^/]+)\/(.+)$/);
-  if (tgMatch) {
-    const token = tgMatch[1];
-    const path = tgMatch[2];
-    return `/api/telegram/file?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`;
+  // Convert /api/telegram/file?path=... back to direct Telegram bot CDN URL with full CORS support
+  if (trimmed.startsWith('/api/telegram/file')) {
+    try {
+      const matchPath = trimmed.match(/[?&]path=([^&]+)/);
+      const matchToken = trimmed.match(/[?&]token=([^&]+)/);
+      const token = matchToken ? decodeURIComponent(matchToken[1]) : DEFAULT_BOT_TOKEN;
+      const path = matchPath ? decodeURIComponent(matchPath[1]) : '';
+      if (path) {
+        return `https://api.telegram.org/file/bot${token}/${path}`;
+      }
+    } catch {}
+  }
+
+  // If direct Telegram bot URL, keep it! Direct Telegram URLs are directly accessible by <img> and <video>
+  if (trimmed.includes('api.telegram.org/file/bot')) {
+    return trimmed;
+  }
+
+  // Handle Telegram public post links (e.g. https://t.me/channel_name/123)
+  if (trimmed.startsWith('https://t.me/') || trimmed.startsWith('http://t.me/')) {
+    // If it's a direct message embed link or image link, return cleaned URL
+    return trimmed;
   }
 
   return trimmed;
@@ -167,7 +184,8 @@ export async function uploadDirectToTelegram(
 
           const directUrl = filePath ? `https://api.telegram.org/file/bot${DEFAULT_BOT_TOKEN}/${filePath}` : '';
           const proxyUrl = filePath ? `/api/telegram/file?path=${encodeURIComponent(filePath)}&name=${encodeURIComponent(fileName)}` : directUrl;
-          const resolvedUrl = proxyUrl || directUrl;
+          // Direct URL works globally in all browsers and web apps without relying on internal proxy server
+          const resolvedUrl = directUrl || proxyUrl;
 
           if (opts.onProgress) opts.onProgress(100);
 

@@ -360,7 +360,7 @@ import { PedroVipExpiryModal } from "./PedroVipExpiryModal";
 import { Pedro3DMascot } from "./Pedro3DMascot";
 import { Pedro3DViewerModal } from "./Pedro3DViewerModal";
 import { ProfileCameraModal } from "./ProfileCameraModal";
-import { uploadImageToTelegram, uploadToTelegramStorage } from "../services/telegramStorageService";
+import { uploadImageToTelegram, uploadToTelegramStorage, resolveTelegramUrl } from "../services/telegramStorageService";
 import { StudentHistoryModal } from "./StudentHistoryModal";
 import { AdminWhiteBoard } from "./AdminWhiteBoard";
 import { generateDailyRoutine } from "../utils/routineGenerator";
@@ -2969,12 +2969,17 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showUserGuide, setShowUserGuide] = useState(false);
   const [showPedro, setShowPedro] = useState(false);
   const [showPedro3DViewer, setShowPedro3DViewer] = useState(false);
-  const [isPedroHidden, setIsPedroHidden] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('nst_pedro_hidden') === 'true';
-    }
-    return false;
-  });
+  // User request: Pedro agar screen pe na ho to aayega (default awake & on screen)
+  const [isPedroHidden, setIsPedroHidden] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Pedro auto-presence on dashboard load
+    setIsPedroHidden(false);
+    try {
+      localStorage.removeItem('nst_pedro_hidden');
+      localStorage.removeItem('nst_pedro_sleeping');
+    } catch {}
+  }, []);
 
   useEffect(() => {
     const handleHiddenChange = (e: any) => {
@@ -5179,6 +5184,9 @@ export const StudentDashboard: React.FC<Props> = ({
 
   const [showRevisionHubScreen, setShowRevisionHubScreen] = useState(false);
   const [showUpdatesPage, setShowUpdatesPage] = useState(false);
+  const [showMyRoutine, setShowMyRoutine] = useState(false);
+  const [showDailyEventPage, setShowDailyEventPage] = useState(false);
+  const [initialRevisionAutoStartMcq, setInitialRevisionAutoStartMcq] = useState(false);
   const [updatesPageSectionTab, setUpdatesPageSectionTab] = useState<'ADVANCE_TOOLS' | 'UPDATES'>('ADVANCE_TOOLS');
 
   // Count active events for badge on NSTA Quick Wheel and event indicators
@@ -5210,13 +5218,13 @@ export const StudentDashboard: React.FC<Props> = ({
     }
   }, [showWhatsAppChatModal]);
 
-  // Auto-hide bottom navigation when any popup or modal is open
+  // Auto-hide bottom navigation when any popup or modal is open (rely strictly on active modal classes)
   const [isDomModalOpen, setIsDomModalOpen] = useState(false);
   useEffect(() => {
     const checkDomModals = () => {
       const active =
         document.body.classList.contains('nsta-modal-open') ||
-        Boolean(document.querySelector('[role="dialog"], [data-modal="true"], .iic-modal-overlay'));
+        document.body.classList.contains('iic-modal-open');
       setIsDomModalOpen(active);
     };
     checkDomModals();
@@ -5234,7 +5242,7 @@ export const StudentDashboard: React.FC<Props> = ({
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['class', 'data-modal', 'role'],
+      attributeFilter: ['class'],
     });
     return () => {
       window.removeEventListener('nsta-modal-visibility-change', handleModalEvent);
@@ -5294,15 +5302,137 @@ export const StudentDashboard: React.FC<Props> = ({
   const nstaFabLongPressTimerRef = useRef<any>(null);
   const nstaFabIsLongPressRef = useRef<boolean>(false);
 
-  const [initialRevisionAutoStartMcq, setInitialRevisionAutoStartMcq] = useState(false);
-  const [showMyRoutine, setShowMyRoutine] = useState(false);
-  const [showDailyEventPage, setShowDailyEventPage] = useState(false);
+  // ── Screen Long-Press Gestures (NSTA Button Replacement) ──
+  // 1. Home page: 3 seconds screen hold opens NSTA Wheel (top bar & bottom nav stay visible)
+  // 2. Other pages (Notes, MCQ, Reader, Lessons, Routine, Revision, Store, Profile, etc.): 2 seconds screen hold toggles BOTH top bar and bottom nav (hide or restore)
+  useEffect(() => {
+    let holdTimer: any = null;
+    let startX = 0;
+    let startY = 0;
+    let isLongPressFired = false;
+
+    const handlePointerDown = (e: PointerEvent) => {
+      // Ignore typing controls and media players
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('input, textarea, select, audio, video, [data-no-longpress="true"]')) {
+        return;
+      }
+
+      startX = e.clientX;
+      startY = e.clientY;
+      isLongPressFired = false;
+
+      const isCurrentHome =
+        activeTab === 'HOME' &&
+        !showStarredPage &&
+        !showChat &&
+        !showRevisionHubScreen &&
+        !showUpdatesPage &&
+        !showMyRoutine &&
+        !showDailyEventPage &&
+        !showProgressDashboard &&
+        !showWhatsAppChatModal &&
+        contentViewStep !== 'PLAYER';
+
+      // User requirement:
+      // Home page: 3s hold opens NSTA Quick Wheel (top bar & bottom nav gayab NA honge)
+      // Other pages: 2s hold hides/restores BOTH top bar and bottom navigation
+      const holdDuration = isCurrentHome ? 3000 : 2000;
+
+      if (holdTimer) clearTimeout(holdTimer);
+      holdTimer = setTimeout(() => {
+        isLongPressFired = true;
+        try { hapticStrong(); } catch (_) {}
+        if (isCurrentHome) {
+          setShowNstaQuickWheel(true);
+        } else {
+          toggleImmersiveStudyMode();
+        }
+
+        // Restore Pedro if currently hidden
+        if (isPedroHidden) {
+          setIsPedroHidden(false);
+          try {
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('nst_pedro_hidden');
+              window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
+              window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
+            }
+          } catch (_) {}
+        }
+      }, holdDuration);
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      // If user moved more than 16px (scrolling), cancel the hold timer
+      const dx = Math.abs(e.clientX - startX);
+      const dy = Math.abs(e.clientY - startY);
+      if (dx > 16 || dy > 16) {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+      }
+    };
+
+    const handlePointerUp = () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+    };
+
+    // Prevent click actions on cards/buttons if a 2s/3s hold just triggered
+    const handleClickCapture = (e: MouseEvent) => {
+      if (isLongPressFired) {
+        e.preventDefault();
+        e.stopPropagation();
+        isLongPressFired = false;
+      }
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown, { passive: true });
+    window.addEventListener('pointermove', handlePointerMove, { passive: true });
+    window.addEventListener('pointerup', handlePointerUp, { passive: true });
+    window.addEventListener('pointercancel', handlePointerUp, { passive: true });
+    window.addEventListener('click', handleClickCapture, true);
+
+    return () => {
+      if (holdTimer) clearTimeout(holdTimer);
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('click', handleClickCapture, true);
+    };
+  }, [
+    activeTab,
+    showStarredPage,
+    showChat,
+    showRevisionHubScreen,
+    showUpdatesPage,
+    showMyRoutine,
+    showDailyEventPage,
+    showProgressDashboard,
+    showWhatsAppChatModal,
+    contentViewStep,
+    toggleImmersiveStudyMode,
+    isPedroHidden,
+  ]);
+
   // XP badge useEffect — yahan rakhna zaroori hai (showRevisionHubScreen/showMyRoutine/showChat ke baad)
   // Pehle rakhne se TDZ crash hota tha (dependency array mein undeclared vars)
   React.useEffect(() => {
     const isOnHome = activeTab === 'HOME' && !showRevisionHubScreen && !showUpdatesPage && !showMyRoutine && !showChat;
     const wasOnHome = xpBadgeIsOnHomeRef.current;
     xpBadgeIsOnHomeRef.current = isOnHome;
+    if (isOnHome) {
+      // User requirement: Home button / Home page pe aane pe bottom navigation hamesha visible rahega
+      setIsLandscapeUiHidden(false);
+      setIsTopBarHidden(false);
+      setForceShowBottomNav(true);
+    }
     if (isOnHome && !wasOnHome) {
       setShowXpBadge(true);
       if (xpBadgeTimerRef.current) clearTimeout(xpBadgeTimerRef.current);
@@ -5314,6 +5444,23 @@ export const StudentDashboard: React.FC<Props> = ({
     return () => { if (xpBadgeTimerRef.current) clearTimeout(xpBadgeTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, showRevisionHubScreen, showUpdatesPage, showMyRoutine, showChat]);
+
+  // When Routine opens, immediately scroll to top, lock background scroll, and ensure bottom nav is visible
+  React.useEffect(() => {
+    if (showMyRoutine) {
+      setIsLandscapeUiHidden(false);
+      setIsTopBarHidden(false);
+      setForceShowBottomNav(true);
+      window.scrollTo({ top: 0, behavior: 'instant' as any });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      const origOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = origOverflow;
+      };
+    }
+  }, [showMyRoutine]);
   // lessonTitle for auto-navigation when opening Revision Hub from Routine/Daily Event (coins already paid).
   const [initialRevisionLessonTitle, setInitialRevisionLessonTitle] = useState<string | null>(null);
 
@@ -7493,7 +7640,13 @@ export const StudentDashboard: React.FC<Props> = ({
       return updated;
     });
     if (didStar) {
-      try { if (navigator.vibrate) navigator.vibrate(30); } catch {}
+      try { if (navigator.vibrate) navigator.vibrate([30, 40, 50]); } catch {}
+      try {
+        fireCreditNotify({
+          type: 'FREE_LIMIT',
+          message: '⭐ Point Saved to Important Notes!',
+        });
+      } catch (_) {}
       // Fire-and-forget global count sync so other students see it.
       try {
         if (user?.id) {
@@ -7507,6 +7660,12 @@ export const StudentDashboard: React.FC<Props> = ({
       } catch {}
     } else if (didUnstar) {
       try { if (navigator.vibrate) navigator.vibrate(20); } catch {}
+      try {
+        fireCreditNotify({
+          type: 'FREE_LIMIT',
+          message: 'Point removed from Important Notes',
+        });
+      } catch (_) {}
       try {
         if (user?.id) {
           import('../services/noteStars').then(m => m.recordNoteUnstar(user.id, topicText)).catch(()=>{});
@@ -13529,8 +13688,10 @@ export const StudentDashboard: React.FC<Props> = ({
               // In dark mode the border color is too dark to use as text — use a bright tier color instead
               const tbTextColor = isDarkMode ? tierTheme.border : tbBorderColor;
 
-              const _masterAll3D = settings?.homeAllCards3D ?? false;
+              const _masterAll3D = settings?.globalCards3D || settings?.homeAllCards3D || false;
               const _card3D  = _masterAll3D || (settings?.homeClass612Card3D ?? false);
+              const _depthPx = settings?.cardDepth3D === 'subtle' ? '2.5px' : settings?.cardDepth3D === 'deep' ? '7px' : '4px';
+              const _liftPx = settings?.cardDepth3D === 'subtle' ? '-1px' : settings?.cardDepth3D === 'deep' ? '-3px' : '-2px';
 
               const isCompetitionSelected = String(activeSessionClass || user.classLevel) === 'COMPETITION' || syllabusMode === 'COMPETITION';
               const currentSelectedClass = isCompetitionSelected ? 'COMPETITION' : String(activeSessionClass || user.classLevel || '10');
@@ -13584,14 +13745,17 @@ export const StudentDashboard: React.FC<Props> = ({
                 : `${(classTimeSecs / 3600).toFixed(1)} hrs`;
 
               // Dynamic theme-derived styles so all Home page cards adapt when theme updates
+              const hasHomeWallpaper = Boolean(settings?.homeBackgroundImage);
               const themePrimary = tierTheme.primary || '#6366f1';
               const themeMid = tierTheme.mid || tierTheme.primary || '#8b5cf6';
-              const themeBorder = (tierTheme as any).cardBorder || (tierTheme as any).border || themePrimary;
-              const themeCardBg = isDarkMode
-                ? ((tierTheme as any).cardBg && (tierTheme as any).cardBg !== '#ffffff'
-                    ? (tierTheme as any).cardBg
-                    : `linear-gradient(135deg, ${tierTheme.borderSoft || 'rgba(99,102,241,0.12)'} 0%, rgba(15,23,42,0.92) 100%)`)
-                : ((tierTheme as any).cardBg || '#ffffff');
+              const themeBorder = settings?.appCardBorderColor || (tierTheme as any).cardBorder || (tierTheme as any).border || themePrimary;
+              const themeCardBg = hasHomeWallpaper
+                ? 'transparent'
+                : (settings?.appCardBackground || settings?.homeClass612CardBg || (isDarkMode
+                    ? ((tierTheme as any).cardBg && (tierTheme as any).cardBg !== '#ffffff'
+                        ? (tierTheme as any).cardBg
+                        : `linear-gradient(135deg, ${tierTheme.borderSoft || 'rgba(99,102,241,0.12)'} 0%, rgba(15,23,42,0.92) 100%)`)
+                    : ((tierTheme as any).cardBg || '#ffffff')));
               const themeBtnGrad = tierTheme.btnGrad || `linear-gradient(135deg, ${themePrimary}, ${themeMid})`;
               const themeShadow = isDarkMode
                 ? `0 4px 22px ${tierTheme.shadowColor || `${themePrimary}30`}`
@@ -13599,6 +13763,31 @@ export const StudentDashboard: React.FC<Props> = ({
               const themeChipBg = isDarkMode ? 'rgba(255,255,255,0.08)' : `${themePrimary}12`;
               const themeChipBorder = isDarkMode ? 'rgba(255,255,255,0.14)' : `${themePrimary}25`;
               const themeChipText = isDarkMode ? '#e2e8f0' : (tierTheme.textPrimary || '#1e293b');
+
+              const getHomeCardStyle = (cardSpecific3D?: boolean, cardSpecificBg?: string, cardSpecificBorder?: string) => {
+                const is3D = cardSpecific3D !== undefined ? cardSpecific3D : _card3D;
+                const bg = hasHomeWallpaper
+                  ? 'transparent'
+                  : (cardSpecificBg || themeCardBg);
+                const border = cardSpecificBorder || themeBorder;
+                if (is3D) {
+                  return {
+                    background: bg,
+                    backgroundColor: bg,
+                    border: `2px solid ${border}`,
+                    boxShadow: hasHomeWallpaper
+                      ? `0 1px 0 rgba(255,255,255,0.4) inset, 0 ${_depthPx} 0 ${border}bb, 0 calc(${_depthPx} + 3px) 18px ${border}40`
+                      : `0 1px 0 rgba(255,255,255,0.85) inset, 0 ${_depthPx} 0 ${border}bb, 0 calc(${_depthPx} + 3px) 18px ${border}28`,
+                    transform: `translateY(${_liftPx})`,
+                  };
+                }
+                return {
+                  background: bg,
+                  backgroundColor: bg,
+                  border: `2px solid ${border}`,
+                  boxShadow: hasHomeWallpaper ? `0 4px 18px ${border}25` : themeShadow,
+                };
+              };
 
               return (
                 <div className="space-y-4 mb-2">
@@ -13630,16 +13819,11 @@ export const StudentDashboard: React.FC<Props> = ({
                       id="home-selected-class-card"
                       onClick={() => goToClassHome(isCompetitionSelected ? 'COMPETITION' : currentSelectedClass)}
                       className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all group cursor-pointer"
-                      style={_card3D ? {
-                        background: themeCardBg,
-                        border: `2px solid ${themeBorder}`,
-                        boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
-                        transform: 'translateY(-1px)',
-                      } : {
-                        background: themeCardBg,
-                        border: `2px solid ${themeBorder}`,
-                        boxShadow: themeShadow,
-                      }}
+                      style={getHomeCardStyle(
+                        settings?.homeAcademicCard3D !== undefined ? settings?.homeAcademicCard3D : settings?.homeClass612Card3D,
+                        settings?.homeAcademicCardBg || settings?.homeClass612CardBg,
+                        settings?.homeAcademicCardBorder || settings?.homeClass612CardBorder
+                      )}
                     >
                       <div className="p-4">
                         <div className="flex items-start justify-between gap-3">
@@ -13906,16 +14090,11 @@ export const StudentDashboard: React.FC<Props> = ({
                         onTabChange('COURSES');
                       }}
                       className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all group cursor-pointer"
-                      style={_card3D ? {
-                        background: themeCardBg,
-                        border: `2px solid ${themeBorder}`,
-                        boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
-                        transform: 'translateY(-1px)',
-                      } : {
-                        background: themeCardBg,
-                        border: `2px solid ${themeBorder}`,
-                        boxShadow: themeShadow,
-                      }}
+                      style={getHomeCardStyle(
+                        settings?.homePracticeCard3D,
+                        settings?.homePracticeCardBg,
+                        settings?.homePracticeCardBorder
+                      )}
                     >
                       <div className="p-4">
                         <div className="flex items-start justify-between gap-3">
@@ -14004,16 +14183,11 @@ export const StudentDashboard: React.FC<Props> = ({
                             <div id="home-daily-challenge-card" className="w-full home-routine-card-anim flex flex-col">
                               <div
                                 className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
-                                style={_card3D ? {
-                                  background: themeCardBg,
-                                  border: `2px solid ${themeBorder}`,
-                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
-                                  transform: 'translateY(-1px)'
-                                } : {
-                                  background: themeCardBg,
-                                  border: `2px solid ${themeBorder}`,
-                                  boxShadow: themeShadow
-                                }}
+                                style={getHomeCardStyle(
+                                  settings?.homeDailyChallengeCard3D,
+                                  settings?.homeDailyChallengeCardBg,
+                                  settings?.homeDailyChallengeCardBorder
+                                )}
                               >
                                 <div className="space-y-3 w-full">
                                   <div className="flex items-start justify-between gap-2">
@@ -14141,16 +14315,11 @@ export const StudentDashboard: React.FC<Props> = ({
                             <div id="home-study-room-card" className="w-full home-routine-card-anim flex flex-col">
                               <div
                                 className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
-                                style={_card3D ? {
-                                  background: themeCardBg,
-                                  border: `2px solid ${themeBorder}`,
-                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
-                                  transform: 'translateY(-1px)'
-                                } : {
-                                  background: themeCardBg,
-                                  border: `2px solid ${themeBorder}`,
-                                  boxShadow: themeShadow
-                                }}
+                                style={getHomeCardStyle(
+                                  settings?.homeLiveRoomCard3D !== undefined ? settings?.homeLiveRoomCard3D : settings?.homeStudyRoomCard3D,
+                                  settings?.homeLiveRoomCardBg || settings?.homeStudyRoomCardBg,
+                                  settings?.homeLiveRoomCardBorder || settings?.homeStudyRoomCardBorder
+                                )}
                               >
                                 <div className="space-y-3 w-full">
                                   <div className="flex items-start justify-between gap-2">
@@ -14230,16 +14399,11 @@ export const StudentDashboard: React.FC<Props> = ({
                                   openRevisionHubSafely({ isFromRoutine: false });
                                 }}
                                 className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
-                                style={_card3D ? {
-                                  background: themeCardBg,
-                                  border: `2px solid ${themeBorder}`,
-                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
-                                  transform: 'translateY(-1px)'
-                                } : {
-                                  background: themeCardBg,
-                                  border: `2px solid ${themeBorder}`,
-                                  boxShadow: themeShadow
-                                }}
+                                style={getHomeCardStyle(
+                                  settings?.homeRevisionHubCard3D !== undefined ? settings?.homeRevisionHubCard3D : settings?.homeRevisionCard3D,
+                                  settings?.homeRevisionHubCardBg || settings?.homeRevisionCardBg,
+                                  settings?.homeRevisionHubCardBorder || settings?.homeRevisionCardBorder
+                                )}
                               >
                                 <div className="space-y-3 w-full">
                                   <div className="flex items-start justify-between gap-2">
@@ -14317,16 +14481,11 @@ export const StudentDashboard: React.FC<Props> = ({
                                   onTabChange('MY_MISTAKES_PAGE' as any);
                                 }}
                                 className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
-                                style={_card3D ? {
-                                  background: themeCardBg,
-                                  border: `2px solid ${themeBorder}`,
-                                  boxShadow: `0 1px 0 rgba(255,255,255,0.85) inset, 0 4px 0 ${themeBorder}bb, 0 7px 18px ${themeBorder}28`,
-                                  transform: 'translateY(-1px)'
-                                } : {
-                                  background: themeCardBg,
-                                  border: `2px solid ${themeBorder}`,
-                                  boxShadow: themeShadow
-                                }}
+                                style={getHomeCardStyle(
+                                  settings?.homeMistakesCard3D,
+                                  settings?.homeMistakesCardBg,
+                                  settings?.homeMistakesCardBorder
+                                )}
                               >
                                 <div className="space-y-3 w-full">
                                   <div className="flex items-start justify-between gap-2">
@@ -14974,9 +15133,10 @@ export const StudentDashboard: React.FC<Props> = ({
       // _light reuses the early detection (already computed above for _nameStyle)
       const _light    = _profileIsLight;
 
-      const _pBg      = _pw ? '#f0f4f8' : (_adminProfileTheme?.bgColor || '#0b1222');
-      const _pCard    = _pw ? '#ffffff' : (_adminProfileTheme?.cardColor || '#121b33');
-      const _pCardSt  = _pw ? '#f1f5f9' : (_adminProfileTheme?.cardColor || '#141f3b');
+      const _hasProfileWallpaper = Boolean(settings?.profileBackgroundImage);
+      const _pBg      = _hasProfileWallpaper ? 'transparent' : (_pw ? '#f0f4f8' : (_adminProfileTheme?.bgColor || '#0b1222'));
+      const _pCard    = _hasProfileWallpaper ? 'transparent' : (_pw ? '#ffffff' : (_adminProfileTheme?.cardColor || '#121b33'));
+      const _pCardSt  = _hasProfileWallpaper ? 'transparent' : (_pw ? '#f1f5f9' : (_adminProfileTheme?.cardColor || '#141f3b'));
       const _pSep     = _light ? `1px solid ${tierTheme.primary}30` : '1px solid rgba(234, 179, 8, 0.18)';
       const _pBdrMain = _light ? `1px solid ${tierTheme.primary}40` : '1px solid rgba(234, 179, 8, 0.32)';
       const _pBdrSoft = _light ? `1px solid ${tierTheme.primary}28` : '1px solid rgba(234, 179, 8, 0.22)';
@@ -14993,7 +15153,24 @@ export const StudentDashboard: React.FC<Props> = ({
       const _pIconBdr = _light ? `1px solid ${tierTheme.primary}35` : '1px solid rgba(234, 179, 8, 0.35)';
 
       return (
-        <div className="animate-in fade-in zoom-in duration-300 pb-28 min-h-screen" data-pw={_pw ? "1" : "0"} style={{ background: _pBg }}>
+        <div
+          data-wallpaper-active={settings?.profileBackgroundImage ? "true" : undefined}
+          className="animate-in fade-in zoom-in duration-300 pb-28 min-h-screen relative"
+          data-pw={_pw ? "1" : "0"}
+          style={{ background: settings?.profileBackgroundImage ? 'transparent' : _pBg }}
+        >
+          {/* Background Wallpaper for Profile Page (Admin Configured Live Wallpaper) */}
+          {settings?.profileBackgroundImage && (
+            <div
+              className="fixed inset-0 pointer-events-none z-0 overflow-hidden"
+              style={{
+                backgroundImage: `url(${resolveTelegramUrl(settings.profileBackgroundImage)})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                opacity: typeof settings.profileBackgroundOpacity === 'number' ? settings.profileBackgroundOpacity : 0.25,
+              }}
+            />
+          )}
 
           {/* ── CARD 1: Identity & Recovery (Premium 2-Column Split) ── */}
           <div className="mx-3 mt-3 rounded-3xl overflow-hidden mb-3" style={{ background: _pCard, border: _pBdrMain, boxShadow: _light ? `0 12px 48px ${tierTheme.primary}30, 0 4px 20px rgba(0,0,0,0.15)` : '0 12px 48px rgba(0,0,0,0.55), 0 0 24px rgba(234, 179, 8, 0.08)' }}>
@@ -17349,7 +17526,12 @@ export const StudentDashboard: React.FC<Props> = ({
   };
 
   const renderBottomNav = (inProjectorOverlay: boolean = false) => {
-    if (!inProjectorOverlay && (flashcardMcqs || compMcqSession)) {
+    // Hide bottom navigation if user toggled Focus / Study mode (via 2s long press)
+    if (!forceShowBottomNav || isLandscapeUiHidden || isTopBarHidden) {
+      return null;
+    }
+
+    if (!inProjectorOverlay && (flashcardMcqs || compMcqSession || showMyRoutine)) {
       return null;
     }
 
@@ -17550,6 +17732,11 @@ export const StudentDashboard: React.FC<Props> = ({
               setShowUpdatesPage(false);
               setShowMyRoutine(false);
               setShowWhatsAppChatModal(false);
+              if (target === 'HOME') {
+                setIsLandscapeUiHidden(false);
+                setIsTopBarHidden(false);
+                setForceShowBottomNav(true);
+              }
               if (showCommunityStarsPage) {
                 try { stopProfileStarRead(); } catch (_) {}
                 setShowCommunityStarsPage(false);
@@ -17605,7 +17792,12 @@ export const StudentDashboard: React.FC<Props> = ({
                 filledOnActive: true,
                 activeColor: "#2563eb",
                 isActive: !showStarredPage && !showChat && !showRevisionHubScreen && !showUpdatesPage && !showMyRoutine && !showDailyEventPage && !showProgressDashboard && currentLogicalTab === "HOME",
-                onClick: () => switchToLogicalTab("HOME"),
+                onClick: () => {
+                  setIsLandscapeUiHidden(false);
+                  setIsTopBarHidden(false);
+                  setForceShowBottomNav(true);
+                  switchToLogicalTab("HOME");
+                },
               },
               {
                 id: "ROUTINE" as any,
@@ -17637,6 +17829,9 @@ export const StudentDashboard: React.FC<Props> = ({
                     try { stopProfileStarRead(); } catch (_) {}
                     setShowCommunityStarsPage(false);
                   }
+                  window.scrollTo({ top: 0, behavior: 'instant' as any });
+                  document.documentElement.scrollTop = 0;
+                  document.body.scrollTop = 0;
                   hapticMedium();
                   setShowMyRoutine(true);
                 },
@@ -17904,7 +18099,19 @@ export const StudentDashboard: React.FC<Props> = ({
 
   return (
   <ThemeProvider theme={_extendedTheme}>
-    <div data-tier={tierTheme.tier} className="min-h-[100dvh] pb-0" style={{ background: _appBg }}>
+    <div
+      data-tier={tierTheme.tier}
+      className="min-h-[100dvh] pb-0"
+      style={{
+        background: (
+          (activeTab === 'HOME' && settings?.homeBackgroundImage && !showStarredPage && !showChat && !showRevisionHubScreen && !showUpdatesPage && !showMyRoutine && !showDailyEventPage && !showProgressDashboard) ||
+          (activeTab === 'MCQ' && settings?.mcqHubBackgroundImage) ||
+          (activeTab === 'COMMUNITY' && settings?.communityBackgroundImage) ||
+          (activeTab === 'ROUTINE' && settings?.routineBackgroundImage) ||
+          (activeTab === 'PROFILE' && settings?.profileBackgroundImage)
+        ) ? 'transparent' : _appBg
+      }}
+    >
       <NotificationPrompt userId={user.id} />
       {/* Admin WhiteBoard floating panel — fixed z-[9999], visible in ALL modes */}
       {_isAdminUser && showAdminBoard && (
@@ -17994,10 +18201,17 @@ export const StudentDashboard: React.FC<Props> = ({
               id="nsta-header-brand-btn"
               onClick={() => {
                 hapticMedium();
-                // User requirement: NstA logo tap hides both top bar and bottom navigation
-                toggleImmersiveStudyMode(true);
+                // User requirement: App name/logo tap on home page top bar runs home assembly animation without hiding top/bottom bar
+                if (activeTab !== 'HOME') {
+                  onTabChange('HOME');
+                }
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                setIsLandscapeUiHidden(false);
+                setIsTopBarHidden(false);
+                setForceShowBottomNav(true);
+                setShowHomeAssemblyAnim(true);
               }}
-              title="Top bar aur Bottom navigation hide karein"
+              title="Home Assembly Animation chalao"
               className="flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer group shrink-0 relative"
             >
               <div className="relative shrink-0">
@@ -22861,6 +23075,7 @@ export const StudentDashboard: React.FC<Props> = ({
               onRestoreBottomNav={handleRestoreBottomNav}
               isBottomNavVisible={forceShowBottomNav}
               initialCommunityFilter={communityInitialFilter}
+              settings={settings}
             />
           </div>
         </div>
@@ -23464,8 +23679,41 @@ export const StudentDashboard: React.FC<Props> = ({
       )}
 
       {/* MAIN CONTENT AREA */}
+      {/* ── HOME PAGE BACKGROUND WALLPAPER (Admin Configured Live Wallpaper) ── */}
+      {activeTab === "HOME" &&
+        !showStarredPage &&
+        !showChat &&
+        !showRevisionHubScreen &&
+        !showUpdatesPage &&
+        !showMyRoutine &&
+        !showDailyEventPage &&
+        !showProgressDashboard &&
+        settings?.homeBackgroundImage && (
+          <div
+            className="fixed inset-0 pointer-events-none z-0 overflow-hidden"
+            style={{
+              backgroundImage: `url(${resolveTelegramUrl(settings.homeBackgroundImage)})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              opacity: typeof settings.homeBackgroundOpacity === 'number' ? settings.homeBackgroundOpacity : 0.22,
+            }}
+          />
+        )}
       <div
-        className={`relative ${
+        data-wallpaper-active={
+          activeTab === "HOME" &&
+          !showStarredPage &&
+          !showChat &&
+          !showRevisionHubScreen &&
+          !showUpdatesPage &&
+          !showMyRoutine &&
+          !showDailyEventPage &&
+          !showProgressDashboard &&
+          Boolean(settings?.homeBackgroundImage)
+            ? "true"
+            : undefined
+        }
+        className={`relative z-10 ${
           contentViewStep === "PLAYER" && selectedChapter
             ? "fixed inset-0 z-[150] overflow-hidden"
             : activeTab === "REVISION" || activeTab === "AI_HUB"
@@ -23729,173 +23977,7 @@ export const StudentDashboard: React.FC<Props> = ({
         isBottomNavHidden={isTopBarHidden || isLandscapeUiHidden || !forceShowBottomNav}
       />
 
-      {/* ── FLOATING NSTA LOGO BUTTON (Opens Feature Wheel on Home | Toggles Top/Bottom Bar on all other pages including NstA Messenger) ── */}
-      {(() => {
-        // Jab feature wheel khula ho ya assembly anim ho toh button hide rahega
-        if (showNstaQuickWheel || showHomeAssemblyAnim) {
-          return null;
-        }
-
-        // Fullscreen player / doc reading modes / flashcard viewer / math viewer / all MCQ views mein button hide rahega
-        if (
-          contentViewStep === "PLAYER" ||
-          isDocFullscreen ||
-          lucentNoteViewer ||
-          coachingNotesReaderOpen ||
-          hwActiveHwId ||
-          Boolean(homeworkPlayerHwId) ||
-          isInternalImmersive ||
-          activeExternalApp ||
-          showWhatsAppChatModal ||
-          Boolean(flashcardMcqs) ||
-          Boolean(compMcqSession) ||
-          Boolean(mathViewerEntry) ||
-          isDomModalOpen ||
-          showStudyModeModal ||
-          activeTab === "MCQ" ||
-          activeTab === "MCQ_REVIEW" ||
-          activeTab === "REVISION_V2" ||
-          (showChat && chatMode === "MCQ") ||
-          showRevisionHubScreen ||
-          showMistakePractice ||
-          showCompMcqHub ||
-          showMcqCommunityPopup ||
-          showMcqSearchView ||
-          Boolean(compMcqDraft?.question) ||
-          (selectedSubject && selectedSubject.id === 'mcq')
-        ) {
-          return null;
-        }
-
-        // Check if user is currently on the default HOME screen
-        const isHomePage = activeTab === 'HOME' &&
-          !showRevisionHubScreen &&
-          !showMyRoutine &&
-          !showUpdatesPage &&
-          !showStarredPage &&
-          !showProgressDashboard &&
-          !showDailyEventPage &&
-          !showChat &&
-          !showMcqCommunityPopup &&
-          !showWhatsAppChatModal;
-
-        // Button is active on Home page, Pro page, MCQ page, Community page, Routine page, Revision Hub, NstA Messenger, etc.
-        const isBarsHidden = isLandscapeUiHidden || isTopBarHidden || !forceShowBottomNav;
-
-        const isChatOrMcq = (showChat && (chatMode === 'COMMUNITY' || chatMode === 'MCQ')) || showMcqCommunityPopup;
-
-        const officialNstaLogo = (settings?.appLogo && !settings.appLogo.includes('placeholder'))
-          ? settings.appLogo
-          : '/branding/nsta-logo.svg';
-
-        const bottomPositionClass = showWhatsAppChatModal
-          ? 'bottom-[76px] sm:bottom-[80px]'
-          : !isBarsHidden
-            ? (isChatOrMcq ? 'bottom-[74px]' : 'bottom-[76px]')
-            : 'bottom-5 sm:bottom-6';
-
-        const handleButtonClick = () => {
-          if (nstaFabIsLongPressRef.current) {
-            nstaFabIsLongPressRef.current = false;
-            return;
-          }
-          try { hapticMedium(); } catch (_) {}
-
-          if (isBarsHidden) {
-            // Agar bars chhupe hue hain toh tap karne par wapas visible ho jayenge
-            toggleImmersiveStudyMode(false);
-          } else if (isHomePage) {
-            // Home page par NstA button tap se feature wheel open hoga
-            setShowNstaQuickWheel(true);
-          } else {
-            // Pro page, MCQ page, Community, Routine, Revision Hub, NstA Messenger sab par:
-            toggleImmersiveStudyMode();
-          }
-        };
-
-        const handlePointerDown = () => {
-          nstaFabIsLongPressRef.current = false;
-          if (nstaFabLongPressTimerRef.current) {
-            clearTimeout(nstaFabLongPressTimerRef.current);
-          }
-          // User requirement: "nsta button daba ke rakhna hoga tab ja ke aayega pedro"
-          nstaFabLongPressTimerRef.current = setTimeout(() => {
-            nstaFabIsLongPressRef.current = true;
-            try { hapticStrong(); } catch (_) {}
-            setIsPedroHidden(false);
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('nst_pedro_hidden');
-              localStorage.removeItem('nst_pedro_sleeping');
-              window.dispatchEvent(new CustomEvent('nst-restore-pedro', { detail: { wakeUp: true } }));
-              window.dispatchEvent(new CustomEvent('nst-show-pedro'));
-              window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
-              pedroSpeak('Main aa gaya dost! Kya help chahiye?');
-            }
-            setShowPedro(true);
-          }, 550);
-        };
-
-        const handlePointerUp = () => {
-          if (nstaFabLongPressTimerRef.current) {
-            clearTimeout(nstaFabLongPressTimerRef.current);
-            nstaFabLongPressTimerRef.current = null;
-          }
-        };
-
-        const buttonTitle = isHomePage
-          ? "NstA Button • Tap: Quick Feature Wheel | Daba ke rakhein (Hold): Pedro Assistant bulayein"
-          : isBarsHidden
-            ? "टॉप बार व नेविगेशन दिखाएं • Tap: Bars on/off | Daba ke rakhein (Hold): Pedro Assistant bulayein"
-            : "टॉप बार व नेविगेशन छुपाएं • Tap: Bars on/off | Daba ke rakhein (Hold): Pedro Assistant bulayein";
-
-        return (
-          <div className={`fixed ${bottomPositionClass} right-3 sm:right-6 z-[600] pointer-events-auto flex items-center gap-2 animate-in fade-in slide-in-from-bottom-3 duration-300 transition-all`}>
-            {/* Nsta Circular Floating Button with Official NSTA Logo */}
-            <button
-              id="nsta-quick-fab"
-              type="button"
-              onClick={handleButtonClick}
-              onPointerDown={handlePointerDown}
-              onPointerUp={handlePointerUp}
-              onPointerCancel={handlePointerUp}
-              className="group relative flex items-center justify-center w-14 h-14 sm:w-15 sm:h-15 rounded-full shadow-2xl active:scale-95 transition-all duration-200 hover:scale-105 cursor-pointer p-1"
-              style={{
-                background: 'radial-gradient(circle, #0f172a 0%, #020617 100%)',
-                border: '2.5px solid rgba(251, 191, 36, 0.9)',
-                boxShadow: '0 8px 25px -2px rgba(124, 58, 237, 0.55), 0 0 16px rgba(251, 191, 36, 0.45)',
-              }}
-              title={buttonTitle}
-              aria-label={buttonTitle}
-            >
-              <div className="w-full h-full rounded-full overflow-hidden flex items-center justify-center bg-slate-900/90">
-                <img
-                  src={officialNstaLogo}
-                  alt="NSTA Logo"
-                  className="w-full h-full object-contain p-0.5 rounded-full drop-shadow-md select-none pointer-events-none"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).src = '/branding/nsta-logo.png';
-                  }}
-                />
-              </div>
-
-              {/* Glowing notification ping: Emerald green when bars visible; Amber when hidden (Study Mode) */}
-              <span className="absolute top-0 right-0 flex h-3.5 w-3.5">
-                {!isBarsHidden ? (
-                  <>
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-slate-950 shadow" />
-                  </>
-                ) : (
-                  <>
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-amber-500 border-2 border-slate-950 shadow" />
-                  </>
-                )}
-              </span>
-            </button>
-          </div>
-        );
-      })()}
+      {/* ── FLOATING NSTA BUTTON REMOVED (Replaced by screen long-press: 3s on Home for NSTA Wheel, 2s on other pages for Focus/Study Mode) ── */}
 
       {/* FIXED BOTTOM NAVIGATION */}
       {renderBottomNav(false)}
@@ -28190,7 +28272,7 @@ RULES:
       })()}
 
       {/* MY ROUTINE FULL-SCREEN */}
-      {showMyRoutine && (
+      {showMyRoutine && createPortal(
         <MyRoutine
           user={user}
           activeBoard={activeSessionBoard || (user as any)?.board || 'BSEB'}
@@ -28245,14 +28327,18 @@ RULES:
               isFromRoutine: true,
             });
           }}
-        />
+          isTopBarHidden={isTopBarHidden || isLandscapeUiHidden}
+          bottomNav={renderBottomNav(true)}
+        />,
+        document.body
       )}
 
       {/* HOMEWORK MCQ FULL-SCREEN PLAYER */}
       {homeworkPlayerHwId && activePlayerHw && (
         <div className="fixed inset-0 z-[200] bg-white flex flex-col h-[100dvh] w-screen animate-in fade-in slide-in-from-bottom-4">
           {/* Top Bar */}
-          <div className="sticky top-0 z-10 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 py-3 flex items-center gap-3">
+          {!isTopBarHidden && !isLandscapeUiHidden && (
+            <div className="sticky top-0 z-10 bg-white/90 backdrop-blur-md border-b border-slate-200 px-4 py-3 flex items-center gap-3">
             <button
               onClick={closeHomeworkPlayer}
               className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded-full active:scale-95 transition"
@@ -28303,6 +28389,7 @@ RULES:
               {playerIsReadingAll ? <><Square size={14} /> Stop</> : <><Volume2 size={14} /> Read All</>}
             </button>
           </div>
+          )}
 
           {/* Progress + 3-Mode Selector — same pattern as Practice MCQ Hub /
               Lucent MCQ / Homework MCQ list (📝 MCQ · 💬 Q&A · 🃏 Flashcard).
@@ -28725,6 +28812,9 @@ RULES:
               Next Note <ChevronRight size={16} />
             </button>
           </div>
+
+          {/* Persistent Bottom Navigation */}
+          {renderBottomNav(true)}
         </div>
       )}
 
@@ -29172,6 +29262,7 @@ RULES:
                 }
               }}
               tabBar={tabBarNode}
+              isTopBarHidden={isTopBarHidden || isLandscapeUiHidden}
               bottomNav={renderBottomNav(true)}
             />
           </ErrorBoundary>
@@ -29218,6 +29309,7 @@ RULES:
               }
             }
           }}
+          isTopBarHidden={isTopBarHidden || isLandscapeUiHidden}
           bottomNav={renderBottomNav(true)}
         />
       )}

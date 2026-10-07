@@ -472,12 +472,31 @@ const App: React.FC = () => {
   const [inAppBrowserUrl, setInAppBrowserUrl] = useState<string | null>(null);
 
   useEffect(() => {
-      if (state.settings?.globalCards3D) {
-          document.documentElement.classList.add('global-cards-3d');
+    const root = document.documentElement;
+    if (state.settings?.globalCards3D) {
+      root.classList.add('global-cards-3d');
+      const depth = state.settings.cardDepth3D || 'medium';
+      if (depth === 'subtle') {
+        root.style.setProperty('--nst-3d-depth', '2.5px');
+        root.style.setProperty('--nst-3d-lift', '-1px');
+        root.style.setProperty('--nst-3d-hover-depth', '3.5px');
+      } else if (depth === 'deep') {
+        root.style.setProperty('--nst-3d-depth', '7px');
+        root.style.setProperty('--nst-3d-lift', '-3.5px');
+        root.style.setProperty('--nst-3d-hover-depth', '9px');
       } else {
-          document.documentElement.classList.remove('global-cards-3d');
+        root.style.setProperty('--nst-3d-depth', '4px');
+        root.style.setProperty('--nst-3d-lift', '-2px');
+        root.style.setProperty('--nst-3d-hover-depth', '5.5px');
       }
-  }, [state.settings?.globalCards3D]);
+    } else {
+      root.classList.remove('global-cards-3d');
+    }
+
+    if (state.settings?.appCardBorderColor) {
+      root.style.setProperty('--nst-card-border', state.settings.appCardBorderColor);
+    }
+  }, [state.settings?.globalCards3D, state.settings?.cardDepth3D, state.settings?.appCardBorderColor]);
 
   // Real-time User Notification Subscriber (direct RTDB pipeline for chat, friends, study room, routine)
   useEffect(() => {

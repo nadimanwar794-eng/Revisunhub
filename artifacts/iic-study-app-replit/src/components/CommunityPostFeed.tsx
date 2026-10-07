@@ -53,6 +53,7 @@ import {
 } from '../firebase';
 import { uploadImageToImgBB, compressImage } from '../services/imgbbService';
 import { uploadToCloudinary, getOptimizedVideoUrl } from '../services/cloudinaryService';
+import { resolveTelegramUrl } from '../services/telegramStorageService';
 import { ImageCropper } from './ImageCropper';
 import { GuestRestrictionModal } from './GuestRestrictionModal';
 import { notifyCommunityUpdateInBackground } from './NotificationManager';
@@ -120,6 +121,8 @@ interface CommunityPostFeedProps {
   onUserUpdate?: (user: User) => void;
   onSwitchToTools?: () => void;
   onSwitchToInfo?: () => void;
+  communityBackgroundImage?: string;
+  communityBackgroundOpacity?: number;
 }
 
 type FilterType = 'ALL' | 'OFFICIAL' | 'BUG_REPORT' | 'DOUBT' | 'MINE' | 'UNDER_REVIEW' | 'NOTES_FIX';
@@ -137,6 +140,8 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   onUserUpdate,
   onSwitchToTools,
   onSwitchToInfo,
+  communityBackgroundImage,
+  communityBackgroundOpacity,
 }) => {
   const isGuestUser = !user?.email && user?.provider !== 'email' && user?.provider !== 'google' && !!(user?.isGuest || user?.isAnonymous || user?.role === 'GUEST');
   const [guestModalOpen, setGuestModalOpen] = useState(false);
@@ -1093,7 +1098,25 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
   };
 
   return (
-    <div id="community-post-feed" className="flex flex-col h-full bg-slate-50 dark:bg-slate-950 overflow-hidden relative">
+    <div
+      id="community-post-feed"
+      data-wallpaper-active={communityBackgroundImage ? "true" : undefined}
+      className={`flex flex-col h-full overflow-hidden relative ${
+        communityBackgroundImage ? 'bg-transparent text-slate-800 dark:text-slate-100' : 'bg-slate-50 dark:bg-slate-950'
+      }`}
+    >
+      {/* Background Wallpaper (Admin Configured Live Wallpaper) */}
+      {communityBackgroundImage && (
+        <div
+          className="fixed inset-0 pointer-events-none z-0 overflow-hidden"
+          style={{
+            backgroundImage: `url(${resolveTelegramUrl(communityBackgroundImage)})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            opacity: typeof communityBackgroundOpacity === 'number' ? communityBackgroundOpacity : 0.22,
+          }}
+        />
+      )}
       {/* Toast Notification */}
       {toastMessage && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 text-white text-xs font-semibold px-4 py-2 rounded-2xl shadow-xl backdrop-blur-md flex items-center gap-2 animate-in fade-in slide-in-from-top-2 border border-slate-700">
@@ -2033,11 +2056,11 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                 )}
 
                 {/* Post Body: Image Attachment */}
-                {post.imageUrl && (
+                {(post.imageUrl || (post as any).mediaUrl) && (
                   <div className="px-3 pb-3">
                     <div
-                      className="relative overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800 group cursor-pointer"
-                      onClick={() => setLightboxImageUrl(post.imageUrl!)}
+                      className="relative overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800 group cursor-pointer min-h-[120px]"
+                      onClick={() => setLightboxImageUrl(resolveTelegramUrl(post.imageUrl || (post as any).mediaUrl))}
                     >
                       {post.isHd && (
                         <div className="absolute top-2 left-2 z-10 px-2 py-0.5 bg-black/75 backdrop-blur-xs text-white rounded text-[10px] font-black border border-white/20 flex items-center gap-1 shadow-xs pointer-events-none">
@@ -2045,10 +2068,18 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                         </div>
                       )}
                       <img
-                        src={post.imageUrl}
-                        alt="Post Attachment"
-                        className="w-full max-h-96 object-cover object-center group-hover:scale-[1.01] transition-transform duration-300"
+                        src={resolveTelegramUrl(post.imageUrl || (post as any).mediaUrl)}
+                        alt={post.text ? post.text.slice(0, 30) : 'Post Image'}
+                        className="w-full max-h-96 object-cover object-center group-hover:scale-[1.01] transition-transform duration-300 bg-slate-900/10"
                         loading="lazy"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          const raw = post.imageUrl || (post as any).mediaUrl;
+                          if (raw && !target.dataset.retried) {
+                            target.dataset.retried = '1';
+                            target.src = raw;
+                          }
+                        }}
                       />
                       <div className="absolute bottom-2 right-2 p-1.5 bg-black/60 hover:bg-black/80 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-[10px] font-bold">
                         {post.isHd && <span className="text-emerald-400 text-[9px] font-black mr-0.5">HD</span>}
@@ -2059,15 +2090,23 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                 )}
 
                 {/* Post Body: Video Attachment */}
-                {post.videoUrl && (
+                {(post.videoUrl || (post as any).video) && (
                   <div className="px-3 pb-3">
                     <div className="relative overflow-hidden rounded-xl bg-black border border-slate-800">
                       <video
-                        src={getOptimizedVideoUrl(post.videoUrl)}
+                        src={resolveTelegramUrl(getOptimizedVideoUrl(post.videoUrl || (post as any).video))}
                         controls
                         playsInline
                         preload="metadata"
                         className="w-full max-h-96 object-contain"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          const raw = post.videoUrl || (post as any).video;
+                          if (raw && !target.dataset.retried) {
+                            target.dataset.retried = '1';
+                            target.src = raw;
+                          }
+                        }}
                       />
                     </div>
                   </div>
@@ -2256,17 +2295,24 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
                                   </p>
                                 )}
                                 {comm.imageUrl && (
-                                  <div className="mt-2 relative rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 max-w-[240px] group">
+                                  <div className="mt-2 relative rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 max-w-[240px] group bg-slate-900/10">
                                     <img
-                                      src={comm.imageUrl}
+                                      src={resolveTelegramUrl(comm.imageUrl)}
                                       alt="Comment attachment"
                                       className="max-h-48 w-full object-cover rounded-lg cursor-pointer hover:opacity-95 transition-opacity"
-                                      onClick={() => setLightboxImageUrl(comm.imageUrl || null)}
+                                      onClick={() => setLightboxImageUrl(resolveTelegramUrl(comm.imageUrl) || null)}
                                       loading="lazy"
+                                      onError={(e) => {
+                                        const target = e.currentTarget;
+                                        if (comm.imageUrl && !target.dataset.retried) {
+                                          target.dataset.retried = '1';
+                                          target.src = comm.imageUrl;
+                                        }
+                                      }}
                                     />
                                     <button
                                       type="button"
-                                      onClick={() => setLightboxImageUrl(comm.imageUrl || null)}
+                                      onClick={() => setLightboxImageUrl(resolveTelegramUrl(comm.imageUrl) || null)}
                                       className="absolute bottom-1.5 right-1.5 p-1 bg-black/60 hover:bg-black/80 text-white rounded-md text-[10px] flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-xs"
                                       title="Bada karein"
                                     >
@@ -2452,8 +2498,8 @@ export const CommunityPostFeed: React.FC<CommunityPostFeedProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             <img
-              src={lightboxImageUrl}
-              alt="Enlarged Post Attachment"
+              src={resolveTelegramUrl(lightboxImageUrl)}
+              alt="Photo Fullscreen View"
               className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl"
             />
           </div>
