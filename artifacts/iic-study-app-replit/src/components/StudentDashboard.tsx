@@ -245,6 +245,7 @@ import {
   Sun,
   Palette,
   RefreshCw,
+  RefreshCcw,
   Coins,
   Flame,
   Lightbulb,
@@ -3964,9 +3965,14 @@ export const StudentDashboard: React.FC<Props> = ({
       contentViewStep === 'PLAYER' &&
       (activeTab === 'PDF' || activeTab === 'MCQ' || activeTab === 'VIDEO' || (activeTab as any) === 'AUDIO');
     setIsTopBarHidden(inPlayer);
-    // Keep the in-reader mode switch visible in Competition mode. Hiding the
-    // dashboard's landscape UI also hid the reader's own slim tab bar.
-    if (syllabusMode === 'COMPETITION' || !inPlayer) {
+    // Competition mode: auto-hide all chrome when opening notes/MCQ
+    if (syllabusMode === 'COMPETITION' && inPlayer) {
+      setIsLandscapeUiHidden(true);
+    } else if (syllabusMode === 'COMPETITION' && !inPlayer) {
+      setIsLandscapeUiHidden(false);
+    }
+    // Always reset landscape-hidden when leaving player so bottom nav reappears
+    if (!inPlayer && syllabusMode !== 'COMPETITION') {
       setIsLandscapeUiHidden(false);
     }
   }, [activeTab, contentViewStep, syllabusMode]);
@@ -5298,8 +5304,8 @@ export const StudentDashboard: React.FC<Props> = ({
   const nstaFabIsLongPressRef = useRef<boolean>(false);
 
   // ── Screen Long-Press Gestures (NSTA Button Replacement) ──
-  // 1. Home page: 3 seconds screen hold opens NSTA Wheel (top bar & bottom nav stay visible)
-  // 2. Other pages (Notes, MCQ, Reader, Lessons, Routine, Revision, Store, Profile, etc.): 2 seconds screen hold toggles BOTH top bar and bottom nav (hide or restore)
+  // 1. Home page: 1 second screen hold opens NSTA Wheel (top bar & bottom nav stay visible)
+  // 2. Other pages (Notes, MCQ, Reader, Lessons, Routine, Revision, Store, Profile, etc.): 1 second screen hold toggles BOTH top bar and bottom nav (hide or restore)
   useEffect(() => {
     let holdTimer: any = null;
     let startX = 0;
@@ -5331,9 +5337,10 @@ export const StudentDashboard: React.FC<Props> = ({
         contentViewStep !== 'PLAYER';
 
       // User requirement:
-      // Home page: 3s hold opens NSTA Quick Wheel (top bar & bottom nav gayab NA honge)
-      // Other pages: 2s hold hides/restores BOTH top bar and bottom navigation
-      const holdDuration = isCurrentHome ? 3000 : 2000;
+      // Ab 1 sec tak hold karne pe gesture kaam karega:
+      // Home page: 1s hold opens NSTA Quick Wheel (top bar & bottom nav gayab NA honge)
+      // Other pages: 1s hold hides/restores BOTH top bar and bottom navigation (Focus / Study Mode toggle)
+      const holdDuration = 1000;
 
       if (holdTimer) clearTimeout(holdTimer);
       holdTimer = setTimeout(() => {
@@ -11191,9 +11198,8 @@ export const StudentDashboard: React.FC<Props> = ({
             })()}
 
             {/* ── COMPETITION SLIM BAR — mode tab bar ke neeche, Lucent jaisa ──
-                Shows for notes/mcq/qa modes; video/audio/pdf/flashcard use the sticky header above.
-                Reading (chunk) mode mein hidden — ChunkedNotesReader ka apna slim bar use hota hai. */}
-            {!hwImmersive && !isLandscapeUiHidden && ((effectiveMode === 'notes' && hwNotesViewMode !== 'chunk') || effectiveMode === 'mcq' || effectiveMode === 'qa') && (
+                Shows for notes (chunk & html)/mcq/qa modes; video/audio/pdf/flashcard use the sticky header above. */}
+            {!hwImmersive && !isLandscapeUiHidden && (effectiveMode === 'notes' || effectiveMode === 'mcq' || effectiveMode === 'qa') && (
               <div className="bg-white border-b border-slate-100 shrink-0 flex items-center" style={{ minHeight: 36 }}>
                 {/* Back */}
                 <button onClick={goBack} className="w-8 h-8 flex items-center justify-center text-slate-600 active:scale-90 transition shrink-0 border-r border-slate-100" title="Back">
@@ -11205,10 +11211,54 @@ export const StudentDashboard: React.FC<Props> = ({
                     {activeHw.title || 'Competition'}
                     {activeHw.date && <span className="text-slate-400 font-medium"> · {new Date(activeHw.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</span>}
                   </span>
+                  {/* Read mode badges + mode switch controls */}
+                  {effectiveMode === 'notes' && hwNotesViewMode === 'chunk' && (
+                    <>
+                      <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">📖 READ</span>
+                      <button
+                        onClick={() => handleWriteModeGate(() => { setHwViewMode('notes'); setHwNotesViewMode('html'); }, undefined, activeHw.id, 0)}
+                        className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-teal-50 border border-teal-200 text-teal-700 hover:bg-teal-100 active:scale-95 transition-all shrink-0"
+                        title="Switch to Premium Notes"
+                      >
+                        ✨ Premium
+                      </button>
+                      {hasMcq && (
+                        <button
+                          onClick={() => { stopSpeech(); setHwViewMode('mcq'); }}
+                          className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100 active:scale-95 transition-all shrink-0"
+                          title="Switch to MCQ Practice"
+                        >
+                          🧠 MCQ
+                        </button>
+                      )}
+                      <button onClick={handleRotate} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${isLandscape ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title="Rotate"><RotateCcw size={12} /></button>
+                      <button
+                        onClick={async () => { try { const src = (activeHw as any).chunkNotes || (activeHw as any).htmlNotes || activeHw.notes || ''; await saveOfflineItem({ id: `hw_${activeHw.id}`, type: 'NOTE', title: activeHw.title || 'Homework', subtitle: `Competition · ${activeHw.targetSubject || ''}`, data: { kind: 'LUCENT_CHUNK', chunkNotes: src, lessonTitle: activeHw.title, subject: activeHw.targetSubject } }); setHwSaved(true); showAlert('✅ Saved offline!', 'SUCCESS'); setTimeout(() => setHwSaved(false), 3000); } catch { showAlert('Save failed.', 'ERROR'); } }}
+                        className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${hwSaved ? "bg-emerald-500 border-emerald-600 text-white shadow-emerald-200" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}
+                        title={hwSaved ? 'Saved ✓' : 'Save Offline'}
+                      ><WifiOff size={12} /></button>
+                    </>
+                  )}
                   {/* Write mode badges + controls */}
                   {effectiveMode === 'notes' && hwNotesViewMode === 'html' && (
                     <>
                       <span className="text-[9px] font-black text-teal-600 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">✏️ WRITE</span>
+                      <button
+                        onClick={() => { stopSpeech(); setHwViewMode('notes'); setHwNotesViewMode('chunk'); }}
+                        className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 active:scale-95 transition-all shrink-0"
+                        title="Switch to Reading Mode"
+                      >
+                        📖 Reading
+                      </button>
+                      {hasMcq && (
+                        <button
+                          onClick={() => { stopSpeech(); setHwViewMode('mcq'); }}
+                          className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-50 border border-purple-200 text-purple-700 hover:bg-purple-100 active:scale-95 transition-all shrink-0"
+                          title="Switch to MCQ Practice"
+                        >
+                          🧠 MCQ
+                        </button>
+                      )}
                       {_isAdminUser && (
                         <button onClick={() => setShowAdminBoard(true)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 active:scale-95 shadow-sm transition-all shrink-0" title="Whiteboard"><Presentation size={12} /></button>
                       )}
@@ -11233,6 +11283,16 @@ export const StudentDashboard: React.FC<Props> = ({
                         <button onClick={async () => { try { const safeTitle = (activeHw.title || 'Homework').replace(/[^a-z0-9_\- ]/gi, '_').slice(0, 60); const _dlOk = await checkAndDoDownload(async () => { await downloadAsMHTML('hw-html-download', safeTitle, { appName: settings?.appShortName || settings?.appName || 'IIC', pageTitle: activeHw.title || 'Homework', subtitle: 'Homework Notes — Write Mode' }); }); if (_dlOk) showAlert('📥 Saved!', 'SUCCESS'); } catch { showAlert('Download failed.', 'ERROR'); } }} className="w-8 h-8 flex items-center justify-center rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 active:scale-95 shadow-sm transition-all shrink-0" title="Download"><Download size={12} /></button>
                       )}
                     </>
+                  )}
+                  {/* MCQ mode quick switch to Notes */}
+                  {effectiveMode === 'mcq' && (
+                    <button
+                      onClick={() => { stopSpeech(); setHwViewMode('notes'); setHwNotesViewMode('chunk'); }}
+                      className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 active:scale-95 transition-all shrink-0"
+                      title="Switch to Notes"
+                    >
+                      📖 Notes
+                    </button>
                   )}
                   {/* Q&A — Reveal All / Hide All */}
                   {effectiveMode === 'qa' && (() => {
@@ -12130,8 +12190,8 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
             )}
 
-            {/* Floating FAB — tap directly to toggle Focus Mode (hidden in video and all MCQ/QA/flashcard modes, and hidden on notification page) */}
-            {effectiveMode !== 'video' && effectiveMode !== 'mcq' && effectiveMode !== 'qa' && effectiveMode !== 'flashcard' && !showNotifPage && (
+            {/* Floating FAB — tap directly to toggle Focus Mode (hidden in notes, video, and all MCQ/QA/flashcard modes, and hidden on notification page) */}
+            {effectiveMode !== 'video' && effectiveMode !== 'mcq' && effectiveMode !== 'qa' && effectiveMode !== 'flashcard' && effectiveMode !== 'notes' && !showNotifPage && (
               <DraggableNstaLogoFab
                 isActive={hwImmersive}
                 onToggle={() => setHwImmersive(v => !v)}
@@ -27660,8 +27720,8 @@ RULES:
             )}
 
           </div>
-          {/* Lucent FAB — hidden in video tab and all MCQ/QA/flashcard tabs */}
-          {lucentActiveTab !== 'VIDEO' && lucentActiveTab !== 'MCQ' && lucentActiveTab !== 'MCQS' && lucentActiveTab !== 'QA' && lucentActiveTab !== 'FLASHCARD' && !showNotifPage && (
+          {/* Lucent FAB — hidden in notes tab, video tab and all MCQ/QA/flashcard tabs */}
+          {lucentActiveTab !== 'VIDEO' && lucentActiveTab !== 'MCQ' && lucentActiveTab !== 'MCQS' && lucentActiveTab !== 'QA' && lucentActiveTab !== 'FLASHCARD' && lucentActiveTab !== 'NOTES' && !showNotifPage && (
             <DraggableNstaLogoFab
               isActive={lucentImmersive}
               onToggle={() => setLucentImmersive(v => !v)}
@@ -30473,6 +30533,7 @@ RULES:
         !lucentNoteViewer &&
         !mathViewerEntry &&
         playerMode !== 'mcq' &&
+        playerMode !== 'notes' &&
         activeTab !== 'MCQ' &&
         activeTab !== 'MCQ_REVIEW' &&
         !compMcqSession &&

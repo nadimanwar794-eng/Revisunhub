@@ -312,33 +312,6 @@ function NoteCard({ note, accent, directOpen = false, user, onReaderOpenChange }
             onStarToggle={onStarToggle}
             hideTopBar={focusMode}
           />
-          {/* Focus Mode FAB — inside the notes reader */}
-          <button
-            onPointerDown={(e) => { e.stopPropagation(); hapticMedium(); setFocusMode(v => !v); }}
-            className="active:scale-95 transition-transform"
-            style={{
-              position: 'fixed',
-              bottom: 24,
-              right: 16,
-              width: 48,
-              height: 48,
-              borderRadius: '50%',
-              zIndex: 600,
-              background: focusMode ? accent : 'rgba(15,23,42,0.88)',
-              border: `2px solid ${focusMode ? accent : 'rgba(255,255,255,0.4)'}`,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#fff',
-            }}
-            title={focusMode ? 'Exit Focus Mode' : 'Focus Mode'}
-          >
-            {focusMode
-              ? <span style={{ fontSize: 18, lineHeight: 1 }}>↩</span>
-              : <span style={{ fontSize: 16, lineHeight: 1 }}>🎯</span>
-            }
-          </button>
         </div>
       )}
     </>

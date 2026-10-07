@@ -5,9 +5,9 @@
     ],
     "target": {
       "namespace": "android_app",
-      "package_name": "app.vercel.nsta20_xi.twa",
+      "package_name": "app.vercel.nsta_iic_study_app_replit.twa",
       "sha256_cert_fingerprints": [
-        "AF:0E:0E:79:20:92:1D:B1:3F:B3:0F:6D:CF:8D:53:5C:AE:B4:BD:8A:19:41:19:81:95:E3:66:FE:6D:B7:02:10"
+        "6A:95:FA:15:41:06:16:87:47:01:BF:69:39:A6:E7:76:9C:8B:DA:CC:BB:11:D2:B4:23:71:1A:0E:0C:88:31:CD"
       ]
     }
   }

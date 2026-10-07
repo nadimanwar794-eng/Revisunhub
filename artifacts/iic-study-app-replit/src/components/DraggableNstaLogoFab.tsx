@@ -171,7 +171,7 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
       clearTimeout(longPressTimerRef.current);
     }
 
-    // Long press: holding button down summons Pedro
+    // Long press: holding button down for 1 second summons Pedro
     longPressTimerRef.current = setTimeout(() => {
       if (!isMovedRef.current) {
         isLongPressRef.current = true;
@@ -184,7 +184,7 @@ export const DraggableNstaLogoFab: React.FC<DraggableNstaLogoFabProps> = ({
           window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
         }
       }
-    }, 550);
+    }, 1000);
 
     if (!posRef.current) {
       const maxY = getMaxY(isActive, size);

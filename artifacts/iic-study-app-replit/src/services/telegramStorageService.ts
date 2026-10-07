@@ -17,12 +17,12 @@
  */
 
 export const DEFAULT_STORAGE_CHAT_ID = '7849468653'; // Verified Telegram chat ID
-export const DEFAULT_BOT_TOKEN = '[REDACTED_TELEGRAM_BOT_TOKEN]';
-export const DEFAULT_STORAGE_BOT_TOKEN = '[REDACTED_TELEGRAM_BOT_TOKEN]';
+export const DEFAULT_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
+export const DEFAULT_STORAGE_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
 
 // Chat Bot & Channel (Nsta Messenger & Community)
 export const DEFAULT_CHAT_CHANNEL_ID = '-1004290996442'; // Nsta messanger channel
-export const DEFAULT_CHAT_BOT_TOKEN = '[REDACTED_TELEGRAM_BOT_TOKEN]'; // @PothiaAppBot
+export const DEFAULT_CHAT_BOT_TOKEN = '8932524192:AAGVxYSuKPZX6sOQFkXz0U7ESVQ2NcHmJZw'; // @PothiaAppBot
 export const TELEGRAM_CHAT_INVITE_LINK = 'https://t.me/+p0aIY7YWgGxhYzk1';
 const STORAGE_CHAT_KEY = 'nst_telegram_storage_chat_id';
 
