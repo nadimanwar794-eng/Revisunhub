@@ -17,8 +17,8 @@
  */
 
 export const DEFAULT_STORAGE_CHAT_ID = '7849468653'; // Verified Telegram chat ID
-export const DEFAULT_BOT_TOKEN = '';
-export const DEFAULT_STORAGE_BOT_TOKEN = '';
+export const DEFAULT_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
+export const DEFAULT_STORAGE_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
 
 // Chat Bot & Channel (Nsta Messenger & Community)
 export const DEFAULT_CHAT_CHANNEL_ID = '-1004290996442'; // Nsta messanger channel

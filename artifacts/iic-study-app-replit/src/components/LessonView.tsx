@@ -955,11 +955,10 @@ export const LessonView: React.FC<Props> = ({
 
   // FLOATING IMMERSIVE BUTTON — always rendered via portal into document.body
   // so it escapes any fixed/overflow parent stacking context.
-  // Note: Disabled when viewing MCQ content or Notes content as per user requirement.
+  // Note: Disabled when viewing MCQ content as per user requirement.
   const isMcqContent = (content.type === 'MCQ_ANALYSIS' || content.type === 'MCQ_SIMPLE' || content.type === 'MCQ_RESULT') || (Boolean(content.mcqData) && (content.mcqData?.length || 0) > 0 && content.type?.includes('MCQ'));
-  const isNotesContent = content.type === 'NOTES' || content.type === 'WRITING_NOTES' || notesViewMode === 'readable' || notesViewMode === 'styled' || isHtml;
   const fabBottom = isImmersive ? 16 : 80;
-  const floatingBtn = (isMcqContent || isNotesContent) ? null : createPortal(
+  const floatingBtn = isMcqContent ? null : createPortal(
     <>
       {/* Backdrop — close menu on outside tap (not in schoolMode) */}
       {fabOpen && !schoolMode && (

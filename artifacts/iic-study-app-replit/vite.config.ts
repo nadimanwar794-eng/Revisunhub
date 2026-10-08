@@ -6,8 +6,27 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
-const port = Number(process.env.PORT || 3000);
-const basePath = process.env.BASE_PATH || '/';
+const rawPort = process.env.PORT;
+
+if (!rawPort) {
+  throw new Error(
+    'PORT environment variable is required but was not provided.',
+  );
+}
+
+const port = Number(rawPort);
+
+if (Number.isNaN(port) || port <= 0) {
+  throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+const basePath = process.env.BASE_PATH;
+
+if (!basePath) {
+  throw new Error(
+    'BASE_PATH environment variable is required but was not provided.',
+  );
+}
 
 export default defineConfig({
   base: basePath,
@@ -31,7 +50,7 @@ export default defineConfig({
       manifest: {
         name: 'NSTA',
         short_name: 'NSTA',
-        description: 'Comprehensive learning platform with syllabus, notes, audio studio, MCQs, and student progress tracking.',
+        description: 'NSTA student learning app',
         theme_color: '#030717',
         background_color: '#030717',
         display: 'standalone',
@@ -88,7 +107,7 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: true,
     fs: {
-      strict: false,
+      strict: true,
     },
   },
   preview: {
