@@ -11198,8 +11198,9 @@ export const StudentDashboard: React.FC<Props> = ({
             })()}
 
             {/* ── COMPETITION SLIM BAR — mode tab bar ke neeche, Lucent jaisa ──
-                Shows for notes (chunk & html)/mcq/qa modes; video/audio/pdf/flashcard use the sticky header above. */}
-            {!hwImmersive && !isLandscapeUiHidden && (effectiveMode === 'notes' || effectiveMode === 'mcq' || effectiveMode === 'qa') && (
+                Hidden in Reading Mode because ChunkedNotesReader has its own toolbar;
+                remains visible in Writing, MCQ, and Q&A modes. */}
+            {!hwImmersive && !isLandscapeUiHidden && (effectiveMode === 'notes' || effectiveMode === 'mcq' || effectiveMode === 'qa') && !(effectiveMode === 'notes' && hwNotesViewMode === 'chunk') && (
               <div className="bg-white border-b border-slate-100 shrink-0 flex items-center" style={{ minHeight: 36 }}>
                 {/* Back */}
                 <button onClick={goBack} className="w-8 h-8 flex items-center justify-center text-slate-600 active:scale-90 transition shrink-0 border-r border-slate-100" title="Back">
