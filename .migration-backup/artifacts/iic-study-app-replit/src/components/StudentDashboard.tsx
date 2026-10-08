@@ -8039,6 +8039,7 @@ export const StudentDashboard: React.FC<Props> = ({
   const [activeChallenges20, setActiveChallenges20] = useState<Challenge20[]>(
     [],
   );
+  const [activeChallenges20Loading, setActiveChallenges20Loading] = useState(true);
   const [routineSelectionVersion, setRoutineSelectionVersion] = useState(0);
   const [homeBannerIndex, setHomeBannerIndex] = useState(0);
 
@@ -8054,6 +8055,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
   useEffect(() => {
     let cancelled = false;
+    setActiveChallenges20Loading(true);
     const routineData = loadRoutineData(user.id);
     // Daily Challenge 2.0 follows the class selected inside My Routine.
     // A browsing/session class must never make another class's challenge appear.
@@ -8123,7 +8125,12 @@ export const StudentDashboard: React.FC<Props> = ({
       })().catch((error) => {
         console.warn('Daily Challenge 2.0 load failed:', error);
         if (!cancelled) setActiveChallenges20([]);
+      }).finally(() => {
+        if (!cancelled) setActiveChallenges20Loading(false);
       });
+    } else {
+      setActiveChallenges20([]);
+      setActiveChallenges20Loading(false);
     }
     return () => { cancelled = true; };
   }, [activeSessionClass, user.classLevel, user.board, user.stream, user.id, settings, routineSelectionVersion]);
@@ -13871,10 +13878,9 @@ export const StudentDashboard: React.FC<Props> = ({
                       </button>
                     </div>
 
-                    <button
+                    <div
                       id="home-selected-class-card"
-                      onClick={() => goToClassHome(isCompetitionSelected ? 'COMPETITION' : currentSelectedClass)}
-                      className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all group cursor-pointer"
+                      className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left transition-all group"
                       style={getHomeCardStyle(
                         settings?.homeAcademicCard3D !== undefined ? settings?.homeAcademicCard3D : settings?.homeClass612Card3D,
                         settings?.homeAcademicCardBg || settings?.homeClass612CardBg,
@@ -13945,8 +13951,13 @@ export const StudentDashboard: React.FC<Props> = ({
 
                         {/* Standard unified bottom button */}
                         <div className="mt-3.5 pt-2.5 border-t w-full" style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                          <div
-                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                          <button
+                            type="button"
+                            onClick={() => {
+                              hapticStrong();
+                              goToClassHome(isCompetitionSelected ? 'COMPETITION' : currentSelectedClass);
+                            }}
+                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95 cursor-pointer active:scale-[0.98]"
                             style={{
                               background: themeBtnGrad,
                               color: '#ffffff',
@@ -13956,10 +13967,10 @@ export const StudentDashboard: React.FC<Props> = ({
                             <BookOpen size={14} />
                             <span>{isCompetitionSelected ? 'Open Govt. Exams Syllabus' : `Open Class ${currentSelectedClass} Syllabus`}</span>
                             <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                          </div>
+                          </button>
                         </div>
                       </div>
-                    </button>
+                    </div>
                   </div>
 
                   {/* ── SELECT CLASS OR TARGET EXAM POPUP (MATCHES 3-DOT MENU SIZE & STYLE) ── */}
@@ -14133,19 +14144,8 @@ export const StudentDashboard: React.FC<Props> = ({
 
                   {/* ── 2. PRACTICE SET CARD (COMPETITION MCQ PRACTICE EXTRACTED TO HOME PAGE) ── */}
                   <div id="home-practice-set-card" className="w-full">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        hapticStrong();
-                        setSyllabusMode('COMPETITION');
-                        setActiveSessionClass('COMPETITION');
-                        setSelectedSubject({ id: 'mcq', name: 'Practice Set' } as any);
-                        setHomeworkSubjectView('mcq');
-                        setHwSubjectOpenedFrom('HOME');
-                        setContentViewStep('SUBJECTS');
-                        onTabChange('COURSES');
-                      }}
-                      className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left active:scale-[0.99] transition-all group cursor-pointer"
+                    <div
+                      className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left transition-all group"
                       style={getHomeCardStyle(
                         settings?.homePracticeCard3D,
                         settings?.homePracticeCardBg,
@@ -14195,8 +14195,19 @@ export const StudentDashboard: React.FC<Props> = ({
 
                         {/* Standard unified bottom button */}
                         <div className="mt-3.5 pt-2.5 border-t w-full" style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                          <div
-                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                          <button
+                            type="button"
+                            onClick={() => {
+                              hapticStrong();
+                              setSyllabusMode('COMPETITION');
+                              setActiveSessionClass('COMPETITION');
+                              setSelectedSubject({ id: 'mcq', name: 'Practice Set' } as any);
+                              setHomeworkSubjectView('mcq');
+                              setHwSubjectOpenedFrom('HOME');
+                              setContentViewStep('SUBJECTS');
+                              onTabChange('COURSES');
+                            }}
+                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95 cursor-pointer active:scale-[0.98]"
                             style={{
                               background: themeBtnGrad,
                               color: '#ffffff',
@@ -14206,10 +14217,10 @@ export const StudentDashboard: React.FC<Props> = ({
                             <Sparkles size={14} />
                             <span>Start Practice Set</span>
                             <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                          </div>
+                          </button>
                         </div>
                       </div>
-                    </button>
+                    </div>
                   </div>
 
                   {/* ── 3. DAILY CHALLENGE, LIVE STUDY ROOM, REVISION HUB & MY MISTAKES (HOME PAGE) ── */}
@@ -14327,27 +14338,36 @@ export const StudentDashboard: React.FC<Props> = ({
                                   ) : (
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        hapticStrong();
-                                        if (activeDaily && onStartWeeklyTest) {
-                                          onStartWeeklyTest({
-                                            id: activeDaily.id,
-                                            name: activeDaily.title,
-                                            description: activeDaily.description || "Aaj ka Daily Challenge 2.0",
-                                            date: new Date().toISOString(),
-                                            durationMinutes: Math.min(activeDaily.durationMinutes || 60, 60),
-                                            isCompleted: false,
-                                            score: 0,
-                                            totalQuestions: activeDaily.questions.length,
-                                            questions: activeDaily.questions,
-                                            classLevel: activeDaily.classLevel,
-                                            challengeType: isDailyChallenge20(activeDaily) ? 'DAILY_CHALLENGE' : 'WEEKLY_TEST',
-                                          } as any);
-                                        } else {
-                                          setShowDailyEventPage(true);
+                                      disabled={activeChallenges20Loading}
+                                      aria-busy={activeChallenges20Loading}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (activeChallenges20Loading) return;
+                                        if (!activeDaily) {
+                                          setActiveChallenges20Loading(true);
+                                          setRoutineSelectionVersion(version => version + 1);
+                                          return;
                                         }
+                                        if (!onStartWeeklyTest) {
+                                          showAlert("Daily Challenge abhi start nahi ho saka. Dobara koshish karein.", "ERROR");
+                                          return;
+                                        }
+                                        hapticStrong();
+                                        onStartWeeklyTest({
+                                          id: activeDaily.id,
+                                          name: activeDaily.title,
+                                          description: activeDaily.description || "Aaj ka Daily Challenge 2.0",
+                                          date: new Date().toISOString(),
+                                          durationMinutes: Math.min(activeDaily.durationMinutes || 60, 60),
+                                          isCompleted: false,
+                                          score: 0,
+                                          totalQuestions: activeDaily.questions.length,
+                                          questions: activeDaily.questions,
+                                          classLevel: activeDaily.classLevel,
+                                          challengeType: isDailyChallenge20(activeDaily) ? 'DAILY_CHALLENGE' : 'WEEKLY_TEST',
+                                        } as any);
                                       }}
-                                      className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98"
+                                      className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98 disabled:opacity-60 disabled:cursor-wait"
                                       style={{
                                         background: themeBtnGrad,
                                         color: '#ffffff',
@@ -14355,7 +14375,13 @@ export const StudentDashboard: React.FC<Props> = ({
                                       }}
                                     >
                                       <Rocket size={14} />
-                                      <span>Start Daily Challenge</span>
+                                      <span>
+                                        {activeChallenges20Loading
+                                          ? 'Loading Daily Challenge…'
+                                          : activeDaily
+                                          ? 'Start Daily Challenge'
+                                          : 'Retry Daily Challenge'}
+                                      </span>
                                       <span className="group-hover:translate-x-0.5 transition-transform">→</span>
                                     </button>
                                   )}
@@ -14448,13 +14474,8 @@ export const StudentDashboard: React.FC<Props> = ({
                         {isHomeSectionVisible('home_revision_hub', settings) && (() => {
                           return (
                             <div id="home-revision-card" className="w-full home-revhub-card-anim flex flex-col">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  hapticStrong();
-                                  openRevisionHubSafely({ isFromRoutine: false });
-                                }}
-                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                              <div
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
                                 style={getHomeCardStyle(
                                   settings?.homeRevisionHubCard3D !== undefined ? settings?.homeRevisionHubCard3D : settings?.homeRevisionCard3D,
                                   settings?.homeRevisionHubCardBg || settings?.homeRevisionCardBg,
@@ -14508,8 +14529,13 @@ export const StudentDashboard: React.FC<Props> = ({
                                   className="mt-3.5 pt-2.5 border-t w-full"
                                   style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
                                 >
-                                  <div
-                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      hapticStrong();
+                                      openRevisionHubSafely({ isFromRoutine: false });
+                                    }}
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95 cursor-pointer active:scale-[0.98]"
                                     style={{
                                       background: themeBtnGrad,
                                       color: '#ffffff',
@@ -14519,9 +14545,9 @@ export const StudentDashboard: React.FC<Props> = ({
                                     <Brain size={14} />
                                     <span>Open Revision Hub</span>
                                     <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                                  </div>
+                                  </button>
                                 </div>
-                              </button>
+                              </div>
                             </div>
                           );
                         })()}
@@ -14530,13 +14556,8 @@ export const StudentDashboard: React.FC<Props> = ({
                         {(() => {
                           return (
                             <div id="home-mistakes-card" className="w-full home-revhub-card-anim flex flex-col">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  hapticStrong();
-                                  onTabChange('MY_MISTAKES_PAGE' as any);
-                                }}
-                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                              <div
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
                                 style={getHomeCardStyle(
                                   settings?.homeMistakesCard3D,
                                   settings?.homeMistakesCardBg,
@@ -14590,8 +14611,13 @@ export const StudentDashboard: React.FC<Props> = ({
                                   className="mt-3.5 pt-2.5 border-t w-full"
                                   style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
                                 >
-                                  <div
-                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      hapticStrong();
+                                      onTabChange('MY_MISTAKES_PAGE' as any);
+                                    }}
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95 cursor-pointer active:scale-[0.98]"
                                     style={{
                                       background: themeBtnGrad,
                                       color: '#ffffff',
@@ -14601,9 +14627,9 @@ export const StudentDashboard: React.FC<Props> = ({
                                     <RotateCcw size={14} />
                                     <span>Review Mistakes ({mistakeCount})</span>
                                     <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                                  </div>
+                                  </button>
                                 </div>
-                              </button>
+                              </div>
                             </div>
                           );
                         })()}
