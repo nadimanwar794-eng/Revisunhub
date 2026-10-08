@@ -1,0 +1,1 @@
+- [Clean CI TypeScript builds](clean-ci-typescript-builds.md) — force library rebuilds when tracked TypeScript build metadata can outlive ignored declaration outputs.
