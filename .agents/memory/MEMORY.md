@@ -1,2 +1,3 @@
 - [Clean CI TypeScript builds](clean-ci-typescript-builds.md) — force library rebuilds when tracked TypeScript build metadata can outlive ignored declaration outputs.
 - [Vite CI environment](vite-ci-environment.md) — production builds must work without Replit workflow-only PORT and BASE_PATH variables.
+- [Migration backup workspace entries](migration-backup-workspace-entries.md) — never keep the imported backup package active alongside its copied artifact.

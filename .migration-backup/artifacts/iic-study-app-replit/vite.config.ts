@@ -12,7 +12,7 @@ const port = Number(process.env.PORT) || 3000;
 const basePath = process.env.BASE_PATH || '/';
 
 function mediaProxyPlugin() {
-  const DEFAULT_TG_BOT_TOKEN = '8938213127:AAEjjjXmxjOuqpo5PP2TgorWOa17uYeD-Dw';
+  const DEFAULT_TG_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 
   return {
     name: 'media-proxy-plugin',
