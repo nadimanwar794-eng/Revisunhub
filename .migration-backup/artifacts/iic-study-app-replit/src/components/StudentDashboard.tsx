@@ -18242,7 +18242,7 @@ export const StudentDashboard: React.FC<Props> = ({
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
-        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || Boolean(homeworkSubjectView && hwActiveHwId) || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
         style={{ background: activeTopBarGrad }}
       >
         <TopBarEffectsLayer effects={activeTopBarEffects} />
