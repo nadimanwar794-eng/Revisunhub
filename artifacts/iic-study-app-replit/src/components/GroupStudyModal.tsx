@@ -3179,6 +3179,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     const nextIdx = (liveMcq.currentQuestionIndex || 0) + 1;
     const totalQuestions = liveMcq.totalQuestions || liveMcq.questions?.length || 0;
     const isFinished = nextIdx >= totalQuestions;
+    const nextQuestionStartTime = Date.now();
 
     // Reset local option selection & timers for next question
     setSelectedOption(null);
@@ -3186,6 +3187,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     setShowXpBanner(false);
     setRevealSecondsLeft(2);
     setMcqSecondsLeft(liveMcq.durationPerQuestion || 20);
+    questionTimerRef.current = {
+      key: `${currentRoom.id}:${nextIdx}`,
+      startedAt: nextQuestionStartTime,
+      sourceStart: nextQuestionStartTime,
+    };
 
     // 1. Optimistically update local React state immediately so UI switches to next question instantly!
     setCurrentRoom((prev) => {
@@ -3194,7 +3200,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         ...prev.liveMcq,
         currentQuestionIndex: nextIdx,
         status: isFinished ? ('ENDED' as const) : ('QUESTION' as const),
-        questionStartTime: Date.now(),
+        questionStartTime: nextQuestionStartTime,
         isActive: !isFinished,
       };
       const updatedRoom: GroupStudyRoom = {
@@ -6227,38 +6233,42 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               {/* ── FIXED BOTTOM NAVIGATION & ACTION BAR (Never shifts or jumps with MCQ height!) ── */}
                               <div className="sticky bottom-0 z-20 mt-auto pt-3 pb-1 border-t border-slate-800 bg-slate-950/95 backdrop-blur-md flex items-center justify-between gap-2 shadow-2xl">
                                 <div className="flex items-center gap-1.5 sm:gap-2">
-                                  <button
-                                    type="button"
-                                    disabled={qIdx === 0}
-                                    onClick={() => {
-                                      if (qIdx > 0) {
-                                        setStudentActiveQIndex(qIdx - 1);
-                                        setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
-                                        setHasPaceAlertTriggered(false);
-                                      }
-                                    }}
-                                    className="px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-slate-700 bg-slate-800/90 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-black text-slate-200 flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-sm shrink-0"
-                                    title="Pichla Sawal"
-                                  >
-                                    <ChevronLeft size={16} /> <span className="hidden xs:inline">Pichla</span>
-                                  </button>
+                                  {isSelfPaced && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={qIdx === 0}
+                                        onClick={() => {
+                                          if (qIdx > 0) {
+                                            setStudentActiveQIndex(qIdx - 1);
+                                            setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                            setHasPaceAlertTriggered(false);
+                                          }
+                                        }}
+                                        className="px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-slate-700 bg-slate-800/90 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-black text-slate-200 flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-sm shrink-0"
+                                        title="Pichla Sawal"
+                                      >
+                                        <ChevronLeft size={16} /> <span className="hidden xs:inline">Pichla</span>
+                                      </button>
 
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowQuestionPalette((prev) => !prev)}
-                                    className={`px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl border text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer shrink-0 ${
-                                      showQuestionPalette
-                                        ? 'bg-indigo-600 text-white border-indigo-400 shadow-md'
-                                        : 'bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border-indigo-500/40'
-                                    }`}
-                                    title="Sawal Grid kholein ya band karein"
-                                  >
-                                    <LayoutGrid size={15} />
-                                    <span className="hidden sm:inline">Sawal Grid</span>
-                                    <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-[10px] font-black text-white">
-                                      {answeredQuestionsCount}/{totalQuestions}
-                                    </span>
-                                  </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowQuestionPalette((prev) => !prev)}
+                                        className={`px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl border text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer shrink-0 ${
+                                          showQuestionPalette
+                                            ? 'bg-indigo-600 text-white border-indigo-400 shadow-md'
+                                            : 'bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border-indigo-500/40'
+                                        }`}
+                                        title="Sawal Grid kholein ya band karein"
+                                      >
+                                        <LayoutGrid size={15} />
+                                        <span className="hidden sm:inline">Sawal Grid</span>
+                                        <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-[10px] font-black text-white">
+                                          {answeredQuestionsCount}/{totalQuestions}
+                                        </span>
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
 
                                 <span className="text-xs font-bold text-slate-400 hidden md:inline">
@@ -6266,30 +6276,19 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 </span>
 
                                 <div className="flex items-center gap-1.5 sm:gap-2 ml-auto">
-                                  {/* Show Answer button: STRICTLY for Admin / Host only! */}
-                                  {isHost && (
-                                    !isReveal ? (
-                                      <button
-                                        type="button"
-                                        onClick={handleRevealAnswer}
-                                        className="px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow active:scale-95 transition cursor-pointer flex items-center gap-1 shrink-0"
-                                        title="Admin only: Sahi answer sabko reveal karein"
-                                      >
-                                        <Eye size={14} /> <span className="hidden sm:inline">Reveal</span>
-                                      </button>
-                                    ) : !isSelfPaced ? (
-                                      <button
-                                        type="button"
-                                        onClick={handleNextMcqQuestion}
-                                        className="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
-                                      >
-                                        {qIdx + 1 >= totalQuestions ? (
-                                          <>Podium 🏆</>
-                                        ) : (
-                                          <>Sync Next ➡️ ({revealSecondsLeft}s)</>
-                                        )}
-                                      </button>
-                                    ) : null
+                                  {/* No manual answer-reveal control: users see the answer only after the timer reveals it. */}
+                                  {isHost && isReveal && !isSelfPaced && (
+                                    <button
+                                      type="button"
+                                      onClick={handleNextMcqQuestion}
+                                      className="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
+                                    >
+                                      {qIdx + 1 >= totalQuestions ? (
+                                        <>Podium 🏆</>
+                                      ) : (
+                                        <>Sync Next ➡️ ({revealSecondsLeft}s)</>
+                                      )}
+                                    </button>
                                   )}
 
                                   {/* Next Question / Submit Test Button */}
@@ -6297,6 +6296,10 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                     <button
                                       type="button"
                                       onClick={() => {
+                                        if (!isSelfPaced) {
+                                          void handleNextMcqQuestion();
+                                          return;
+                                        }
                                         setStudentActiveQIndex(qIdx + 1);
                                         setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
                                         setHasPaceAlertTriggered(false);
@@ -6308,10 +6311,16 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   ) : (
                                     <button
                                       type="button"
-                                      onClick={() => setShowSubmitConfirmModal(true)}
+                                      onClick={() => {
+                                        if (!isSelfPaced) {
+                                          void handleNextMcqQuestion();
+                                          return;
+                                        }
+                                        setShowSubmitConfirmModal(true);
+                                      }}
                                       className="px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl border border-emerald-500 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-600 text-xs font-black text-white flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-lg shadow-emerald-600/30 shrink-0"
                                     >
-                                      <span>Submit</span> <CheckCircle2 size={16} />
+                                      <span>{isSelfPaced ? 'Submit' : 'Finish'}</span> <CheckCircle2 size={16} />
                                     </button>
                                   )}
                                 </div>

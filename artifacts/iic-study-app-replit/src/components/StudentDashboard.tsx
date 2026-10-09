@@ -18359,31 +18359,6 @@ export const StudentDashboard: React.FC<Props> = ({
           onTabChange('STORE');
         }}
       />
-      {/* ADMIN SWITCH BUTTON — only visible inside content (Notes/MCQ player or HW notes) */}
-      {(user.role === "ADMIN" ||
-        user.role === "SUB_ADMIN" ||
-        isImpersonating) &&
-        (contentViewStep === "PLAYER" || !!hwActiveHwId) && (
-        <div className="fixed bottom-36 right-4 z-50 flex flex-col gap-3 items-end">
-          <button
-            onClick={() => setIsLayoutEditing(!isLayoutEditing)}
-            className={`p-4 rounded-full shadow-2xl border-2 hover:scale-110 transition-transform flex items-center gap-2 ${isLayoutEditing ? "bg-yellow-400 text-black border-yellow-500" : "bg-white text-slate-800 border-slate-200"}`}
-          >
-            <Edit size={20} />
-            {isLayoutEditing && (
-              <span className="font-bold text-xs">Editing Layout</span>
-            )}
-          </button>
-          <button
-            onClick={handleSwitchToAdmin}
-            className="bg-slate-900 text-white p-4 rounded-full shadow-2xl border-2 border-slate-700 hover:scale-110 transition-transform flex items-center gap-2 animate-bounce-slow"
-          >
-            <LayoutGrid size={20} className="text-yellow-400" />
-            <span className="font-bold text-xs">Admin Panel</span>
-          </button>
-        </div>
-      )}
-
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
