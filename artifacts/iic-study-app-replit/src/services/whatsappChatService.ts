@@ -3743,32 +3743,39 @@ export const subscribeToStatuses = (callback: (statuses: UserStatusItem[]) => vo
 
   callback(loadLocal());
 
-  const statusRef = ref(rtdb, 'chat/whatsapp_status');
-  const unsub = onValue(
-    statusRef,
-    (snap) => {
-      const map = new Map<string, UserStatusItem>();
-      loadLocal().forEach((s) => map.set(s.id, s));
-      if (snap.exists()) {
-        const val = snap.val();
-        Object.entries(val).forEach(([id, data]: [string, any]) => {
-          if (data && data.mediaUrl) {
-            map.set(id, { id, ...data });
-          }
-        });
+  try {
+    const statusRef = ref(rtdb, 'chat/whatsapp_status');
+    const unsub = onValue(
+      statusRef,
+      (snap) => {
+        const map = new Map<string, UserStatusItem>();
+        loadLocal().forEach((s) => map.set(s.id, s));
+        if (snap.exists()) {
+          const val = snap.val();
+          Object.entries(val).forEach(([id, data]: [string, any]) => {
+            if (data && data.mediaUrl) {
+              map.set(id, { id, ...data });
+            }
+          });
+        }
+        const list = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+        try {
+          localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(list.slice(0, 100)));
+        } catch {}
+        callback(list);
+      },
+      () => {
+        callback(loadLocal());
       }
-      const list = Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
-      try {
-        localStorage.setItem(LOCAL_STATUS_KEY, JSON.stringify(list.slice(0, 100)));
-      } catch {}
-      callback(list);
-    },
-    () => {
-      callback(loadLocal());
-    }
-  );
+    );
 
-  return () => unsub();
+    return () => unsub();
+  } catch {
+    // Messenger should remain usable with cached/local statuses even when the
+    // Realtime Database listener cannot be created (offline or misconfigured).
+    callback(loadLocal());
+    return () => {};
+  }
 };
 
 export const deleteUserStatus = async (statusId: string): Promise<void> => {

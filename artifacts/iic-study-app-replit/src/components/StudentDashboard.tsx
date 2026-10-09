@@ -1669,6 +1669,20 @@ export const StudentDashboard: React.FC<Props> = ({
     return (user as any)?.classLevel || null;
   });
   const sessionClassOwnerRef = useRef(user?.id || '');
+  const persistSessionClassChoice = (classLevel: string) => {
+    if (!user?.id) return;
+    try {
+      localStorage.setItem(`nst_session_class_${user.id}`, classLevel);
+      // Keep the legacy entries in sync for older screens; signed-in sessions
+      // always read the user-scoped key above.
+      localStorage.setItem('nst_session_class', classLevel);
+      localStorage.setItem('nst_user_class', classLevel);
+    } catch {}
+  };
+  const chooseSessionClass = (classLevel: string) => {
+    setActiveSessionClass(classLevel);
+    persistSessionClassChoice(classLevel);
+  };
   useEffect(() => {
     if (!user?.id) return;
     if (sessionClassOwnerRef.current !== user.id) {
@@ -4002,7 +4016,7 @@ export const StudentDashboard: React.FC<Props> = ({
   const [hwViewMode, setHwViewMode] = useState<'notes' | 'mcq' | 'audio' | 'video' | 'choose' | 'qa' | 'flashcard' | 'pdf'>('notes');
 
   useEffect(() => {
-    // Competition mode keeps the dashboard chrome available while notes open.
+    // Hide the main dashboard header while Competition homework notes are open.
     // Other chapter players retain their edge-to-edge behavior.
     const inPlayer =
       contentViewStep === 'PLAYER' &&
@@ -4010,11 +4024,11 @@ export const StudentDashboard: React.FC<Props> = ({
     const competitionHomeworkOpen =
       Boolean(hwActiveHwId) &&
       (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION');
+    const competitionNotesOpen = competitionHomeworkOpen && hwViewMode === 'notes';
     const shouldAutoHideChrome =
       inPlayer && syllabusMode !== 'COMPETITION' && !competitionHomeworkOpen;
-    setIsTopBarHidden(competitionHomeworkOpen ? false : shouldAutoHideChrome);
+    setIsTopBarHidden(competitionNotesOpen || shouldAutoHideChrome);
     if (competitionHomeworkOpen || (syllabusMode === 'COMPETITION' && inPlayer)) {
-      setIsLandscapeUiHidden(false);
       setIsPedroHidden(false);
       try {
         localStorage.removeItem('nst_pedro_hidden');
@@ -4030,7 +4044,7 @@ export const StudentDashboard: React.FC<Props> = ({
     if (!inPlayer && syllabusMode !== 'COMPETITION') {
       setIsLandscapeUiHidden(false);
     }
-  }, [activeTab, contentViewStep, syllabusMode, activeSessionClass, hwActiveHwId]);
+  }, [activeTab, contentViewStep, syllabusMode, activeSessionClass, hwActiveHwId, hwViewMode]);
 
   useEffect(() => {
     setFullScreen(true); // Always true to hide global header
@@ -11113,7 +11127,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
             {/* ── COMPETITION STICKY MODE TAB BAR — Lucent jaisa ── */}
             {/* Access: Free=Reading+Writing+MCQ | Basic+=Q&A+PDF | Ultra+=Video+Audio+Flashcard | Admin=+Projector */}
-            {!hwImmersive && !isLandscapeUiHidden && effectiveMode !== 'flashcard' && (() => {
+            {(() => {
                const _hwTabCls = (active: boolean, _activeBg: string, _activeText: string) =>
                  `flex items-center justify-center px-2 py-2 shrink-0 transition-all text-center font-bold text-[11px] leading-tight border-r border-white/10 last:border-r-0 relative` +
                  ` ${active ? 'bg-[#17183a] text-white after:content-[\'\'] after:absolute after:bottom-0 after:left-1/2 after:-translate-x-1/2 after:h-[3px] after:w-[calc(100%-16px)] after:rounded-full after:bg-[#d8d2ff] after:shadow-[0_0_9px_2px_rgba(190,172,255,0.9)]' : 'bg-[#17183a] text-slate-300 hover:bg-[#24234b] active:bg-[#2d2a58]'}`;
@@ -12285,21 +12299,23 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
             )}
 
-            {/* Floating FAB — tap directly to toggle Focus Mode (hidden in video and all MCQ/QA/flashcard modes, and hidden on notification page) */}
-            {effectiveMode !== 'video' && effectiveMode !== 'mcq' && effectiveMode !== 'qa' && effectiveMode !== 'flashcard' && !showNotifPage && (
-              <DraggableNstaLogoFab
-                isActive={hwImmersive}
-                onToggle={() => setHwImmersive(v => !v)}
+            {/* Floating focus control stays available across homework modes. */}
+            <DraggableNstaLogoFab
+                isActive={hwImmersive || isLandscapeUiHidden}
+                onToggle={() => {
+                  const nextActive = !(hwImmersive || isLandscapeUiHidden);
+                  setHwImmersive(nextActive);
+                  toggleImmersiveStudyMode(nextActive);
+                }}
                 appLogo={settings?.appLogo}
                 appName={settings?.appShortName || settings?.appName || 'NSTA'}
-                title={hwImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
+                title={hwImmersive || isLandscapeUiHidden ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
                 defaultPosition={{
-                  bottom: !hwImmersive && effectiveMode !== 'choose' && !isLandscape ? 92 : 20,
+                  bottom: !(hwImmersive || isLandscapeUiHidden) && effectiveMode !== 'choose' && !isLandscape ? 92 : 20,
                   right: 16,
                 }}
                 zIndex={99999}
-              />
-            )}
+            />
 
 
           </div>
@@ -13574,11 +13590,16 @@ export const StudentDashboard: React.FC<Props> = ({
                 background: tierTheme.cardBg || '#ffffff',
                 border: `1px solid ${tierTheme.primary}18`,
               };
-              const resumeBtn = (
-                <span className="shrink-0 text-[9px] font-black text-white px-2 py-1 rounded-lg flex items-center gap-0.5"
-                  style={{ background: `linear-gradient(135deg,${tierTheme.btnStart || tierTheme.primary},${tierTheme.btnEnd || tierTheme.primary})` }}>
+              const resumeBtn = (onResume: () => void) => (
+                <button
+                  type="button"
+                  aria-label="Resume reading"
+                  onClick={(e) => { e.stopPropagation(); onResume(); }}
+                  className="shrink-0 text-[9px] font-black text-white px-2 py-1 rounded-lg flex items-center gap-0.5"
+                  style={{ background: `linear-gradient(135deg,${tierTheme.btnStart || tierTheme.primary},${tierTheme.btnEnd || tierTheme.primary})` }}
+                >
                   Resume <ChevronRight size={7} />
-                </span>
+                </button>
               );
 
               if (item.kind === 'chapter') {
@@ -13590,13 +13611,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     className="rounded-xl overflow-hidden"
                     style={cardStyle}
                   >
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openRecentChapter(entry)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRecentChapter(entry); } }}
-                      className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0 cursor-pointer"
-                    >
+                    <div className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 uppercase tracking-wide"
@@ -13610,7 +13625,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className="text-[9px] font-semibold text-slate-400">{entry.scrollPct}%</span>
-                        {resumeBtn}
+                        {resumeBtn(() => openRecentChapter(entry))}
                         <button onClick={(e) => { e.stopPropagation(); dismissRecentChapter(entry.id); }}
                           className="w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:text-slate-500 active:scale-90 transition-all">
                           <X size={10} />
@@ -13633,20 +13648,14 @@ export const StudentDashboard: React.FC<Props> = ({
                     className="rounded-xl overflow-hidden"
                     style={cardStyle}
                   >
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openRecentLucent(entry)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRecentLucent(entry); } }}
-                      className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0 cursor-pointer"
-                    >
+                    <div className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0">
                       <div className="flex-1 min-w-0 flex items-center gap-1.5">
                         <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 bg-teal-50 text-teal-700">📗 Lucent{entry.pageNo ? ` · P.${entry.pageNo}` : ''}</span>
                         <p className="text-[12px] font-black truncate leading-none flex-1" style={{ color: tierTheme.textColor || '#0f172a' }}>{entry.lessonTitle}</p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className="text-[9px] font-semibold text-slate-400">{entry.scrollPct}%</span>
-                        {resumeBtn}
+                        {resumeBtn(() => openRecentLucent(entry))}
                         <button onClick={(e) => { e.stopPropagation(); removeRecentLucent(entry.id); setRecentLucent(getRecentLucent()); }}
                           className="w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:text-slate-500 active:scale-90 transition-all">
                           <X size={10} />
@@ -13670,13 +13679,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   className="rounded-xl overflow-hidden"
                   style={cardStyle}
                 >
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openRecentHw(entry)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRecentHw(entry); } }}
-                    className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0 cursor-pointer"
-                  >
+                  <div className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0">
                     <div className="flex-1 min-w-0 flex items-center gap-1.5">
                       <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 ${meta.chipBg} ${meta.chipText}`}>
                         {meta.label}{entry.hw?.pageNo ? ` · P.${entry.hw.pageNo}` : ''}
@@ -13685,9 +13688,14 @@ export const StudentDashboard: React.FC<Props> = ({
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <span className="text-[9px] font-semibold text-slate-400">{entry.scrollPct}%</span>
-                      <span className={`text-[9px] font-black text-white ${meta.btnBg} px-2 py-1 rounded-lg flex items-center gap-0.5`}>
+                      <button
+                        type="button"
+                        aria-label="Resume homework"
+                        onClick={(e) => { e.stopPropagation(); openRecentHw(entry); }}
+                        className={`text-[9px] font-black text-white ${meta.btnBg} px-2 py-1 rounded-lg flex items-center gap-0.5`}
+                      >
                         Resume <ChevronRight size={7} />
-                      </span>
+                      </button>
                       <button onClick={(e) => { e.stopPropagation(); dismissRecentHw(entry.id); }}
                         className="w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:text-slate-500 active:scale-90 transition-all">
                         <X size={10} />
@@ -13805,7 +13813,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 hapticStrong();
                 if (c === 'COMPETITION') {
                   setSyllabusMode('COMPETITION');
-                  setActiveSessionClass('COMPETITION');
+                  chooseSessionClass('COMPETITION');
                   setActiveSessionBoard(_board);
                   setContentViewStep('SUBJECTS');
                   setInitialParentSubject(null);
@@ -13816,7 +13824,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   return;
                 }
                 setSyllabusMode('SCHOOL');
-                setActiveSessionClass(c as any);
+                chooseSessionClass(c);
                 setActiveSessionBoard(_board);
                 setContentViewStep('SUBJECTS');
                 setInitialParentSubject(null);
@@ -14115,12 +14123,8 @@ export const StudentDashboard: React.FC<Props> = ({
                                   type="button"
                                   onClick={() => {
                                     hapticMedium();
-                                    setActiveSessionClass(c as any);
+                                    chooseSessionClass(c);
                                     setSyllabusMode('SCHOOL');
-                                    try {
-                                      localStorage.setItem('nst_user_class', c);
-                                      localStorage.setItem('nst_session_class', c);
-                                    } catch {}
                                     setShowClassPickerDrawer(false);
                                   }}
                                   className={`flex items-center justify-between px-2.5 py-2 rounded-xl text-left border transition-all cursor-pointer active:scale-95 ${
@@ -14163,12 +14167,8 @@ export const StudentDashboard: React.FC<Props> = ({
                             type="button"
                             onClick={() => {
                               hapticMedium();
-                              setActiveSessionClass('COMPETITION');
+                              chooseSessionClass('COMPETITION');
                               setSyllabusMode('COMPETITION');
-                              try {
-                                localStorage.setItem('nst_user_class', 'COMPETITION');
-                                localStorage.setItem('nst_session_class', 'COMPETITION');
-                              } catch {}
                               setShowClassPickerDrawer(false);
                             }}
                             className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left border transition-all cursor-pointer active:scale-95 ${
@@ -17668,8 +17668,17 @@ export const StudentDashboard: React.FC<Props> = ({
   };
 
   const renderBottomNav = (inProjectorOverlay: boolean = false) => {
-    // Hide bottom navigation if user toggled Focus / Study mode (via 2s long press)
-    if (!forceShowBottomNav || isLandscapeUiHidden || isTopBarHidden) {
+    // Competition notes hide the dashboard top bar automatically but leave the
+    // bottom navigation available. Focus mode still hides both bars together.
+    const competitionNotesOpen =
+      Boolean(hwActiveHwId) &&
+      hwViewMode === 'notes' &&
+      (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION');
+    if (
+      !forceShowBottomNav ||
+      isLandscapeUiHidden ||
+      (isTopBarHidden && !competitionNotesOpen)
+    ) {
       return null;
     }
 
