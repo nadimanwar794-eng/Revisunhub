@@ -1657,10 +1657,14 @@ export const StudentDashboard: React.FC<Props> = ({
         ? localStorage.getItem(`nst_session_class_${user.id}`)
         : null;
       if (isValidClass(savedForUser)) return savedForUser;
-      const legacySaved =
-        localStorage.getItem('nst_session_class') ||
-        localStorage.getItem('nst_user_class');
-      if (isValidClass(legacySaved)) return legacySaved;
+      // Shared legacy keys can belong to another account on this device.
+      // Only use them when there is no signed-in user to scope the choice to.
+      if (!user?.id) {
+        const legacySaved =
+          localStorage.getItem('nst_session_class') ||
+          localStorage.getItem('nst_user_class');
+        if (isValidClass(legacySaved)) return legacySaved;
+      }
     } catch {}
     return (user as any)?.classLevel || null;
   });
@@ -1671,10 +1675,7 @@ export const StudentDashboard: React.FC<Props> = ({
       sessionClassOwnerRef.current = user.id;
       let savedClass: string | null = null;
       try {
-        savedClass =
-          localStorage.getItem(`nst_session_class_${user.id}`) ||
-          localStorage.getItem('nst_session_class') ||
-          localStorage.getItem('nst_user_class');
+        savedClass = localStorage.getItem(`nst_session_class_${user.id}`);
       } catch {}
       if (
         savedClass === 'COMPETITION' ||
@@ -4007,9 +4008,11 @@ export const StudentDashboard: React.FC<Props> = ({
       contentViewStep === 'PLAYER' &&
       (activeTab === 'PDF' || activeTab === 'MCQ' || activeTab === 'VIDEO' || (activeTab as any) === 'AUDIO');
     const competitionHomeworkOpen =
-      syllabusMode === 'COMPETITION' && Boolean(hwActiveHwId);
-    const shouldAutoHideChrome = inPlayer && syllabusMode !== 'COMPETITION';
-    setIsTopBarHidden(shouldAutoHideChrome);
+      Boolean(hwActiveHwId) &&
+      (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION');
+    const shouldAutoHideChrome =
+      inPlayer && syllabusMode !== 'COMPETITION' && !competitionHomeworkOpen;
+    setIsTopBarHidden(competitionHomeworkOpen ? false : shouldAutoHideChrome);
     if (competitionHomeworkOpen || (syllabusMode === 'COMPETITION' && inPlayer)) {
       setIsLandscapeUiHidden(false);
       setIsPedroHidden(false);
@@ -4027,7 +4030,7 @@ export const StudentDashboard: React.FC<Props> = ({
     if (!inPlayer && syllabusMode !== 'COMPETITION') {
       setIsLandscapeUiHidden(false);
     }
-  }, [activeTab, contentViewStep, syllabusMode, hwActiveHwId]);
+  }, [activeTab, contentViewStep, syllabusMode, activeSessionClass, hwActiveHwId]);
 
   useEffect(() => {
     setFullScreen(true); // Always true to hide global header
@@ -5354,19 +5357,37 @@ export const StudentDashboard: React.FC<Props> = ({
     let holdTimer: any = null;
     let startX = 0;
     let startY = 0;
+    let activePointerId: number | null = null;
+    let pointerMovedSinceDown = false;
+    let suppressClickAfterMove = false;
     let isLongPressFired = false;
 
-    const handlePointerDown = (e: PointerEvent) => {
-      // Ignore typing controls and media players
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('input, textarea, select, audio, video, [data-no-longpress="true"]')) {
-        return;
+    const cancelHold = () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
       }
+    };
 
+    const handlePointerDown = (e: PointerEvent) => {
+      // A hold on a control/card is a normal interaction, never a global gesture.
+      const target = e.target as HTMLElement | null;
+      if (!target || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+
+      cancelHold();
+      activePointerId = e.pointerId;
       startX = e.clientX;
       startY = e.clientY;
+      pointerMovedSinceDown = false;
+      suppressClickAfterMove = false;
       isLongPressFired = false;
+      if (
+        target.closest(
+          'button, a, [role="button"], input, textarea, select, audio, video, [data-no-longpress="true"], .nst-card-animated',
+        )
+      ) {
+        return;
+      }
 
       const isCurrentHome =
         activeTab === 'HOME' &&
@@ -5409,30 +5430,35 @@ export const StudentDashboard: React.FC<Props> = ({
     };
 
     const handlePointerMove = (e: PointerEvent) => {
-      // If user moved more than 16px (scrolling), cancel the hold timer
+      if (activePointerId !== e.pointerId) return;
       const dx = Math.abs(e.clientX - startX);
       const dy = Math.abs(e.clientY - startY);
-      if (dx > 16 || dy > 16) {
-        if (holdTimer) {
-          clearTimeout(holdTimer);
-          holdTimer = null;
-        }
+      if (dx > 8 || dy > 8) {
+        pointerMovedSinceDown = true;
+        cancelHold();
       }
     };
 
-    const handlePointerUp = () => {
-      if (holdTimer) {
-        clearTimeout(holdTimer);
-        holdTimer = null;
-      }
+    const handlePointerUp = (e: PointerEvent) => {
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      cancelHold();
+      suppressClickAfterMove = pointerMovedSinceDown;
+      activePointerId = null;
     };
 
-    // Prevent click actions on cards/buttons if a 2s/3s hold just triggered
+    const handleScroll = () => cancelHold();
+    const handleTouchMove = () => {
+      if (activePointerId !== null) pointerMovedSinceDown = true;
+      cancelHold();
+    };
+
+    // Prevent accidental taps caused by a scroll/drag, or by a long-press.
     const handleClickCapture = (e: MouseEvent) => {
-      if (isLongPressFired) {
+      if (isLongPressFired || (suppressClickAfterMove && e.detail > 0)) {
         e.preventDefault();
         e.stopPropagation();
         isLongPressFired = false;
+        suppressClickAfterMove = false;
       }
     };
 
@@ -5440,14 +5466,18 @@ export const StudentDashboard: React.FC<Props> = ({
     window.addEventListener('pointermove', handlePointerMove, { passive: true });
     window.addEventListener('pointerup', handlePointerUp, { passive: true });
     window.addEventListener('pointercancel', handlePointerUp, { passive: true });
+    window.addEventListener('scroll', handleScroll, true);
+    window.addEventListener('touchmove', handleTouchMove, { passive: true });
     window.addEventListener('click', handleClickCapture, true);
 
     return () => {
-      if (holdTimer) clearTimeout(holdTimer);
+      cancelHold();
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('scroll', handleScroll, true);
+      window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('click', handleClickCapture, true);
     };
   }, [
@@ -8081,6 +8111,8 @@ export const StudentDashboard: React.FC<Props> = ({
   const [activeChallenges20, setActiveChallenges20] = useState<Challenge20[]>(
     [],
   );
+  const [dailyChallengeStarting, setDailyChallengeStarting] = useState(false);
+  const dailyChallengeLaunchRef = useRef(false);
   const [routineSelectionVersion, setRoutineSelectionVersion] = useState(0);
   const [homeBannerIndex, setHomeBannerIndex] = useState(0);
 
@@ -9574,6 +9606,80 @@ export const StudentDashboard: React.FC<Props> = ({
 
     logScoreActivity(user.id, 'DAILY_CHALLENGE_20_COMPLETE', 100, 'Daily Challenge 2.0 Complete');
     showAlert("🎉 Daily Challenge 2.0: +100 XP claim ho gaya!", "SUCCESS");
+  };
+
+  const handleStartDailyChallenge = async (challenge?: Challenge20) => {
+    if (!onStartWeeklyTest) {
+      showAlert('Daily Challenge test abhi available nahi hai. Thodi der baad dobara try karein.', 'ERROR');
+      return;
+    }
+    if (dailyChallengeLaunchRef.current) return;
+    dailyChallengeLaunchRef.current = true;
+    setDailyChallengeStarting(true);
+    try {
+      let daily = challenge;
+      if (!daily?.questions?.length) {
+        const classLevel = (activeSessionClass || user.classLevel || '10') as any;
+        const board = (user.board || 'NCERT_EN') as any;
+        const generated = await generateDailyChallengeQuestions(
+          classLevel,
+          board,
+          (user.stream || 'Science') as any,
+          (settings || {}) as any,
+          user.id,
+          'DAILY',
+        );
+        if (!generated.questions.length) {
+          showAlert('Is class ke liye abhi questions nahi mile. Questions load hone ke baad dobara try karein.', 'ERROR');
+          return;
+        }
+        daily = {
+          id: generated.id,
+          title: generated.name,
+          description: `Aaj ka Class ${classLevel} Daily Challenge`,
+          questions: generated.questions,
+          createdAt: new Date().toISOString(),
+          expiryDate: generated.expiryDate,
+          type: 'DAILY_CHALLENGE',
+          classLevel,
+          isAutoGenerated: true,
+          isActive: true,
+          durationMinutes: generated.durationMinutes,
+          board,
+          periodKey: getChallengeDateKey(),
+          routineClassLevel: classLevel,
+        };
+        setActiveChallenges20((previous) => [
+          ...previous.filter((item) => item.id !== daily!.id),
+          daily!,
+        ]);
+        try {
+          await saveChallenge20(daily);
+        } catch (error) {
+          console.warn('Unable to cache the generated daily challenge:', error);
+        }
+      }
+
+      onStartWeeklyTest({
+        id: daily.id,
+        name: daily.title,
+        description: daily.description || 'Aaj ka Daily Challenge 2.0',
+        date: new Date().toISOString(),
+        durationMinutes: Math.min(daily.durationMinutes || 60, 60),
+        isCompleted: false,
+        score: 0,
+        totalQuestions: daily.questions.length,
+        questions: daily.questions,
+        classLevel: daily.classLevel,
+        challengeType: 'DAILY_CHALLENGE',
+      } as any);
+    } catch (error) {
+      console.error('Could not start the Daily Challenge:', error);
+      showAlert('Daily Challenge load nahi ho paya. Internet check karke dobara try karein.', 'ERROR');
+    } finally {
+      dailyChallengeLaunchRef.current = false;
+      setDailyChallengeStarting(false);
+    }
   };
 
   // Countdown ticker — updates every 30s when inbox is open
@@ -14316,36 +14422,23 @@ export const StudentDashboard: React.FC<Props> = ({
                                   ) : (
                                     <button
                                       type="button"
+                                      disabled={dailyChallengeStarting}
                                       onClick={() => {
                                         hapticStrong();
-                                        if (activeDaily && onStartWeeklyTest) {
-                                          onStartWeeklyTest({
-                                            id: activeDaily.id,
-                                            name: activeDaily.title,
-                                            description: activeDaily.description || "Aaj ka Daily Challenge 2.0",
-                                            date: new Date().toISOString(),
-                                            durationMinutes: Math.min(activeDaily.durationMinutes || 60, 60),
-                                            isCompleted: false,
-                                            score: 0,
-                                            totalQuestions: activeDaily.questions.length,
-                                            questions: activeDaily.questions,
-                                            classLevel: activeDaily.classLevel,
-                                            challengeType: isDailyChallenge20(activeDaily) ? 'DAILY_CHALLENGE' : 'WEEKLY_TEST',
-                                          } as any);
-                                        } else {
-                                          setShowDailyEventPage(true);
-                                        }
+                                        void handleStartDailyChallenge(activeDaily);
                                       }}
-                                      className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98"
+                                      className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98 disabled:opacity-70 disabled:cursor-wait"
                                       style={{
                                         background: themeBtnGrad,
                                         color: '#ffffff',
                                         boxShadow: `0 4px 14px ${themePrimary}35`
                                       }}
                                     >
-                                      <Rocket size={14} />
-                                      <span>Start Daily Challenge</span>
-                                      <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                                      {dailyChallengeStarting ? (
+                                        <><span className="animate-spin">⏳</span><span>Challenge load ho raha hai…</span></>
+                                      ) : (
+                                        <><Rocket size={14} /><span>Start Daily Challenge</span><span className="group-hover:translate-x-0.5 transition-transform">→</span></>
+                                      )}
                                     </button>
                                   )}
                                 </div>
@@ -14437,13 +14530,10 @@ export const StudentDashboard: React.FC<Props> = ({
                         {isHomeSectionVisible('home_revision_hub', settings) && (() => {
                           return (
                             <div id="home-revision-card" className="w-full home-revhub-card-anim flex flex-col">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  hapticStrong();
-                                  openRevisionHubSafely({ isFromRoutine: false });
-                                }}
-                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                              <div
+                                role="group"
+                                aria-label="Revision Hub"
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
                                 style={getHomeCardStyle(
                                   settings?.homeRevisionHubCard3D !== undefined ? settings?.homeRevisionHubCard3D : settings?.homeRevisionCard3D,
                                   settings?.homeRevisionHubCardBg || settings?.homeRevisionCardBg,
@@ -14497,8 +14587,13 @@ export const StudentDashboard: React.FC<Props> = ({
                                   className="mt-3.5 pt-2.5 border-t w-full"
                                   style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
                                 >
-                                  <div
-                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      hapticStrong();
+                                      openRevisionHubSafely({ isFromRoutine: false });
+                                    }}
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all hover:opacity-95 active:scale-[0.985]"
                                     style={{
                                       background: themeBtnGrad,
                                       color: '#ffffff',
@@ -14507,10 +14602,10 @@ export const StudentDashboard: React.FC<Props> = ({
                                   >
                                     <Brain size={14} />
                                     <span>Open Revision Hub</span>
-                                    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                                  </div>
+                                    <span>→</span>
+                                  </button>
                                 </div>
-                              </button>
+                              </div>
                             </div>
                           );
                         })()}
@@ -14519,13 +14614,10 @@ export const StudentDashboard: React.FC<Props> = ({
                         {(() => {
                           return (
                             <div id="home-mistakes-card" className="w-full home-revhub-card-anim flex flex-col">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  hapticStrong();
-                                  onTabChange('MY_MISTAKES_PAGE' as any);
-                                }}
-                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                              <div
+                                role="group"
+                                aria-label="My Mistakes"
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
                                 style={getHomeCardStyle(
                                   settings?.homeMistakesCard3D,
                                   settings?.homeMistakesCardBg,
@@ -14579,8 +14671,13 @@ export const StudentDashboard: React.FC<Props> = ({
                                   className="mt-3.5 pt-2.5 border-t w-full"
                                   style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
                                 >
-                                  <div
-                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      hapticStrong();
+                                      onTabChange('MY_MISTAKES_PAGE' as any);
+                                    }}
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all hover:opacity-95 active:scale-[0.985]"
                                     style={{
                                       background: themeBtnGrad,
                                       color: '#ffffff',
@@ -14589,10 +14686,10 @@ export const StudentDashboard: React.FC<Props> = ({
                                   >
                                     <RotateCcw size={14} />
                                     <span>Review Mistakes ({mistakeCount})</span>
-                                    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                                  </div>
+                                    <span>→</span>
+                                  </button>
                                 </div>
-                              </button>
+                              </div>
                             </div>
                           );
                         })()}
@@ -31310,7 +31407,14 @@ RULES:
               currentPageTitle={pedroPageMeta.title}
               currentPageIcon={pedroPageMeta.icon}
               customRobotName={settings?.pedroConfig?.robotName}
-              hidden={isPedroHidden || !!mathViewerEntry || (!!lucentNoteViewer && lucentImmersive)}
+              hidden={
+                (isPedroHidden && !(
+                  Boolean(hwActiveHwId) &&
+                  (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION')
+                )) ||
+                !!mathViewerEntry ||
+                (!!lucentNoteViewer && lucentImmersive)
+              }
               guidePowerEnabled={settings?.pedroConfig?.guidePowerEnabled !== false && settings?.pedroConfig?.enabled !== false}
               userName={user?.name || (user as any)?.displayName || 'Student'}
               user={user}
