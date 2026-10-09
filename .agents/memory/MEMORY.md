@@ -2,3 +2,4 @@
 - [Vite CI environment](vite-ci-environment.md) — production builds must work without Replit workflow-only PORT and BASE_PATH variables.
 - [Migration backup workspace entries](migration-backup-workspace-entries.md) — never keep the imported backup package active alongside its copied artifact.
 - [Study Room question timing](study-room-question-timing.md) — in Per-Question mode, question navigation and timer restart must stay in sync.
+- [Pedro tap behavior](pedro-tap-behavior.md) — one tap opens Pedro; only a separate second tap should hide him, with each physical tap counted once.
