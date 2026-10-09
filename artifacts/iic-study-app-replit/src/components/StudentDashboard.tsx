@@ -5335,9 +5335,6 @@ export const StudentDashboard: React.FC<Props> = ({
       const nextHidden = typeof explicit === 'boolean' ? explicit : !prev;
       setIsTopBarHidden(nextHidden);
       setForceShowBottomNav(!nextHidden);
-      if (typeof document !== 'undefined') {
-        document.body.classList.toggle('nsta-study-mode-active', nextHidden);
-      }
       try {
         fireCreditNotify({
           type: 'FREE_LIMIT',
@@ -5349,12 +5346,6 @@ export const StudentDashboard: React.FC<Props> = ({
       return nextHidden;
     });
   }, []);
-
-  useEffect(() => {
-    if (typeof document === 'undefined') return;
-    document.body.classList.toggle('nsta-study-mode-active', isLandscapeUiHidden);
-    return () => document.body.classList.remove('nsta-study-mode-active');
-  }, [isLandscapeUiHidden]);
 
   // Listen for video player fullscreen event to hide or restore BOTH top bar and bottom nav
   useEffect(() => {
