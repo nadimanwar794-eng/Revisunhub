@@ -1713,10 +1713,10 @@ export const submitFinalBatchScore = async (
     userPhotoURL?: string;
     answers?: Record<number, { selectedOption: number; isCorrect: boolean; timeTakenSec: number }>;
   }
-): Promise<void> => {
+): Promise<boolean> => {
   try {
-    const userScoreRef = ref(rtdb, `group_study_rooms/${roomId}/liveMcq/scores/${userId}`);
-    await set(userScoreRef, {
+    const submittedAt = Date.now();
+    const userScore = {
       name: userName,
       score: scoreData.score || 0,
       correctCount: scoreData.correctCount || 0,
@@ -1726,29 +1726,61 @@ export const submitFinalBatchScore = async (
       userXp: scoreData.userXp || 0,
       streakBonusXp: scoreData.streakBonusXp || 0,
       userPhotoURL: scoreData.userPhotoURL || '',
-      submittedAt: Date.now(),
+      submittedAt,
+    };
+    const roomUpdates: Record<string, unknown> = {};
+    Object.entries(scoreData.answers || {}).forEach(([questionIndex, answer]) => {
+      roomUpdates[`questionAnswers/${questionIndex}/${userId}`] = {
+        userId,
+        userName,
+        selectedOption: answer.selectedOption,
+        isCorrect: answer.isCorrect,
+        timeTakenSec: answer.timeTakenSec,
+        timestamp: submittedAt,
+      };
     });
+    await set(ref(rtdb, `group_study_rooms/${roomId}/liveMcq/scores/${userId}`), userScore);
+    if (Object.keys(roomUpdates).length > 0) {
+      try {
+        await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), roomUpdates);
+      } catch (answerError) {
+        // Keep the confirmed score submission successful even if legacy room
+        // rules only allow writes to the scores branch.
+        console.warn('[GroupStudy] Answer detail sync notice:', answerError);
+      }
+    }
 
     // Also update local cached room
     const cached = getCachedRooms()[roomId];
-    if (cached && cached.liveMcq) {
-      if (!cached.liveMcq.scores) cached.liveMcq.scores = {};
-      cached.liveMcq.scores[userId] = {
-        name: userName,
-        score: scoreData.score || 0,
-        correctCount: scoreData.correctCount || 0,
-        wrongCount: scoreData.wrongCount || 0,
-        totalAnswered: scoreData.totalAnswered || 0,
-        maxStreak: scoreData.maxStreak || 0,
-        userXp: scoreData.userXp || 0,
-        streakBonusXp: scoreData.streakBonusXp || 0,
+    const cachedLiveMcq = cached?.liveMcq;
+    if (cached && cachedLiveMcq) {
+      if (!cachedLiveMcq.scores) cachedLiveMcq.scores = {};
+      cachedLiveMcq.scores[userId] = {
+        ...userScore,
       };
+      if (!cachedLiveMcq.questionAnswers) cachedLiveMcq.questionAnswers = {};
+      Object.entries(scoreData.answers || {}).forEach(([questionIndex, answer]) => {
+        const numericIndex = Number(questionIndex);
+        if (!Number.isFinite(numericIndex)) return;
+        if (!cachedLiveMcq.questionAnswers![numericIndex]) {
+          cachedLiveMcq.questionAnswers![numericIndex] = {};
+        }
+        cachedLiveMcq.questionAnswers![numericIndex][userId] = {
+          userId,
+          userName,
+          selectedOption: answer.selectedOption,
+          isCorrect: answer.isCorrect,
+          timeTakenSec: answer.timeTakenSec,
+          timestamp: submittedAt,
+        };
+      });
       saveCachedRoom(cached);
     }
+    return true;
   } catch (err: any) {
     const msg = String(err?.message || err || '');
-    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
     console.warn('[GroupStudy] submitFinalBatchScore notice:', err);
+    return false;
   }
 };
 

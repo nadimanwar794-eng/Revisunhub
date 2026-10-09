@@ -436,6 +436,11 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [hasAnsweredCurrentQ, setHasAnsweredCurrentQ] = useState<boolean>(false);
   const [mcqSecondsLeft, setMcqSecondsLeft] = useState<number>(20);
+  const questionTimerRef = useRef<{ key: string; startedAt: number; sourceStart: number }>({
+    key: '',
+    startedAt: 0,
+    sourceStart: 0,
+  });
   const [selectedCuratedSet, setSelectedCuratedSet] = useState<string>('');
   const [lastXpOutcome, setLastXpOutcome] = useState<McqAnswerOutcome | null>(null);
   const [showXpBanner, setShowXpBanner] = useState<boolean>(false);
@@ -456,8 +461,13 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [showQuestionPalette, setShowQuestionPalette] = useState<boolean>(false);
   const [hasStudentSubmittedEarly, setHasStudentSubmittedEarly] = useState<boolean>(false);
   const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [lobbyActionTab, setLobbyActionTab] = useState<'LAUNCH' | 'SCHEDULE'>('LAUNCH');
   const [isSchedulingTest, setIsSchedulingTest] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (showSubmitConfirmModal) setSubmitError(null);
+  }, [showSubmitConfirmModal]);
 
   // ── Staggered Batch Submission State (Zero Continuous RTDB Writes during questions) ──
   const [localBattleStats, setLocalBattleStats] = useState<{
@@ -1607,17 +1617,44 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           }
         } else {
           // Standard Per-Question countdown
-          if (liveMcq.questionStartTime) {
-            const elapsedSec = Math.floor((now - liveMcq.questionStartTime) / 1000);
-            const duration = liveMcq.durationPerQuestion || 20;
-            const remaining = Math.max(0, duration - elapsedSec);
-            setMcqSecondsLeft(remaining);
+          const rawStart = liveMcq.questionStartTime as unknown;
+          const sourceStart = typeof rawStart === 'number'
+            ? rawStart
+            : typeof rawStart === 'string'
+              ? (Number.isFinite(Number(rawStart)) ? Number(rawStart) : Date.parse(rawStart))
+              : 0;
+          const validSourceStart = Number.isFinite(sourceStart) && sourceStart > 0 ? sourceStart : 0;
+          const questionKey = `${currentRoom.id}:${liveMcq.currentQuestionIndex ?? 0}`;
+          const previousTimer = questionTimerRef.current;
 
-            // Auto-reveal exactly when selected timer expires (0s) - Host or Elected Runner
-            if (isElectedRunner && remaining <= 0 && liveMcq.status === 'QUESTION') {
-              handleRevealAnswer();
-              return;
-            }
+          if (previousTimer.key !== questionKey) {
+            // Prefer the room's synchronized start time, but don't carry an old
+            // question's timestamp forward if a room snapshot arrives out of order.
+            const sourceWasRefreshed = validSourceStart > 0 && validSourceStart !== previousTimer.sourceStart;
+            questionTimerRef.current = {
+              key: questionKey,
+              startedAt: sourceWasRefreshed || !previousTimer.key ? (validSourceStart || now) : now,
+              sourceStart: validSourceStart,
+            };
+            setMcqSecondsLeft(liveMcq.durationPerQuestion || 20);
+          } else if (validSourceStart > questionTimerRef.current.startedAt) {
+            // A later synchronized timestamp for this same question wins.
+            questionTimerRef.current = {
+              ...questionTimerRef.current,
+              startedAt: validSourceStart,
+              sourceStart: validSourceStart,
+            };
+          }
+
+          const duration = liveMcq.durationPerQuestion || 20;
+          const elapsedSec = Math.floor((now - questionTimerRef.current.startedAt) / 1000);
+          const remaining = Math.max(0, duration - elapsedSec);
+          setMcqSecondsLeft(remaining);
+
+          // Auto-reveal exactly when selected timer expires (0s) - Host or Elected Runner
+          if (isElectedRunner && remaining <= 0 && liveMcq.status === 'QUESTION') {
+            handleRevealAnswer();
+            return;
           }
         }
       };
@@ -1631,6 +1668,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     };
   }, [
     currentRoom?.liveMcq?.status,
+    currentRoom?.id,
+    currentRoom?.liveMcq?.currentQuestionIndex,
     currentRoom?.liveMcq?.questionStartTime,
     currentRoom?.liveMcq?.durationPerQuestion,
     currentRoom?.liveMcq?.timerMode,
@@ -7965,6 +8004,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               <button
                 type="button"
                 onClick={() => setShowSubmitConfirmModal(false)}
+                disabled={isSubmittingBatch}
                 className="py-2.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-black transition cursor-pointer"
               >
                 Aur Hal Karein
@@ -7972,11 +8012,14 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               <button
                 type="button"
                 onClick={async () => {
-                  setShowSubmitConfirmModal(false);
-
-                  // 1. Immediately submit student score to RTDB
-                  if (currentRoom?.id && user?.id) {
-                    await submitFinalBatchScore(currentRoom.id, user.id, user.name || 'Student', {
+                  if (!currentRoom?.id || !user?.id) {
+                    setSubmitError('Submit nahi hua. Room ya student account ki jaankari nahi mili.');
+                    return;
+                  }
+                  setIsSubmittingBatch(true);
+                  setSubmitError(null);
+                  try {
+                    const didSubmit = await submitFinalBatchScore(currentRoom.id, user.id, user.name || 'Student', {
                       score: localBattleStats.score,
                       correctCount: localBattleStats.correctCount,
                       wrongCount: localBattleStats.wrongCount,
@@ -7986,7 +8029,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       streakBonusXp: localBattleStats.streakBonusXp,
                       userPhotoURL: user.photoURL || '',
                       answers: localBattleStats.answers,
-                    }).catch(console.warn);
+                    });
+                    if (!didSubmit) {
+                      setSubmitError('Submit save nahi ho paya. Internet connection check karke dobara try karein.');
+                      return;
+                    }
 
                     if (localBattleStats.userXp > 0) {
                       const currentXp = user.xp || user.totalScore || 0;
@@ -8005,22 +8052,33 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       saveUserToLive(updatedUser, { immediate: true }).catch(() => {});
                       onUserUpdate?.(updatedUser);
                     }
-                  }
 
-                  // 2. Mark this student as submitted
-                  setHasStudentSubmittedEarly(true);
-                  setHasBatchSubmitted(true);
+                    setShowSubmitConfirmModal(false);
+                    setHasStudentSubmittedEarly(true);
+                    setHasBatchSubmitted(true);
 
-                  // 3. If host or if timer is up, end battle for all
-                  if (isHost || totalTestSecondsLeft <= 0) {
-                    await endLiveMcqBattle(currentRoom.id).catch(console.warn);
+                    // If the host submits, or the test timer has expired, end the battle.
+                    if (isHost || totalTestSecondsLeft <= 0) {
+                      await endLiveMcqBattle(currentRoom.id).catch(console.warn);
+                    }
+                  } catch (error) {
+                    console.warn('[GroupStudy] Manual test submit failed:', error);
+                    setSubmitError('Submit save nahi ho paya. Internet connection check karke dobara try karein.');
+                  } finally {
+                    setIsSubmittingBatch(false);
                   }
                 }}
+                disabled={isSubmittingBatch}
                 className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition cursor-pointer shadow-lg"
               >
-                Haan, Submit Karein
+                {isSubmittingBatch ? 'Submit ho raha hai…' : 'Haan, Submit Karein'}
               </button>
             </div>
+            {submitError && (
+              <p role="alert" className="text-xs font-bold text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-xl px-3 py-2">
+                {submitError}
+              </p>
+            )}
           </div>
         </div>
       )}

@@ -3981,6 +3981,9 @@ body.force-desktop-mode {
   box-shadow: 0 0 10px rgba(251, 191, 36, 0.35), inset 0 0 6px rgba(251, 191, 36, 0.2);
 }
 
+body.nsta-study-mode-active [data-nsta-fab="true"] {
+  display: none !important;
+}
 
 
 

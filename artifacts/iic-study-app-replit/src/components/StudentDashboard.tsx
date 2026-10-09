@@ -5335,6 +5335,9 @@ export const StudentDashboard: React.FC<Props> = ({
       const nextHidden = typeof explicit === 'boolean' ? explicit : !prev;
       setIsTopBarHidden(nextHidden);
       setForceShowBottomNav(!nextHidden);
+      if (typeof document !== 'undefined') {
+        document.body.classList.toggle('nsta-study-mode-active', nextHidden);
+      }
       try {
         fireCreditNotify({
           type: 'FREE_LIMIT',
@@ -5346,6 +5349,12 @@ export const StudentDashboard: React.FC<Props> = ({
       return nextHidden;
     });
   }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.body.classList.toggle('nsta-study-mode-active', isLandscapeUiHidden);
+    return () => document.body.classList.remove('nsta-study-mode-active');
+  }, [isLandscapeUiHidden]);
 
   // Listen for video player fullscreen event to hide or restore BOTH top bar and bottom nav
   useEffect(() => {
@@ -5365,8 +5374,8 @@ export const StudentDashboard: React.FC<Props> = ({
   const nstaFabIsLongPressRef = useRef<boolean>(false);
 
   // ── Screen Long-Press Gestures (NSTA Button Replacement) ──
-  // 1. Home page: 1.5 seconds screen hold opens NSTA Wheel (top bar & bottom nav stay visible)
-  // 2. Other pages: 1 second screen hold toggles BOTH top bar and bottom nav.
+  // 1. Home cards: 1.5 seconds opens NSTA Wheel (top bar & bottom nav stay visible)
+  // 2. Study surfaces: 1 second toggles BOTH top bar and bottom navigation.
   useEffect(() => {
     let holdTimer: any = null;
     let startX = 0;
@@ -5406,14 +5415,36 @@ export const StudentDashboard: React.FC<Props> = ({
         !showDailyEventPage &&
         !showProgressDashboard &&
         !showWhatsAppChatModal &&
+        !showGroupStudyModal &&
+        !hwActiveHwId &&
+        !mathViewerEntry &&
+        !lucentNoteViewer &&
+        !compMcqSession &&
+        !flashcardMcqs &&
         contentViewStep !== 'PLAYER';
+      const isHomeCardTarget =
+        isCurrentHome && Boolean(target.closest('.nst-card-animated, [data-home-card="true"]'));
       const isHomeNstaWheelTarget =
         isCurrentHome && Boolean(target.closest('#nsta-header-brand-btn'));
+      const isStudyModeSurface = Boolean(
+        contentViewStep === 'PLAYER' ||
+        hwActiveHwId ||
+        mathViewerEntry ||
+        lucentNoteViewer ||
+        compMcqSession ||
+        flashcardMcqs ||
+        showGroupStudyModal
+      );
+      const protectedTarget = target.closest(
+        'input, textarea, select, audio, video, [data-no-longpress="true"]',
+      );
+      const interactiveTarget = target.closest('button, a, [role="button"]');
+      if (protectedTarget) return;
       if (
+        interactiveTarget &&
         !isHomeNstaWheelTarget &&
-        target.closest(
-          'button, a, [role="button"], input, textarea, select, audio, video, [data-no-longpress="true"], .nst-card-animated',
-        )
+        !isHomeCardTarget &&
+        !isStudyModeSurface
       ) {
         return;
       }
@@ -5515,6 +5546,12 @@ export const StudentDashboard: React.FC<Props> = ({
     showDailyEventPage,
     showProgressDashboard,
     showWhatsAppChatModal,
+    showGroupStudyModal,
+    hwActiveHwId,
+    mathViewerEntry,
+    lucentNoteViewer,
+    compMcqSession,
+    flashcardMcqs,
     contentViewStep,
     toggleImmersiveStudyMode,
   ]);
@@ -6109,6 +6146,17 @@ export const StudentDashboard: React.FC<Props> = ({
   const [hwOptionsOpen, setHwOptionsOpen] = useState(false);
   const [lucentFabOpen, setLucentFabOpen] = useState(false);
   const [lucentImmersive, setLucentImmersive] = useState(false);
+  const setStudyFocusMode = useCallback((next: boolean) => {
+    setHwImmersive(next);
+    setMathImmersive(next);
+    setLucentImmersive(next);
+    toggleImmersiveStudyMode(next);
+  }, [toggleImmersiveStudyMode]);
+  useEffect(() => {
+    setHwImmersive(isLandscapeUiHidden);
+    setMathImmersive(isLandscapeUiHidden);
+    setLucentImmersive(isLandscapeUiHidden);
+  }, [isLandscapeUiHidden]);
   const [lucentPdfRotated, setLucentPdfRotated] = useState(false);
   const [lucentPdfNight, setLucentPdfNight] = useState<'normal' | 'night' | 'sepia'>('normal');
   // Reset both tabs + view mode when page or note changes
@@ -25340,7 +25388,7 @@ export const StudentDashboard: React.FC<Props> = ({
               appLogo={settings?.appLogo}
               appName={settings?.appShortName || settings?.appName || 'NSTA'}
               isImmersive={mathImmersive}
-              onToggleImmersive={() => setMathImmersive(v => !v)}
+              onToggleImmersive={() => setStudyFocusMode(!mathImmersive)}
               onBack={() => {
                 setMathViewerEntry(null);
                 setMathImmersive(false);
@@ -25353,7 +25401,7 @@ export const StudentDashboard: React.FC<Props> = ({
           {mathViewerMode !== 'MCQ' && !showNotifPage && (
             <DraggableNstaLogoFab
               isActive={mathImmersive}
-              onToggle={() => setMathImmersive(v => !v)}
+              onToggle={() => setStudyFocusMode(!mathImmersive)}
               appLogo={settings?.appLogo}
               appName={settings?.appShortName || settings?.appName || 'NSTA'}
               title={mathImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
@@ -26174,7 +26222,7 @@ export const StudentDashboard: React.FC<Props> = ({
                             {lucentPdfNight === 'night' ? '🌙' : lucentPdfNight === 'sepia' ? '📜' : '☀️'}
                           </button>
                           <button
-                            onClick={() => setLucentImmersive(v => !v)}
+                            onClick={() => setStudyFocusMode(!lucentImmersive)}
                             className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${lucentImmersive ? 'bg-indigo-500/30 border-indigo-400/50 text-indigo-300' : 'bg-white/15 border-white/25 text-white'}`}
                             title={lucentImmersive ? 'Exit Focus Mode' : 'Focus Mode'}
                           >
@@ -26616,7 +26664,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     <>
                       <button onClick={async () => { const r = await rotateScreen(); if (r !== null) { setLucentPdfRotated(r === 'landscape'); } else { alert('📱 Phone ko sideways karein'); } }} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentPdfRotated ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Rotate"><RotateCcw size={12} /></button>
                       <button onClick={() => setLucentPdfNight(m => m === 'normal' ? 'night' : m === 'night' ? 'sepia' : 'normal')} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 text-sm ${lucentPdfNight !== 'normal' ? 'bg-indigo-50 border-indigo-300' : 'bg-slate-100 border-slate-200'}`} title="Night/Sepia">{lucentPdfNight === 'night' ? '🌙' : lucentPdfNight === 'sepia' ? '📜' : '☀️'}</button>
-                      <button onClick={() => setLucentImmersive(v => !v)} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentImmersive ? 'bg-indigo-50 border-indigo-300 text-indigo-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Focus">{lucentImmersive ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
+                      <button onClick={() => setStudyFocusMode(!lucentImmersive)} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentImmersive ? 'bg-indigo-50 border-indigo-300 text-indigo-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Focus">{lucentImmersive ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
                     </>
                   )}
 
@@ -27830,7 +27878,7 @@ RULES:
           {lucentActiveTab !== 'VIDEO' && lucentActiveTab !== 'MCQ' && lucentActiveTab !== 'MCQS' && lucentActiveTab !== 'QA' && lucentActiveTab !== 'FLASHCARD' && !showNotifPage && (
             <DraggableNstaLogoFab
               isActive={lucentImmersive}
-              onToggle={() => setLucentImmersive(v => !v)}
+              onToggle={() => setStudyFocusMode(!lucentImmersive)}
               appLogo={settings?.appLogo}
               appName={settings?.appShortName || settings?.appName || 'NSTA'}
               title={lucentImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
