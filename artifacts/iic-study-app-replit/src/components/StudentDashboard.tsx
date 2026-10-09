@@ -5371,6 +5371,7 @@ export const StudentDashboard: React.FC<Props> = ({
     let holdTimer: any = null;
     let startX = 0;
     let startY = 0;
+    const MOVE_CANCEL_TOLERANCE_PX = 14;
     let activePointerId: number | null = null;
     let pointerMovedSinceDown = false;
     let suppressClickAfterMove = false;
@@ -5384,24 +5385,16 @@ export const StudentDashboard: React.FC<Props> = ({
     };
 
     const handlePointerDown = (e: PointerEvent) => {
-      // A hold on a control/card is a normal interaction, never a global gesture.
+      // Controls/cards keep their normal behavior. The Home NSTA logo is also
+      // a valid wheel target because it is the familiar place users hold.
       const target = e.target as HTMLElement | null;
       if (!target || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
 
       cancelHold();
-      activePointerId = e.pointerId;
-      startX = e.clientX;
-      startY = e.clientY;
+      activePointerId = null;
       pointerMovedSinceDown = false;
       suppressClickAfterMove = false;
       isLongPressFired = false;
-      if (
-        target.closest(
-          'button, a, [role="button"], input, textarea, select, audio, video, [data-no-longpress="true"], .nst-card-animated',
-        )
-      ) {
-        return;
-      }
 
       const isCurrentHome =
         activeTab === 'HOME' &&
@@ -5414,6 +5407,20 @@ export const StudentDashboard: React.FC<Props> = ({
         !showProgressDashboard &&
         !showWhatsAppChatModal &&
         contentViewStep !== 'PLAYER';
+      const isHomeNstaWheelTarget =
+        isCurrentHome && Boolean(target.closest('#nsta-header-brand-btn'));
+      if (
+        !isHomeNstaWheelTarget &&
+        target.closest(
+          'button, a, [role="button"], input, textarea, select, audio, video, [data-no-longpress="true"], .nst-card-animated',
+        )
+      ) {
+        return;
+      }
+
+      activePointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
 
       // User requirement:
       // Home page: 1.5s hold opens NSTA Quick Wheel; other pages toggle chrome at 1s.
@@ -5429,17 +5436,15 @@ export const StudentDashboard: React.FC<Props> = ({
           toggleImmersiveStudyMode();
         }
 
-        // Restore Pedro if currently hidden
-        if (isPedroHidden) {
-          setIsPedroHidden(false);
-          try {
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('nst_pedro_hidden');
-              window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
-              window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
-            }
-          } catch (_) {}
-        }
+        // Keep the Pedro control available after either long-press action.
+        setIsPedroHidden(false);
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('nst_pedro_hidden');
+            window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
+            window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
+          }
+        } catch (_) {}
       }, holdDuration);
     };
 
@@ -5447,7 +5452,7 @@ export const StudentDashboard: React.FC<Props> = ({
       if (activePointerId !== e.pointerId) return;
       const dx = Math.abs(e.clientX - startX);
       const dy = Math.abs(e.clientY - startY);
-      if (dx > 8 || dy > 8) {
+      if (dx > MOVE_CANCEL_TOLERANCE_PX || dy > MOVE_CANCEL_TOLERANCE_PX) {
         pointerMovedSinceDown = true;
         cancelHold();
       }
@@ -5460,10 +5465,18 @@ export const StudentDashboard: React.FC<Props> = ({
       activePointerId = null;
     };
 
-    const handleScroll = () => cancelHold();
-    const handleTouchMove = () => {
-      if (activePointerId !== null) pointerMovedSinceDown = true;
-      cancelHold();
+    const handleTouchMove = (e: TouchEvent) => {
+      if (activePointerId === null) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+      const dx = Math.abs(touch.clientX - startX);
+      const dy = Math.abs(touch.clientY - startY);
+      // Finger jitter is normal during a hold. Cancel only for a real drag or
+      // scroll; otherwise touchmove events were cancelling the timer instantly.
+      if (dx > MOVE_CANCEL_TOLERANCE_PX || dy > MOVE_CANCEL_TOLERANCE_PX) {
+        pointerMovedSinceDown = true;
+        cancelHold();
+      }
     };
 
     // Prevent accidental taps caused by a scroll/drag, or by a long-press.
@@ -5476,22 +5489,20 @@ export const StudentDashboard: React.FC<Props> = ({
       }
     };
 
-    window.addEventListener('pointerdown', handlePointerDown, { passive: true });
-    window.addEventListener('pointermove', handlePointerMove, { passive: true });
-    window.addEventListener('pointerup', handlePointerUp, { passive: true });
-    window.addEventListener('pointercancel', handlePointerUp, { passive: true });
-    window.addEventListener('scroll', handleScroll, true);
-    window.addEventListener('touchmove', handleTouchMove, { passive: true });
+    window.addEventListener('pointerdown', handlePointerDown, { capture: true, passive: true });
+    window.addEventListener('pointermove', handlePointerMove, { capture: true, passive: true });
+    window.addEventListener('pointerup', handlePointerUp, { capture: true, passive: true });
+    window.addEventListener('pointercancel', handlePointerUp, { capture: true, passive: true });
+    window.addEventListener('touchmove', handleTouchMove, { capture: true, passive: true });
     window.addEventListener('click', handleClickCapture, true);
 
     return () => {
       cancelHold();
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
-      window.removeEventListener('scroll', handleScroll, true);
-      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('pointerdown', handlePointerDown, true);
+      window.removeEventListener('pointermove', handlePointerMove, true);
+      window.removeEventListener('pointerup', handlePointerUp, true);
+      window.removeEventListener('pointercancel', handlePointerUp, true);
+      window.removeEventListener('touchmove', handleTouchMove, true);
       window.removeEventListener('click', handleClickCapture, true);
     };
   }, [
@@ -5506,7 +5517,6 @@ export const StudentDashboard: React.FC<Props> = ({
     showWhatsAppChatModal,
     contentViewStep,
     toggleImmersiveStudyMode,
-    isPedroHidden,
   ]);
 
   // XP badge useEffect — yahan rakhna zaroori hai (showRevisionHubScreen/showMyRoutine/showChat ke baad)
