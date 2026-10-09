@@ -2,7 +2,6 @@ import { getApp, getApps, initializeApp } from "firebase/app";
 import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager, setLogLevel, doc, setDoc, getDoc, getDocFromServer, collection, updateDoc, deleteDoc, onSnapshot, getDocs, query, where, limitToLast, orderBy, increment, arrayUnion, limit, startAfter, QueryDocumentSnapshot } from "firebase/firestore";
 import { getDatabase, ref, set, get, onValue, update, remove, query as rtdbQuery, limitToLast as rtdbLimitToLast, orderByChild as rtdbOrderByChild, equalTo as rtdbEqualTo, runTransaction, serverTimestamp } from "firebase/database";
 import { getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
-import { getStorage as getFirebaseStorage } from "firebase/storage";
 import { storage } from "./utils/storage";
 import { CLASS_10_FAKE_LESSONS } from "./constants/class10SeedLessons";
 
@@ -107,7 +106,6 @@ export { analytics };
 
 let app: any;
 let db: any;
-let firebaseStorage: any;
 
 try {
   setLogLevel('silent');
@@ -152,12 +150,6 @@ try {
 } catch (e) {
   console.error('[Firebase] getAuth failed:', e);
 }
-try {
-  firebaseStorage = getFirebaseStorage(app);
-} catch (e) {
-  console.error('[Firebase] getStorage failed:', e);
-}
-
 export const VAPID_KEY = 'BIZ9FrX99-hm4cM6pgBIKqZPevNkrVNM0AliLpTPbSr23eX4Vw_DGyC2GMLyJqTbogbuTseW5suFRWE6qQzbrL0';
 
 let _messagingInstance: any = null;
@@ -3646,7 +3638,7 @@ export const getDailyChallengeLeaderboard = async (
     }
 };
 
-export { app, db, rtdb, auth, firebaseStorage };
+export { app, db, rtdb, auth };
 
 export const updateUserUID = async (oldUid: string, newUid: string, userData: any) => {
     try {
