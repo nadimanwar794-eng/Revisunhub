@@ -1,6 +1,6 @@
 {
   "buildCommand": "pnpm run build",
-  "outputDirectory": "public",
+  "outputDirectory": "artifacts/iic-study-app-replit/dist/public",
   "framework": "vite",
   "rewrites": [
     {
