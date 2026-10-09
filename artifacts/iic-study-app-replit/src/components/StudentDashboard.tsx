@@ -4014,21 +4014,21 @@ export const StudentDashboard: React.FC<Props> = ({
   // minified production bundle before the dashboard has rendered.
   const [hwActiveHwId, setHwActiveHwId] = useState<string | null>(null);
   const [hwViewMode, setHwViewMode] = useState<'notes' | 'mcq' | 'audio' | 'video' | 'choose' | 'qa' | 'flashcard' | 'pdf'>('notes');
+  const isCompetitionHomeworkOpen =
+    Boolean(hwActiveHwId) &&
+    (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION');
 
   useEffect(() => {
-    // Hide the main dashboard header while Competition homework notes are open.
-    // Other chapter players retain their edge-to-edge behavior.
+    // Notes update the shared hidden state; the global header render also pins
+    // the Competition homework header off in every mode.
     const inPlayer =
       contentViewStep === 'PLAYER' &&
       (activeTab === 'PDF' || activeTab === 'MCQ' || activeTab === 'VIDEO' || (activeTab as any) === 'AUDIO');
-    const competitionHomeworkOpen =
-      Boolean(hwActiveHwId) &&
-      (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION');
-    const competitionNotesOpen = competitionHomeworkOpen && hwViewMode === 'notes';
+    const competitionNotesOpen = isCompetitionHomeworkOpen && hwViewMode === 'notes';
     const shouldAutoHideChrome =
-      inPlayer && syllabusMode !== 'COMPETITION' && !competitionHomeworkOpen;
+      inPlayer && syllabusMode !== 'COMPETITION' && !isCompetitionHomeworkOpen;
     setIsTopBarHidden(competitionNotesOpen || shouldAutoHideChrome);
-    if (competitionHomeworkOpen || (syllabusMode === 'COMPETITION' && inPlayer)) {
+    if (isCompetitionHomeworkOpen || (syllabusMode === 'COMPETITION' && inPlayer)) {
       setIsPedroHidden(false);
       try {
         localStorage.removeItem('nst_pedro_hidden');
@@ -4044,7 +4044,7 @@ export const StudentDashboard: React.FC<Props> = ({
     if (!inPlayer && syllabusMode !== 'COMPETITION') {
       setIsLandscapeUiHidden(false);
     }
-  }, [activeTab, contentViewStep, syllabusMode, activeSessionClass, hwActiveHwId, hwViewMode]);
+  }, [activeTab, contentViewStep, syllabusMode, activeSessionClass, hwActiveHwId, hwViewMode, isCompetitionHomeworkOpen]);
 
   useEffect(() => {
     setFullScreen(true); // Always true to hide global header
@@ -18338,7 +18338,7 @@ export const StudentDashboard: React.FC<Props> = ({
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
-        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || isCompetitionHomeworkOpen || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
         style={{ background: activeTopBarGrad }}
       >
         <TopBarEffectsLayer effects={activeTopBarEffects} />
