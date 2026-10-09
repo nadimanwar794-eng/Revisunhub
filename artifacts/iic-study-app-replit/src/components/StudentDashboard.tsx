@@ -3994,6 +3994,12 @@ export const StudentDashboard: React.FC<Props> = ({
     };
   }, []);
 
+  // These state values are used in the dependency list of the effect below.
+  // Keep them initialized first; otherwise the render can hit a TDZ in the
+  // minified production bundle before the dashboard has rendered.
+  const [hwActiveHwId, setHwActiveHwId] = useState<string | null>(null);
+  const [hwViewMode, setHwViewMode] = useState<'notes' | 'mcq' | 'audio' | 'video' | 'choose' | 'qa' | 'flashcard' | 'pdf'>('notes');
+
   useEffect(() => {
     // Competition mode keeps the dashboard chrome available while notes open.
     // Other chapter players retain their edge-to-edge behavior.
@@ -4716,15 +4722,6 @@ export const StudentDashboard: React.FC<Props> = ({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lucentNoteViewer]);
-
-  // ── IMPORTANT: hwActiveHwId + hwViewMode declared HERE (before the useEffects
-  // at L2883–2887 that list them in dep arrays) to avoid production TDZ crash.
-  // In Vite/esbuild minified bundles, dep arrays are evaluated synchronously at
-  // render time; if the const is declared after the hook, JS throws
-  // "Cannot access 'X' before initialization".  Keep these two declarations
-  // ABOVE the hwActivityTypeRef useEffect block.
-  const [hwActiveHwId, setHwActiveHwId] = useState<string | null>(null);
-  const [hwViewMode, setHwViewMode] = useState<'notes' | 'mcq' | 'audio' | 'video' | 'choose' | 'qa' | 'flashcard' | 'pdf'>('notes');
 
   // ── HomeStatsToast — HW viewer (competition / coaching mode) tracking ─────
   // Fire iic-mcq-session when hwActiveHwId opens/closes so HomeStatsToast shows
