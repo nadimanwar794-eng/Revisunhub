@@ -181,6 +181,7 @@ export interface GroupStudyRoom {
       maxStreak?: number;
       userXp?: number;
       streakBonusXp?: number;
+      submittedAt?: number;
     }>;
     questionAnswers?: Record<
       number,

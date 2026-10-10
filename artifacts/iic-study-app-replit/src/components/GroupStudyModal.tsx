@@ -573,6 +573,37 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [showHostNextPicker, setShowHostNextPicker] = useState<boolean>(false);
   const [reviewFilter, setReviewFilter] = useState<'ALL' | 'CORRECT' | 'WRONG' | 'UNANSWERED'>('ALL');
   const savedSessionsRef = useRef<Set<string>>(new Set());
+  const battleSessionKeyRef = useRef('');
+
+  const battleSessionKey = currentRoom?.id && currentRoom.liveMcq?.testStartTime
+    ? `${currentRoom.id}:${currentRoom.liveMcq.testStartTime}`
+    : '';
+
+  // A room can host multiple battles. Do not carry a previous battle's score
+  // or submitted state into the next lesson launched in the same room.
+  useEffect(() => {
+    if (!battleSessionKey || battleSessionKeyRef.current === battleSessionKey) return;
+    battleSessionKeyRef.current = battleSessionKey;
+    setLocalBattleStats({
+      score: 0,
+      correctCount: 0,
+      wrongCount: 0,
+      totalAnswered: 0,
+      currentStreak: 0,
+      maxStreak: 0,
+      userXp: 0,
+      streakBonusXp: 0,
+      answers: {},
+    });
+    setHasBatchSubmitted(false);
+    setIsSubmittingBatch(false);
+    setBatchSyncSecondsRemaining(0);
+    setHasStudentSubmittedEarly(false);
+    setStudentActiveQIndex(0);
+    setSelectedOption(null);
+    setHasAnsweredCurrentQ(false);
+    setShowQuestionPalette(false);
+  }, [battleSessionKey]);
 
   // Is an MCQ actively being answered or revealed right now?
   const isMcqRunning = Boolean(
@@ -1509,7 +1540,10 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         return;
       }
       setCurrentRoom((prev) => {
-        if (prev?.id === room.id && prev.liveMcq?.isActive && (!room.liveMcq || !room.liveMcq.isActive)) {
+        // Keep the last good MCQ only if a snapshot briefly omits that branch.
+        // A real isActive=false snapshot is how ENDED/WAITING reaches members;
+        // preserving the previous active state here hid final results for them.
+        if (prev?.id === room.id && prev.liveMcq?.isActive && !room.liveMcq) {
           return {
             ...room,
             mode: 'LIVE_MCQ',
@@ -5854,6 +5888,8 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       const qIdx = Math.max(0, Math.min(studentActiveQIndex, totalQuestions - 1));
                       const q = currentRoom.liveMcq!.questions[qIdx];
                       if (!q) return null;
+                      const savedMyScore = user?.id ? currentRoom.liveMcq!.scores?.[user.id] : undefined;
+                      const hasSubmittedThisTest = hasStudentSubmittedEarly || Boolean(savedMyScore?.submittedAt);
 
                       const isReveal = currentRoom.liveMcq!.status === 'REVEAL';
                       const isProjector = currentRoom.mcqType === 'PROJECTOR_MODE';
@@ -5878,7 +5914,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           }`}
                         >
                           {/* ── EARLY SUBMITTED STATE: Waiting for Room Timer to Complete ── */}
-                          {hasStudentSubmittedEarly && !currentRoom.isExpired && totalTestSecondsLeft > 0 ? (
+                          {hasSubmittedThisTest && !currentRoom.isExpired && totalTestSecondsLeft > 0 ? (
                             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-5 rounded-3xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl animate-in zoom-in-95 duration-200">
                               <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 text-emerald-400 flex items-center justify-center text-3xl shadow-lg">
                                 <CheckCircle2 size={36} className="text-emerald-400 animate-pulse" />
@@ -5889,28 +5925,52 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   Test Submitted Successfully
                                 </span>
                                 <h3 className="text-xl sm:text-2xl font-black text-white pt-1">
-                                  Aapka Test Darj Ho Chuka Hai!
+                                  Aapka Result Tayyar Hai!
                                 </h3>
                                 <p className="text-xs text-slate-300 max-w-md mx-auto leading-relaxed">
-                                  Aapka score aur answers surakshit submit ho gaye hain. Room ka samay pura hote hi sabhi participants ka final result aur rank declare hogi.
+                                  Aapka score abhi dekh sakte hain. Room ka samay pura hone par sabhi participants ki final rank aur leaderboard bhi dikhegi.
                                 </p>
                               </div>
 
-                              {/* Timer & Attempt Summary */}
-                              <div className="grid grid-cols-3 gap-3 w-full max-w-md">
+                              {/* Show this student's score immediately; the room leaderboard remains live until the test ends. */}
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full max-w-md">
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Score</span>
+                                  <span className="text-lg font-black text-amber-400">
+                                    {savedMyScore?.score ?? localBattleStats.score} pts
+                                  </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Sahi</span>
+                                  <span className="text-lg font-black text-emerald-400">
+                                    {savedMyScore?.correctCount ?? localBattleStats.correctCount}
+                                  </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Galat</span>
+                                  <span className="text-lg font-black text-rose-400">
+                                    {savedMyScore?.wrongCount ?? localBattleStats.wrongCount}
+                                  </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Accuracy</span>
+                                  <span className="text-lg font-black text-cyan-300">
+                                    {Math.round(((savedMyScore?.correctCount ?? localBattleStats.correctCount) / Math.max(totalQuestions, 1)) * 100)}%
+                                  </span>
+                                </div>
                                 <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
                                   <span className="block text-[10px] font-bold text-slate-400">Kul Attempt</span>
-                                  <span className="text-lg font-black text-emerald-400">
-                                    {answeredQuestionsCount}
+                                  <span className="text-lg font-black text-indigo-300">
+                                    {savedMyScore?.totalAnswered ?? localBattleStats.totalAnswered}
                                   </span>
                                 </div>
                                 <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
-                                  <span className="block text-[10px] font-bold text-slate-400">Chhute Huye</span>
+                                  <span className="block text-[10px] font-bold text-slate-400">Bache Sawal</span>
                                   <span className="text-lg font-black text-amber-400">
-                                    {Math.max(0, totalQuestions - answeredQuestionsCount)}
+                                    {Math.max(0, totalQuestions - (savedMyScore?.totalAnswered ?? localBattleStats.totalAnswered))}
                                   </span>
                                 </div>
-                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center col-span-2 sm:col-span-3">
                                   <span className="block text-[10px] font-bold text-slate-400">Bacha Samay</span>
                                   <span className="text-lg font-black text-cyan-300 font-mono">
                                     {Math.floor(totalTestSecondsLeft / 60)}:{String(totalTestSecondsLeft % 60).padStart(2, '0')}
@@ -6391,10 +6451,24 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
                   {/* Battle State: ENDED (Complete Results, Podium & Question-by-Question Review) */}
                   {(currentRoom.liveMcq?.status === 'ENDED' || currentRoom.isExpired) && (() => {
-                    const scores = Object.entries(currentRoom.liveMcq?.scores || {}).sort(
+                    const scoreMap = currentRoom.liveMcq?.scores || {};
+                    const scores = Object.entries(scoreMap).sort(
                       (a, b) => (b[1].score || 0) - (a[1].score || 0)
                     );
-                    const myScore = user?.id ? currentRoom.liveMcq?.scores?.[user.id] : null;
+                    const myScore = user?.id
+                      ? scoreMap[user.id] || {
+                          name: user.name || 'Student',
+                          score: localBattleStats.score,
+                          correctCount: localBattleStats.correctCount,
+                          wrongCount: localBattleStats.wrongCount,
+                          totalAnswered: localBattleStats.totalAnswered,
+                          userXp: localBattleStats.userXp,
+                        }
+                      : null;
+                    if (user?.id && !scoreMap[user.id]) {
+                      scores.push([user.id, myScore!]);
+                      scores.sort((a, b) => (b[1].score || 0) - (a[1].score || 0));
+                    }
                     const myRank = user?.id ? scores.findIndex(([uid]) => uid === user.id) + 1 : 0;
                     const totalQ = currentRoom.liveMcq?.totalQuestions || currentRoom.liveMcq?.questions?.length || 0;
                     const questions = currentRoom.liveMcq?.questions || [];
@@ -8133,6 +8207,51 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     setShowSubmitConfirmModal(false);
                     setHasStudentSubmittedEarly(true);
                     setHasBatchSubmitted(true);
+                    setCurrentRoom((prev) => {
+                      if (!prev?.liveMcq) return prev;
+                      const submittedAt = Date.now();
+                      const score = {
+                        name: user.name || 'Student',
+                        score: localBattleStats.score,
+                        correctCount: localBattleStats.correctCount,
+                        wrongCount: localBattleStats.wrongCount,
+                        totalAnswered: localBattleStats.totalAnswered,
+                        maxStreak: localBattleStats.maxStreak,
+                        userXp: localBattleStats.userXp,
+                        streakBonusXp: localBattleStats.streakBonusXp,
+                        userPhotoURL: user.photoURL || '',
+                        submittedAt,
+                      };
+                      const questionAnswers = { ...(prev.liveMcq.questionAnswers || {}) };
+                      Object.entries(localBattleStats.answers).forEach(([questionIndex, answer]) => {
+                        const index = Number(questionIndex);
+                        questionAnswers[index] = {
+                          ...(questionAnswers[index] || {}),
+                          [user.id]: {
+                            userId: user.id,
+                            userName: user.name || 'Student',
+                            userPhotoURL: user.photoURL || '',
+                            selectedOption: answer.selectedOption,
+                            isCorrect: answer.isCorrect,
+                            timeTakenSec: answer.timeTakenSec,
+                            timestamp: submittedAt,
+                          },
+                        };
+                      });
+                      const updated = {
+                        ...prev,
+                        liveMcq: {
+                          ...prev.liveMcq,
+                          scores: {
+                            ...(prev.liveMcq.scores || {}),
+                            [user.id]: score,
+                          },
+                          questionAnswers,
+                        },
+                      };
+                      saveCachedRoom(updated);
+                      return updated;
+                    });
 
                     // If the host submits, or the test timer has expired, end the battle.
                     if (isHost || totalTestSecondsLeft <= 0) {
