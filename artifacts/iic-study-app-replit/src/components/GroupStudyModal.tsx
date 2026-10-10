@@ -3250,7 +3250,6 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       const updatedRoom: GroupStudyRoom = {
         ...prev,
         liveMcq: updatedLiveMcq,
-        isExpired: isFinished ? true : prev.isExpired,
       };
       saveCachedRoom(updatedRoom);
       return updatedRoom;
@@ -6779,7 +6778,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               <button
                                 type="button"
                                 onClick={async () => {
-                                  await resetLiveMcqToWaiting(currentRoom.id);
+                                  await resetLiveMcqToWaiting(currentRoom.id, currentRoom.durationMinutes);
                                 }}
                                 className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-amber-900/30"
                               >

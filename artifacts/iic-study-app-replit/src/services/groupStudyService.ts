@@ -1295,6 +1295,10 @@ export const startLiveMcqBattle = async (
     const cached = getCachedRooms()[roomId];
     if (cached) {
       cached.mode = 'LIVE_MCQ';
+      cached.isScheduled = false;
+      delete cached.scheduledStartTime;
+      delete cached.preloadedTitle;
+      delete cached.preloadedQuestions;
       cached.liveMcq = {
         ...liveMcqData,
         scores: {},
@@ -1311,6 +1315,10 @@ export const startLiveMcqBattle = async (
   try {
     const payload = cleanRtdbPayload({
       mode: 'LIVE_MCQ',
+      isScheduled: false,
+      scheduledStartTime: null,
+      preloadedTitle: null,
+      preloadedQuestions: null,
       liveMcq: liveMcqData,
       lastActive: now,
     });
@@ -1844,25 +1852,52 @@ export const endLiveMcqBattle = async (roomId: string): Promise<void> => {
   }
 };
 
-export const resetLiveMcqToWaiting = async (roomId: string): Promise<void> => {
+export const resetLiveMcqToWaiting = async (roomId: string, durationMinutes?: number): Promise<void> => {
   try {
     const now = Date.now();
     const cached = getCachedRooms()[roomId];
+    const roomDurationMinutes = Math.max(1, durationMinutes || cached?.durationMinutes || 30);
+    const expiresAt = now + roomDurationMinutes * 60 * 1000;
     if (cached && cached.liveMcq) {
       cached.liveMcq.isActive = false;
       cached.liveMcq.status = 'WAITING';
       cached.liveMcq.scores = {};
       cached.liveMcq.questionAnswers = {};
+      cached.isExpired = false;
+      cached.expiresAt = expiresAt;
+      cached.isScheduled = false;
+      delete cached.scheduledStartTime;
+      delete cached.preloadedTitle;
+      delete cached.preloadedQuestions;
+      if (cached.timer) {
+        cached.timer = {
+          ...cached.timer,
+          durationMinutes: roomDurationMinutes,
+          startTime: now,
+          isPaused: false,
+          remainingSeconds: roomDurationMinutes * 60,
+        };
+      }
       cached.lastActive = now;
       saveCachedRoom(cached);
     }
 
     await update(ref(rtdb, `group_study_rooms/${roomId}`), {
       mode: 'LIVE_MCQ',
+      isExpired: false,
+      expiresAt,
+      isScheduled: false,
+      scheduledStartTime: null,
+      preloadedTitle: null,
+      preloadedQuestions: null,
       'liveMcq/isActive': false,
       'liveMcq/status': 'WAITING',
       'liveMcq/scores': {},
       'liveMcq/questionAnswers': {},
+      'timer/durationMinutes': roomDurationMinutes,
+      'timer/startTime': now,
+      'timer/isPaused': false,
+      'timer/remainingSeconds': roomDurationMinutes * 60,
       lastActive: now,
     });
   } catch (err: any) {
