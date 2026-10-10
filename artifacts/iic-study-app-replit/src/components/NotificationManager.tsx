@@ -656,6 +656,33 @@ export const notifyStudyProgressMilestone = async (request: {
   });
 };
 
+export const notifyStudyRoomChallengeInBackground = async (request: {
+  senderId: string;
+  senderName: string;
+  challengeTitle: string;
+  roomId: string;
+  roomCode?: string;
+  password?: string;
+  totalQuestions?: number;
+  url?: string;
+}) => {
+  const displayCode = request.roomCode || request.roomId.slice(-6).toUpperCase();
+  const passText = request.password?.trim() ? request.password.trim() : 'Open Entry';
+  const qCountText = request.totalQuestions ? ` (${request.totalQuestions} Sawaal)` : '';
+
+  return sendPushNotification({
+    recipientIds: [],
+    broadcast: true,
+    senderId: request.senderId,
+    senderName: request.senderName,
+    type: 'STUDY_ROOM',
+    // NO classLevel here: open to all classes, no class barrier, shows only Challenge in notification!
+    title: `⚔️ Study Room Challenge: ${request.challengeTitle}`,
+    body: `⚔️ Naya Challenge Shuru! "${request.challengeTitle}"${qCountText} | Room Code: ${displayCode} | PW: ${passText} - Koi bhi class ke students jud sakte hain, abhi compete karein!`,
+    url: request.url || `/?open=study-room&room=${encodeURIComponent(request.roomId)}`,
+  });
+};
+
 export const notifyStudyRoomInviteInBackground = async (request: {
   senderId: string;
   senderName: string;
@@ -665,10 +692,22 @@ export const notifyStudyRoomInviteInBackground = async (request: {
   password?: string;
   classLevel?: string;
   url?: string;
+  isChallenge?: boolean;
 }) => {
+  if (request.isChallenge) {
+    return notifyStudyRoomChallengeInBackground({
+      senderId: request.senderId,
+      senderName: request.senderName,
+      challengeTitle: request.roomName,
+      roomId: request.roomId,
+      roomCode: request.roomCode,
+      password: request.password,
+      url: request.url,
+    });
+  }
+
   const displayCode = request.roomCode || request.roomId.slice(-6).toUpperCase();
   const passText = request.password?.trim() ? request.password.trim() : 'None (Open Entry)';
-  const classText = request.classLevel ? `Class ${request.classLevel}` : 'All Students';
 
   return sendPushNotification({
     recipientIds: [],
@@ -676,9 +715,9 @@ export const notifyStudyRoomInviteInBackground = async (request: {
     senderId: request.senderId,
     senderName: request.senderName,
     type: 'STUDY_ROOM',
-    classLevel: request.classLevel,
-    title: `🟢 Live Study Room: ${request.roomName}`,
-    body: `${classText} | Room ID: ${displayCode} | Password: ${passText} - Turant judiye aur sath padhein!`,
+    // If challenge or open, do not restrict by class
+    title: `⚔️ Live Study Room: ${request.roomName}`,
+    body: `Room ID: ${displayCode} | Password: ${passText} - Sabhi classes ke students jud sakte hain! Turant judiye.`,
     url: request.url || `/?open=study-room&room=${encodeURIComponent(request.roomId)}`,
   });
 };

@@ -42,6 +42,8 @@ export interface GroupStudyMcqQuestion {
   correctIndex: number;
   explanation?: string;
   subject?: string;
+  topic?: string;
+  chapterTitle?: string;
 }
 
 export interface GroupStudyHostSync {
@@ -1022,6 +1024,34 @@ export const leaveGroupRoom = async (roomId: string, userId: string, userName: s
 };
 
 /**
+ * Updates a member's display name inside the study room in RTDB and local cache.
+ * Supports the optional name feature for room entries.
+ */
+export const updateMemberDisplayName = async (
+  roomId: string,
+  userId: string,
+  newName: string
+): Promise<boolean> => {
+  if (!roomId || !userId || !newName.trim()) return false;
+  const trimmed = newName.trim();
+  const effectiveUserId = auth.currentUser?.uid || userId;
+  try {
+    const memberNameRef = ref(rtdb, `group_study_rooms/${roomId}/members/${effectiveUserId}/name`);
+    await set(memberNameRef, trimmed);
+
+    const cached = getCachedRooms()[roomId];
+    if (cached && cached.members && cached.members[effectiveUserId]) {
+      cached.members[effectiveUserId].name = trimmed;
+      saveCachedRoom(cached);
+    }
+    return true;
+  } catch (e) {
+    console.warn('[GroupStudy] updateMemberDisplayName error:', e);
+    return false;
+  }
+};
+
+/**
  * Elects and promotes the highest Level & XP member to host if the current host went offline or disconnected.
  * Ensures room never closes when host drops out.
  */
@@ -1241,7 +1271,7 @@ export const startLiveMcqBattle = async (
   questions: GroupStudyMcqQuestion[],
   durationPerQuestion: number = 20,
   autoAdvance: boolean = true,
-  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'PER_QUESTION',
+  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'MIX',
   totalTestDurationMinutes: number = 15,
   targetPaceSeconds: number = 20,
   vibrateOnPaceAlert: boolean = true
@@ -1350,7 +1380,7 @@ export const scheduleRoomWithQuestions = async (
   quizTitle: string,
   durationPerQuestion: number = 20,
   autoAdvance: boolean = true,
-  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'PER_QUESTION',
+  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'MIX',
   totalTestDurationMinutes: number = 15,
   targetPaceSeconds: number = 20,
   vibrateOnPaceAlert: boolean = true,
