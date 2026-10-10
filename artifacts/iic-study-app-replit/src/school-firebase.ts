@@ -47,11 +47,18 @@ export const subscribeToSchool = (schoolId: string, cb: (s: School | null) => vo
     err => { console.warn(`[school-firebase] subscribeToSchool error:`, err?.code || err); cb(null); }
   );
 
-export const subscribeToAllSchools = (cb: (schools: School[]) => void) =>
+export const subscribeToAllSchools = (
+  cb: (schools: School[]) => void,
+  onError?: (err: Error) => void
+) =>
   onSnapshot(
     col("schools"),
     snap => cb(snap.docs.map(d => d.data() as School)),
-    err => { console.warn(`[school-firebase] subscribeToAllSchools error:`, err?.code || err); cb([]); }
+    err => {
+      console.warn(`[school-firebase] subscribeToAllSchools error:`, err?.code || err);
+      cb([]);
+      onError?.(err);
+    }
   );
 
 export const updateSchool = async (schoolId: string, data: Partial<School>) => {

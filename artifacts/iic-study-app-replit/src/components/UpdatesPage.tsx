@@ -11,6 +11,8 @@ import {
 import type { User, SystemSettings, Challenge20 } from '../types';
 import { isDailyChallenge20, getChallengeDateKey } from '../utils/challengeGenerator';
 import { getLevelInfo } from '../utils/levelSystem';
+import { subscribeToAllCoachings } from '../coaching-firebase';
+import { subscribeToAllSchools } from '../school-firebase';
 
 interface Props {
   user: User;
@@ -123,6 +125,8 @@ export const UpdatesPage: React.FC<Props> = ({
   const [activeSectionTab, setActiveSectionTab] = useState<'ADVANCE_TOOLS' | 'UPDATES'>(initialSectionTab || 'ADVANCE_TOOLS');
   const [now, setNow] = useState(Date.now());
   const [isClaiming, setIsClaiming] = useState(false);
+  const [hasAvailableSchool, setHasAvailableSchool] = useState<boolean | null>(null);
+  const [hasAvailableCoaching, setHasAvailableCoaching] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (initialSectionTab) {
@@ -130,8 +134,26 @@ export const UpdatesPage: React.FC<Props> = ({
     }
   }, [initialSectionTab]);
 
-  const hasSchool = Boolean(userSchool || (user as any)?.schoolId);
-  const hasCoaching = Boolean(userCoachingId || (user as any)?.coachingId || isCoachingAdmin);
+  useEffect(() => {
+    const unsubscribeSchools = subscribeToAllSchools((schools) => {
+      setHasAvailableSchool(schools.some((school) => school.active));
+    }, () => setHasAvailableSchool(null));
+    const unsubscribeCoachings = subscribeToAllCoachings((coachings) => {
+      setHasAvailableCoaching(
+        coachings.some((coaching) => coaching.subscription?.status === 'active')
+      );
+    }, () => setHasAvailableCoaching(null));
+
+    return () => {
+      unsubscribeSchools();
+      unsubscribeCoachings();
+    };
+  }, []);
+
+  const hasSchool = hasAvailableSchool ?? Boolean(userSchool || (user as any)?.schoolId);
+  const hasCoaching =
+    hasAvailableCoaching ??
+    Boolean(userCoachingId || (user as any)?.coachingId || isCoachingAdmin);
 
   // Paid tier check (Basic or Ultra or Admin required for advanced features)
   const isPaidUser = useMemo(() => {
@@ -1163,7 +1185,7 @@ export const UpdatesPage: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* ── CARD 5: SCHOOL PORTAL (Visible only when user is enrolled in a school) ── */}
+          {/* ── CARD 5: SCHOOL PORTAL (Shown when an active school is available) ── */}
           {hasSchool && (
             <div
               id="updates-school-card"
@@ -1257,7 +1279,7 @@ export const UpdatesPage: React.FC<Props> = ({
             </div>
           )}
 
-          {/* ── CARD 6: COACHING PORTAL (Visible only when user is enrolled in coaching) ── */}
+          {/* ── CARD 6: COACHING PORTAL (Shown when an active coaching institute is available) ── */}
           {hasCoaching && (
             <div
               id="updates-coaching-card"

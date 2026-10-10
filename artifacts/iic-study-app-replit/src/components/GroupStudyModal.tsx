@@ -4436,12 +4436,27 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       })()}
 
                       {isHost ? (
-                        <div className="space-y-3.5 max-w-lg mx-auto pt-2 text-left">
+                        <div className="space-y-4 w-full max-w-3xl mx-auto pt-2 text-left">
+                          <div className="rounded-2xl border border-indigo-400/25 bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/30 p-4 sm:p-5 shadow-xl">
+                            <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                              <div>
+                                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-300">Assessment builder · Step 02</p>
+                                <h4 className="text-lg sm:text-xl font-black text-white tracking-tight mt-1">Exam question set tayyar karein</h4>
+                                <p className="text-xs text-slate-400 mt-1">Mode aur syllabus chunein, phir questions ko set karke test launch ya schedule karein.</p>
+                              </div>
+                              <div className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-right">
+                                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Room</p>
+                                <p className="max-w-48 truncate text-xs font-black text-slate-100">{currentRoom.name}</p>
+                              </div>
+                            </div>
+                            <StudyRoomSetupProgress currentStep={2} />
+                          </div>
+
                           {/* 1. Mode Switcher (🎯 MCQ vs ⚡ MCQ +) */}
-                          <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 space-y-2.5">
+                          <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/90 border border-slate-700/80 space-y-3 shadow-lg">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-black text-slate-200 flex items-center gap-1.5">
-                                <span>1. MCQ Battle Mode:</span>
+                                <span>01 · Assessment mode</span>
                               </span>
                               <span className="text-[10px] font-bold text-slate-400">
                                 {currentRoom.mcqType === 'REVISION_HUB' ? '⚡ MCQ + Active' : '🎯 MCQ Mode Active'}
@@ -5533,7 +5548,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           </div>
 
                           {/* 5. Launch or Schedule Action Section (Last Step after choosing questions) */}
-                          <div className="space-y-3 pt-1">
+                          <div className="space-y-3.5 p-4 rounded-2xl bg-slate-900/80 border border-indigo-400/20 shadow-lg">
                             {/* Toggle between Launch Now vs Schedule */}
                             <div className="p-1 rounded-2xl bg-slate-950 border border-slate-800 grid grid-cols-2 gap-1">
                               <button
@@ -5546,7 +5561,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 }`}
                               >
                                 <Play size={13} className="fill-current" />
-                                <span>🚀 Abhi Shuru Karein</span>
+                                <span>Test abhi launch karein</span>
                               </button>
                               <button
                                 type="button"
@@ -5564,7 +5579,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 }`}
                               >
                                 <Clock size={13} />
-                                <span>⏰ Schedule Karein</span>
+                                <span>Test schedule karein</span>
                                 {!isBasicUser && !isUltraUser && !isAdmin && (
                                   <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">VIP</span>
                                 )}
@@ -7268,21 +7283,31 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       {/* ── CREATE ROOM MODAL (Mandatory Password & MCQ Mode Selection) ── */}
       {showCreateModal && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in zoom-in-95 duration-150">
-          <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-3.5 text-slate-100 max-h-[92vh] flex flex-col">
-            <div className="flex items-center justify-between shrink-0">
-              <h3 className="text-base font-black text-white flex items-center gap-2">
-                <Trophy size={18} className="text-indigo-400" /> Naya MCQ Study Room Banayein
-              </h3>
+          <div className="w-full max-w-4xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/70 border border-indigo-400/25 rounded-[28px] p-4 sm:p-6 shadow-[0_28px_100px_rgba(0,0,0,0.65)] space-y-4 text-slate-100 max-h-[92vh] flex flex-col overflow-hidden">
+            <div className="flex items-start justify-between gap-4 shrink-0">
+              <div className="flex items-start gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-500/15 border border-indigo-400/25 text-indigo-300 flex items-center justify-center shrink-0">
+                  <Trophy size={19} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-300">Assessment workspace · Step 01</p>
+                  <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">Study Room tayyar karein</h3>
+                  <p className="text-xs text-slate-400 mt-1">Room details set karein, phir lobby mein apna exam question set banayein.</p>
+                </div>
+              </div>
               <button
                 onClick={() => setShowCreateModal(false)}
-                className="w-7 h-7 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+                aria-label="Close room setup"
+                className="w-8 h-8 rounded-xl bg-slate-800/90 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 flex items-center justify-center cursor-pointer transition-colors shrink-0"
               >
                 <X size={14} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateRoom} className="space-y-3.5 overflow-y-auto pr-1 flex-1">
-              <div>
+            <StudyRoomSetupProgress currentStep={1} />
+
+            <form onSubmit={handleCreateRoom} className="grid grid-cols-1 md:grid-cols-2 gap-4 overflow-y-auto pr-1 flex-1 min-h-0">
+              <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-slate-300 mb-1">Room Name:</label>
                 <input
                   type="text"
@@ -7290,12 +7315,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   placeholder="e.g. Mission Bihar SSC & Lucent MCQ Battle"
                   value={newRoomName}
                   onChange={(e) => setNewRoomName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/15 transition"
                 />
               </div>
 
               {/* Optional Password Field */}
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
                   <span>
                     Room Password <span className="text-slate-400 font-normal">(Optional / Marzi Hai)</span>
@@ -7308,7 +7333,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     placeholder="Khali chhodein ya secret password daalein (e.g. 1234)"
                     value={newRoomPassword}
                     onChange={(e) => setNewRoomPassword(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none pr-10 shadow-inner"
+                    className="w-full bg-slate-950/80 border border-slate-700 focus:border-indigo-400 rounded-xl px-4 py-3 text-sm text-white outline-none pr-11 transition"
                   />
                   <button
                     type="button"
@@ -7324,7 +7349,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               </div>
 
               {/* Informational Card: MCQ Mode & Chapter Selection happens inside the Room Lobby */}
-              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-950/60 to-purple-950/60 border border-indigo-500/30 text-xs text-slate-200 flex items-start gap-2.5">
+              <div className="md:col-span-2 p-4 rounded-2xl bg-indigo-500/[0.07] border border-indigo-400/20 text-xs text-slate-200 flex items-start gap-3">
                 <span className="text-base shrink-0">💡</span>
                 <div className="space-y-1">
                   <p className="font-bold text-white text-xs">
@@ -7353,7 +7378,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 <select
                   value={newRoomDurationMinutes}
                   onChange={(e) => setNewRoomDurationMinutes(parseInt(e.target.value, 10))}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                  className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white outline-none focus:border-indigo-400 transition"
                 >
                   {durationOptions.map((m) => (
                     <option key={`dur_opt_${m}`} value={m}>
@@ -7378,7 +7403,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 <select
                   value={newRoomMaxMembers}
                   onChange={(e) => setNewRoomMaxMembers(parseInt(e.target.value, 10))}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white outline-none focus:border-indigo-400 transition"
                 >
                   {(isAdmin || userTier === 'ULTRA') && (
                     <option value={100}>🚀 100 Members (Mega Battle Room - Full Cohort / High Speed)</option>
@@ -7395,7 +7420,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               </div>
 
               {/* ── ROOM COLOR THEME SELECTOR ── */}
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
                   <span>Room Theme / Color:</span>
                   <span className="text-[10px] text-indigo-300 font-bold">
@@ -7439,7 +7464,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </div>
               </div>
 
-              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px]">
+              <div className="md:col-span-2 flex items-center justify-between px-4 py-3 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px]">
                 <span className="text-slate-400">Daily Room Limit:</span>
                 <span className="font-bold">
                   {isAdmin ? (
@@ -7457,7 +7482,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-3 rounded-xl font-black text-xs text-white shadow-xl active:scale-95 transition cursor-pointer shrink-0"
+                className="md:col-span-2 w-full py-3.5 rounded-xl font-black text-sm text-white shadow-xl active:scale-[0.99] transition cursor-pointer shrink-0"
                 style={{ background: brandColor }}
               >
                 {isLoading ? 'Creating Room...' : '🚀 Room Banayein (Lobby Kholein)'}
