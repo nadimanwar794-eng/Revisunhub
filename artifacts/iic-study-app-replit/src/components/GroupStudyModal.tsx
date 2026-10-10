@@ -28,6 +28,7 @@ import {
   ChevronLeft,
   LayoutGrid,
   Smartphone,
+  User,
   UserCheck,
   Minimize2,
   Compass,
