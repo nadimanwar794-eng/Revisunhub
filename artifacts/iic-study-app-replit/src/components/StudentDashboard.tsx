@@ -2892,6 +2892,19 @@ export const StudentDashboard: React.FC<Props> = ({
     user.id,
   ]);
 
+  // Deep-link handler: Opens Study Room when notification or link with ?open=study-room is clicked
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('open') === 'study-room') {
+        setShowGroupStudyModal(true);
+        const cleanPath = window.location.pathname;
+        window.history.replaceState({}, '', cleanPath);
+      }
+    } catch {}
+  }, []);
+
   const handleNavigateFromGroupStudy = useCallback((target: {
     tab?: string;
     board?: string;

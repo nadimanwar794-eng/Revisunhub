@@ -2974,8 +2974,17 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       saveCachedRoom(updatedRoom);
       // Room schedule karne ke baad host room se bahar chala jayega (returns to lobby/list)
       setCurrentRoom(null);
-      if (onActiveRoomChange) onActiveRoomChange(null);
       await leaveGroupRoom(updatedRoom.id, user?.id || 'guest', user?.name || 'Student');
+      // User requirement: Notify all users about the scheduled challenge (no class restriction)
+      void notifyStudyRoomChallengeInBackground({
+        senderId: user?.id || 'host',
+        senderName: user?.name || 'Study Room',
+        challengeTitle: `⏳ Scheduled Challenge: ${compiled.battleTitle}`,
+        roomId: updatedRoom.id,
+        roomCode: (updatedRoom.code || updatedRoom.id?.slice(-6) || 'STUDY1').toUpperCase(),
+        password: updatedRoom.password || '',
+        totalQuestions: compiled.compiledQuestions.length,
+      }).catch((e) => console.warn('Schedule notify notice:', e));
 
       alert(`🎉 Test schedule ho gaya!\n⏰ Start Time: ${new Date(scheduledStartTime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}\n\nHost room se bahar aa gaye hain. Room list me countdown chal raha hai. Samay aane par test auto-start hoga aur aap ya koi bhi sadasya kabhi bhi wapas join kar sakte hain!`);
     } catch (e: any) {
@@ -3131,6 +3140,17 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       if (chosenType !== targetRoom.mcqType) {
         await setRoomMcqType(targetRoom.id, chosenType);
       }
+
+      // User requirement: Study room practice questions notify ALL users without class restriction
+      void notifyStudyRoomChallengeInBackground({
+        senderId: user?.id || targetRoom.hostId || 'host',
+        senderName: user?.name || targetRoom.hostName || 'Study Room',
+        challengeTitle: displayTitle,
+        roomId: targetRoom.id,
+        roomCode: (targetRoom.code || targetRoom.id.slice(-6)).toUpperCase(),
+        password: targetRoom.password,
+        totalQuestions: cleanQuestions.length,
+      }).catch((e) => console.warn('Challenge notify notice:', e));
     } catch (err: any) {
       console.warn('[GroupStudy] Live battle background sync error:', err);
     } finally {
@@ -3184,6 +3204,17 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         userPaceSeconds,
         userVibrateAlert
       );
+
+      // User requirement: Study room practice questions notify ALL users without class restriction
+      void notifyStudyRoomChallengeInBackground({
+        senderId: user?.id || currentRoom.hostId || 'host',
+        senderName: user?.name || currentRoom.hostName || 'Study Room',
+        challengeTitle: `${chapterTitle} · Practice Challenge`,
+        roomId: currentRoom.id,
+        roomCode: (currentRoom.code || currentRoom.id.slice(-6)).toUpperCase(),
+        password: currentRoom.password,
+        totalQuestions: questions.length,
+      }).catch((e) => console.warn('Challenge notify notice:', e));
 
       setShowChapterChooser(false);
     } catch (err: any) {
@@ -3816,13 +3847,13 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     </div>
 
                     {/* Password input */}
-                    <div className="sm:col-span-5 relative">
+                    <div className="sm:col-span-3 relative">
                       <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                         <Lock size={13} />
                       </div>
                       <input
                         type={showJoinPasswordInput ? 'text' : 'password'}
-                        placeholder="Room Password (if protected)"
+                        placeholder="Password (if any)"
                         value={joinPasswordInput}
                         onChange={(e) => {
                           setJoinPasswordInput(e.target.value);
@@ -3840,15 +3871,33 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       </button>
                     </div>
 
+                    {/* Optional Name input */}
+                    <div className="sm:col-span-3 relative">
+                      <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                        <User size={13} />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder={user?.name || "Naam (Optional)"}
+                        value={joinNameInput}
+                        onChange={(e) => {
+                          setJoinNameInput(e.target.value);
+                          setJoinCodeError('');
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder:text-slate-500 outline-none transition"
+                        maxLength={30}
+                      />
+                    </div>
+
                     {/* Join button */}
-                    <div className="sm:col-span-3">
+                    <div className="sm:col-span-2">
                       <button
                         type="submit"
                         disabled={!joinCodeInput.trim() || isLoading}
                         className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md active:scale-95 disabled:opacity-50 transition cursor-pointer flex items-center justify-center gap-1.5"
                       >
                         {isLoading ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} className="fill-current" />}
-                        <span>Join Room</span>
+                        <span>Join</span>
                       </button>
                     </div>
                   </form>
@@ -7154,6 +7203,25 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </p>
 
                 <form onSubmit={handleVerifyPasswordAndJoin} className="space-y-3">
+                  {/* Optional Name on Entry */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1">👤 Aapka Naam (Optional)</span>
+                      <span className="text-[10px] text-cyan-400 font-medium">🌐 Sabhi Classes Allowed</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={user?.name || "Apna naam likhein (optional)..."}
+                      value={entryCustomName}
+                      onChange={(e) => setEntryCustomName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white outline-none focus:border-amber-400 placeholder:text-slate-500"
+                      maxLength={30}
+                    />
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {entryCustomName.trim() ? `Room me aapka naam: "${entryCustomName.trim()}" dikhega.` : `Default: "${user?.name || 'Student'}"`}
+                    </p>
+                  </div>
+
                   <div className="relative">
                     <input
                       type={showPasswordText ? 'text' : 'password'}
@@ -7217,6 +7285,25 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   </div>
                 </div>
 
+                {/* Optional Name on Entry */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1">👤 Aapka Naam (Optional)</span>
+                    <span className="text-[10px] text-cyan-400 font-medium">🌐 Sabhi Classes Allowed</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={user?.name || "Apna naam likhein (optional)..."}
+                    value={entryCustomName}
+                    onChange={(e) => setEntryCustomName(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white outline-none focus:border-amber-400 placeholder:text-slate-500"
+                    maxLength={30}
+                  />
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {entryCustomName.trim() ? `Room me aapka naam: "${entryCustomName.trim()}" dikhega.` : `Default: "${user?.name || 'Student'}"`}
+                  </p>
+                </div>
+
                 <p className="text-xs text-slate-300">
                   Yeh public room hai. Kya aap abhi is room me join karna chahte hain?
                 </p>
@@ -7227,7 +7314,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     onClick={() => {
                       const roomToJoin = passwordModalRoom;
                       setPasswordModalRoom(null);
-                      handleJoinRoom(roomToJoin);
+                      handleJoinRoom(roomToJoin, entryCustomName.trim());
                     }}
                     className="flex-1 py-2.5 rounded-xl font-black text-xs text-slate-950 bg-emerald-400 hover:bg-emerald-300 shadow-md active:scale-95 transition cursor-pointer"
                   >
@@ -7243,6 +7330,87 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── CHANGE DISPLAY NAME MODAL (Inside Study Room) ── */}
+      {showChangeNameModal && (
+        <div className="fixed inset-0 z-[10002] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in zoom-in-95 duration-150">
+          <div className="w-full max-w-sm bg-slate-900 border border-indigo-500/40 rounded-3xl p-6 shadow-2xl space-y-4 text-slate-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                  <User size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">Naam Badlein (Display Name)</h3>
+                  <p className="text-[10px] text-slate-400">Is Study Room ke liye apna naam update karein</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowChangeNameModal(false)}
+                className="w-7 h-7 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Naya Display Naam:</label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Apna naya naam yahan likhein..."
+                  value={changeNameInputValue}
+                  onChange={(e) => setChangeNameInputValue(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-indigo-400"
+                  maxLength={30}
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={!changeNameInputValue.trim()}
+                  onClick={async () => {
+                    if (!currentRoom || !changeNameInputValue.trim()) return;
+                    const newName = changeNameInputValue.trim();
+                    setShowChangeNameModal(false);
+                    await updateMemberDisplayName(currentRoom.id, user?.id || 'guest', newName);
+                    setCurrentRoom((prev) => {
+                      if (!prev || !prev.members) return prev;
+                      const uid = auth.currentUser?.uid || user?.id || 'guest';
+                      if (!prev.members[uid]) return prev;
+                      const updated = {
+                        ...prev,
+                        members: {
+                          ...prev.members,
+                          [uid]: {
+                            ...prev.members[uid],
+                            name: newName,
+                          },
+                        },
+                      };
+                      saveCachedRoom(updated);
+                      return updated;
+                    });
+                  }}
+                  className="flex-1 py-2.5 rounded-xl font-black text-xs text-white bg-indigo-600 hover:bg-indigo-500 shadow-md active:scale-95 transition cursor-pointer disabled:opacity-50"
+                >
+                  ✓ Naam Save Karein
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowChangeNameModal(false)}
+                  className="px-4 py-2.5 rounded-xl font-bold text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 active:scale-95 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
