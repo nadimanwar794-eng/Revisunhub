@@ -420,30 +420,68 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
                             )}
                         </div>
                     </div>
-                    {onRotate && !isAdmin && (
+                    {/* Rotate button & IIC×NSTA toggle button */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, marginLeft: 8 }}>
+                        {onRotate && (
+                            <button
+                                type="button"
+                                onPointerDown={e => e.stopPropagation()}
+                                onClick={e => { e.stopPropagation(); onRotate(); }}
+                                style={{
+                                    height: 36, padding: '0 10px', borderRadius: 10,
+                                    background: 'rgba(255,255,255,0.18)',
+                                    border: '1px solid rgba(255,255,255,0.3)',
+                                    color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                                    cursor: 'pointer', backdropFilter: 'blur(4px)', flexShrink: 0,
+                                    fontSize: 12, fontWeight: 800,
+                                }}
+                                title="Screen Rotate"
+                            >
+                                <RotateCcw size={15} />
+                                <span style={{ fontSize: 11 }}>Rotate</span>
+                            </button>
+                        )}
                         <button
+                            type="button"
                             onPointerDown={e => e.stopPropagation()}
-                            onClick={e => { e.stopPropagation(); onRotate(); }}
+                            onClick={e => { e.stopPropagation(); handleBadgeClick(); }}
                             style={{
-                                width: 36, height: 36, borderRadius: 10,
-                                background: 'rgba(255,255,255,0.15)',
-                                border: '1px solid rgba(255,255,255,0.3)',
-                                color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                cursor: 'pointer', backdropFilter: 'blur(4px)', flexShrink: 0, marginLeft: 8,
+                                height: 36,
+                                padding: '0 11px',
+                                borderRadius: 10,
+                                background: isUiHidden
+                                    ? 'linear-gradient(135deg, rgba(30,27,75,0.95), rgba(79,70,229,0.85))'
+                                    : 'rgba(99,102,241,0.35)',
+                                border: isUiHidden
+                                    ? '1.5px solid rgba(165,180,252,0.9)'
+                                    : '1.5px solid rgba(165,180,252,0.5)',
+                                color: '#fff',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 5,
+                                cursor: 'pointer',
+                                backdropFilter: 'blur(6px)',
+                                flexShrink: 0,
+                                fontWeight: 900,
+                                fontSize: 11,
+                                letterSpacing: '0.05em',
+                                boxShadow: isUiHidden
+                                    ? '0 0 14px rgba(129,140,248,0.7)'
+                                    : '0 2px 8px rgba(0,0,0,0.4)',
+                                transition: 'all 0.2s ease',
                             }}
+                            title={isUiHidden ? "Top Bar aur Bottom Navigation Dikhayein (Tap to show)" : "Top Bar aur Bottom Navigation Chhupayein (Tap to hide)"}
+                            aria-label="Toggle Top Bar & Bottom Navigation"
                         >
-                            <RotateCcw size={18} />
+                            <span>{badgeText}</span>
+                            <span style={{ fontSize: 10 }}>{isUiHidden ? '👁️' : '⛶'}</span>
                         </button>
-                    )}
+                    </div>
                 </div>
             )}
 
-            {/* ── Branding logo (non-rotated only) ── */}
-            {brandingLogo && !rotated && (
-                <img src={brandingLogo} alt=""
-                    style={{ position: 'absolute', top: 8, left: 8, zIndex: 30, height: 20, width: 'auto', objectFit: 'contain', opacity: 0.6, pointerEvents: 'none' }}
-                />
-            )}
+            {/* ── Branding logo watermark removed per user request for clean video experience ── */}
 
             {/* ── ADMIN: Edit badge panel ── */}
             {isAdmin && isYouTube && (

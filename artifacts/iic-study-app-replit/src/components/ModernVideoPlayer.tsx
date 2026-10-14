@@ -801,6 +801,29 @@ export const ModernVideoPlayer: React.FC<ModernVideoPlayerProps> = ({
             <RotateCw size={14} className={isRotated ? 'rotate-90 transition-transform' : ''} />
           </button>
 
+          {/* IIC×NSTA button near rotate button — hides/unhides top bar & bottom nav */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleNstaLogoClick();
+            }}
+            title={
+              isTopBarHidden
+                ? 'Top Bar & Bottom Navigation Dikhayein'
+                : 'Top Bar & Bottom Navigation Chhupayein'
+            }
+            aria-label="Toggle Top Bar & Bottom Navigation"
+            className={`select-none flex items-center gap-1 px-2.5 py-1 rounded-lg backdrop-blur-md transition-all duration-200 cursor-pointer active:scale-95 text-[11px] font-black ${
+              isTopBarHidden
+                ? 'bg-indigo-600 text-white ring-1 ring-indigo-400 shadow-md'
+                : 'bg-white/15 hover:bg-white/25 text-white border border-white/25'
+            }`}
+          >
+            <span>IIC×NSTA</span>
+            <span className="text-[10px]">{isTopBarHidden ? '👁️' : '⛶'}</span>
+          </button>
+
           {/* 3-Dot Options Button in Top Bar */}
           <div className="relative">
             <button

@@ -1652,6 +1652,7 @@ export const LessonView: React.FC<Props> = ({
                         fsButtonLabel={settings?.playerFsButtonLabel}
                         isAdmin={isAdmin}
                         hideYtLogoBlocker={settings?.hideYtLogoBlocker}
+                        onRotate={async () => { await rotateScreen(); }}
                       />
                     ) : (
                       <ModernVideoPlayer

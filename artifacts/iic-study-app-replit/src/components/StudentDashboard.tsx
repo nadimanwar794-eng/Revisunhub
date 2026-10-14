@@ -4189,6 +4189,23 @@ export const StudentDashboard: React.FC<Props> = ({
     window.addEventListener('nsta-video-topbar-change', handleVideoTopBar);
     return () => window.removeEventListener('nsta-video-topbar-change', handleVideoTopBar);
   }, []);
+
+  const toggleTopAndBottomBars = useCallback(() => {
+    setIsTopBarHidden(prev => {
+      const next = !prev;
+      setIsLandscapeUiHidden(next);
+      setHwImmersive(next);
+      setLucentImmersive(next);
+      try {
+        window.dispatchEvent(
+          new CustomEvent('nsta-video-topbar-change', {
+            detail: { isTopBarHidden: next }
+          })
+        );
+      } catch (_) {}
+      return next;
+    });
+  }, []);
   useEffect(() => {
     try {
       const mq = window.matchMedia('(orientation: landscape)');
@@ -11090,6 +11107,25 @@ export const StudentDashboard: React.FC<Props> = ({
                       >
                         <RotateCcw size={14} />
                       </button>
+                      {/* IIC×NSTA button — hides/unhides top bar & bottom nav */}
+                      <button
+                        type="button"
+                        onClick={toggleTopAndBottomBars}
+                        className={`h-8 px-2 flex items-center gap-1 rounded-xl border text-[11px] font-black transition-all active:scale-90 shrink-0 ${
+                          isTopBarHidden || isLandscapeUiHidden || hwImmersive
+                            ? 'bg-indigo-600 border-indigo-400 text-white shadow-md ring-1 ring-indigo-400/60'
+                            : 'bg-white/15 border-white/25 text-white hover:bg-white/25'
+                        }`}
+                        title={
+                          isTopBarHidden || isLandscapeUiHidden || hwImmersive
+                            ? 'Top Bar aur Bottom Navigation Dikhayein'
+                            : 'Top Bar aur Bottom Navigation Chhupayein'
+                        }
+                        aria-label="Toggle Top Bar & Bottom Navigation"
+                      >
+                        <span>IIC×NSTA</span>
+                        <span className="text-[10px]">{(isTopBarHidden || isLandscapeUiHidden || hwImmersive) ? '👁️' : '⛶'}</span>
+                      </button>
                       {/* Save Offline */}
                       <button
                         onClick={async () => {
@@ -11164,23 +11200,63 @@ export const StudentDashboard: React.FC<Props> = ({
                   )}
                   {/* Rotate button — MCQ tab */}
                   {effectiveMode === 'mcq' && (
-                    <button
-                      onClick={handleRotate}
-                      className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
-                      title="Screen Rotate"
-                    >
-                      <RotateCcw size={14} />
-                    </button>
+                    <>
+                      <button
+                        onClick={handleRotate}
+                        className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
+                        title="Screen Rotate"
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={toggleTopAndBottomBars}
+                        className={`h-8 px-2 flex items-center gap-1 rounded-xl border text-[11px] font-black transition-all active:scale-90 shrink-0 ${
+                          isTopBarHidden || isLandscapeUiHidden || hwImmersive
+                            ? 'bg-indigo-600 border-indigo-400 text-white shadow-md ring-1 ring-indigo-400/60'
+                            : 'bg-white/15 border-white/25 text-white hover:bg-white/25'
+                        }`}
+                        title={
+                          isTopBarHidden || isLandscapeUiHidden || hwImmersive
+                            ? 'Top Bar aur Bottom Navigation Dikhayein'
+                            : 'Top Bar aur Bottom Navigation Chhupayein'
+                        }
+                        aria-label="Toggle Top Bar & Bottom Navigation"
+                      >
+                        <span>IIC×NSTA</span>
+                        <span className="text-[10px]">{(isTopBarHidden || isLandscapeUiHidden || hwImmersive) ? '👁️' : '⛶'}</span>
+                      </button>
+                    </>
                   )}
                   {/* Rotate — video only */}
                   {effectiveMode === 'video' && (
-                    <button
-                      onClick={handleRotate}
-                      className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
-                      title="Screen Rotate"
-                    >
-                      <RotateCcw size={14} />
-                    </button>
+                    <>
+                      <button
+                        onClick={handleRotate}
+                        className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
+                        title="Screen Rotate"
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={toggleTopAndBottomBars}
+                        className={`h-8 px-2 flex items-center gap-1 rounded-xl border text-[11px] font-black transition-all active:scale-90 shrink-0 ${
+                          isTopBarHidden || isLandscapeUiHidden || hwImmersive
+                            ? 'bg-indigo-600 border-indigo-400 text-white shadow-md ring-1 ring-indigo-400/60'
+                            : 'bg-white/15 border-white/25 text-white hover:bg-white/25'
+                        }`}
+                        title={
+                          isTopBarHidden || isLandscapeUiHidden || hwImmersive
+                            ? 'Top Bar aur Bottom Navigation Dikhayein'
+                            : 'Top Bar aur Bottom Navigation Chhupayein'
+                        }
+                        aria-label="Toggle Top Bar & Bottom Navigation"
+                      >
+                        <span>IIC×NSTA</span>
+                        <span className="text-[10px]">{(isTopBarHidden || isLandscapeUiHidden || hwImmersive) ? '👁️' : '⛶'}</span>
+                      </button>
+                    </>
                   )}
                   <span className="bg-white/20 text-white text-[11px] font-black px-2.5 py-1 rounded-full shrink-0">
                     {flatIdx + 1}/{filteredHw.length}
@@ -11587,8 +11663,9 @@ export const StudentDashboard: React.FC<Props> = ({
                       isAdmin={_isAdminUser}
                       onBadgePosChange={handleBadgePosChange}
                       hideYtLogoBlocker={settings?.hideYtLogoBlocker}
+                      onRotate={handleRotate}
                       onBrandingClick={() => {
-                        const next = !(hwImmersive || isLandscapeUiHidden);
+                        const next = !(hwImmersive || isLandscapeUiHidden || isTopBarHidden);
                         setHwImmersive(next);
                         setIsLandscapeUiHidden(next);
                         setIsTopBarHidden(next);
@@ -11987,13 +12064,33 @@ export const StudentDashboard: React.FC<Props> = ({
                         </div>
                         <div className="flex items-center gap-2 shrink-0 ml-2">
                           {hwFullscreenMedia.type === 'video' && (
-                            <button
-                              onClick={handleRotate}
-                              className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
-                              title="Screen Rotate"
-                            >
-                              <RotateCcw size={14} />
-                            </button>
+                            <>
+                              <button
+                                onClick={handleRotate}
+                                className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
+                                title="Screen Rotate"
+                              >
+                                <RotateCcw size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={toggleTopAndBottomBars}
+                                className={`h-8 px-2 flex items-center gap-1 rounded-xl border text-[11px] font-black transition-all active:scale-90 shrink-0 ${
+                                  isTopBarHidden || isLandscapeUiHidden || hwImmersive
+                                    ? 'bg-indigo-600 border-indigo-400 text-white shadow-md ring-1 ring-indigo-400/60'
+                                    : 'bg-white/15 border-white/25 text-white hover:bg-white/25'
+                                }`}
+                                title={
+                                  isTopBarHidden || isLandscapeUiHidden || hwImmersive
+                                    ? 'Top Bar aur Bottom Navigation Dikhayein'
+                                    : 'Top Bar aur Bottom Navigation Chhupayein'
+                                }
+                                aria-label="Toggle Top Bar & Bottom Navigation"
+                              >
+                                <span>IIC×NSTA</span>
+                                <span className="text-[10px]">{(isTopBarHidden || isLandscapeUiHidden || hwImmersive) ? '👁️' : '⛶'}</span>
+                              </button>
+                            </>
                           )}
                           <button
                             onClick={() => setHwFullscreenMedia(null)}
@@ -12038,7 +12135,7 @@ export const StudentDashboard: React.FC<Props> = ({
                         <div className="flex-1 relative bg-black">
                           <div style={{ position: 'absolute', inset: 0 }}>
                             {hwFullscreenMedia.url && (hwFullscreenMedia.url.includes('youtube.com') || hwFullscreenMedia.url.includes('youtu.be')) ? (
-                              <CustomPlayer videoUrl={hwFullscreenMedia.url} onBack={goBack} onBrandingClick={() => setHwImmersive(v => !v)} badgePos={settings?.iicNstaBadgePos} isAdmin={_isAdminUser} onBadgePosChange={handleBadgePosChange} badgeLabel={settings?.playerBadgeLabel} fsButtonLabel={settings?.playerFsButtonLabel} hideYtLogoBlocker={settings?.hideYtLogoBlocker} />
+                              <CustomPlayer videoUrl={hwFullscreenMedia.url} onBack={goBack} onRotate={handleRotate} onBrandingClick={() => setHwImmersive(v => !v)} badgePos={settings?.iicNstaBadgePos} isAdmin={_isAdminUser} onBadgePosChange={handleBadgePosChange} badgeLabel={settings?.playerBadgeLabel} fsButtonLabel={settings?.playerFsButtonLabel} hideYtLogoBlocker={settings?.hideYtLogoBlocker} />
                             ) : (
                               <ModernVideoPlayer
                                 videoUrl={hwFullscreenMedia.url}
@@ -18451,6 +18548,19 @@ export const StudentDashboard: React.FC<Props> = ({
           onTabChange('STORE');
         }}
       />
+      {/* Floating pill indicator to unhide Top Bar & Bottom Nav */}
+      {(isTopBarHidden || isLandscapeUiHidden) && !isFullscreenMode && !Boolean(mathViewerEntry) && (
+        <div
+          onClick={toggleTopAndBottomBars}
+          className="fixed top-2 left-1/2 -translate-x-1/2 z-[250] px-3.5 py-1.5 bg-slate-950/95 hover:bg-slate-900 border border-indigo-500/70 rounded-full flex items-center justify-center gap-2 cursor-pointer shadow-[0_0_20px_rgba(99,102,241,0.5)] backdrop-blur-md select-none active:scale-95 transition-all text-xs text-indigo-200 font-black animate-in fade-in"
+          title="Top Bar aur Bottom Navigation wapas dikhayein"
+        >
+          <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+          <span>IIC×NSTA • Top Bar Dikhayein</span>
+          <span className="text-sm text-indigo-300">▾</span>
+        </div>
+      )}
+
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
@@ -26233,6 +26343,24 @@ export const StudentDashboard: React.FC<Props> = ({
                     >
                       <RotateCcw size={14} />
                     </button>
+                    <button
+                      type="button"
+                      onClick={toggleTopAndBottomBars}
+                      className={`h-8 px-2 flex items-center gap-1 rounded-xl border text-[11px] font-black transition-all active:scale-90 shrink-0 ${
+                        isTopBarHidden || isLandscapeUiHidden || lucentImmersive
+                          ? 'bg-indigo-600 border-indigo-400 text-white shadow-md ring-1 ring-indigo-400/60'
+                          : 'bg-white/15 border-white/25 text-white hover:bg-white/25'
+                      }`}
+                      title={
+                        isTopBarHidden || isLandscapeUiHidden || lucentImmersive
+                          ? 'Top Bar aur Bottom Navigation Dikhayein'
+                          : 'Top Bar aur Bottom Navigation Chhupayein'
+                      }
+                      aria-label="Toggle Top Bar & Bottom Navigation"
+                    >
+                      <span>IIC×NSTA</span>
+                      <span className="text-[10px]">{(isTopBarHidden || isLandscapeUiHidden || lucentImmersive) ? '👁️' : '⛶'}</span>
+                    </button>
                     {/* Save Offline — directly in row 2 */}
                     <button
                       onClick={() => handleLucentSaveOffline(true)}
@@ -26332,22 +26460,62 @@ export const StudentDashboard: React.FC<Props> = ({
                       )}
                       {/* Rotate button — MCQ and Q&A tabs */}
                       {(lucentActiveTab === 'MCQS' || lucentActiveTab === 'QA') && (
-                        <button
-                          onClick={handleRotate}
-                          className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
-                          title="Screen Rotate"
-                        >
-                          <RotateCcw size={14} />
-                        </button>
+                        <>
+                          <button
+                            onClick={handleRotate}
+                            className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
+                            title="Screen Rotate"
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={toggleTopAndBottomBars}
+                            className={`h-8 px-2 flex items-center gap-1 rounded-xl border text-[11px] font-black transition-all active:scale-90 shrink-0 ${
+                              isTopBarHidden || isLandscapeUiHidden || lucentImmersive
+                                ? 'bg-indigo-600 border-indigo-400 text-white shadow-md ring-1 ring-indigo-400/60'
+                                : 'bg-white/15 border-white/25 text-white hover:bg-white/25'
+                            }`}
+                            title={
+                              isTopBarHidden || isLandscapeUiHidden || lucentImmersive
+                                ? 'Top Bar aur Bottom Navigation Dikhayein'
+                                : 'Top Bar aur Bottom Navigation Chhupayein'
+                            }
+                            aria-label="Toggle Top Bar & Bottom Navigation"
+                          >
+                            <span>IIC×NSTA</span>
+                            <span className="text-[10px]">{(isTopBarHidden || isLandscapeUiHidden || lucentImmersive) ? '👁️' : '⛶'}</span>
+                          </button>
+                        </>
                       )}
                       {lucentActiveTab === 'VIDEO' && (
-                        <button
-                          onClick={handleRotate}
-                          className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
-                          title="Screen Rotate"
-                        >
-                          <RotateCcw size={14} />
-                        </button>
+                        <>
+                          <button
+                            onClick={handleRotate}
+                            className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${isLandscape ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-300' : 'bg-white/15 border-white/25 text-white'}`}
+                            title="Screen Rotate"
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={toggleTopAndBottomBars}
+                            className={`h-8 px-2 flex items-center gap-1 rounded-xl border text-[11px] font-black transition-all active:scale-90 shrink-0 ${
+                              isTopBarHidden || isLandscapeUiHidden || lucentImmersive
+                                ? 'bg-indigo-600 border-indigo-400 text-white shadow-md ring-1 ring-indigo-400/60'
+                                : 'bg-white/15 border-white/25 text-white hover:bg-white/25'
+                            }`}
+                            title={
+                              isTopBarHidden || isLandscapeUiHidden || lucentImmersive
+                                ? 'Top Bar aur Bottom Navigation Dikhayein'
+                                : 'Top Bar aur Bottom Navigation Chhupayein'
+                            }
+                            aria-label="Toggle Top Bar & Bottom Navigation"
+                          >
+                            <span>IIC×NSTA</span>
+                            <span className="text-[10px]">{(isTopBarHidden || isLandscapeUiHidden || lucentImmersive) ? '👁️' : '⛶'}</span>
+                          </button>
+                        </>
                       )}
                       {readingProgressInfo && lucentActiveTab === 'NOTES' && (() => {
                         const _pct = readingProgressInfo.pct;
@@ -26770,7 +26938,27 @@ export const StudentDashboard: React.FC<Props> = ({
 
                   {/* VIDEO MODE */}
                   {lucentActiveTab === 'VIDEO' && (
-                    <button onClick={handleRotate} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${isLandscape ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title="Rotate"><RotateCcw size={12} /></button>
+                    <>
+                      <button onClick={handleRotate} className={`w-8 h-8 flex items-center justify-center rounded-xl border shadow-sm active:scale-95 transition-all shrink-0 ${isLandscape ? "bg-indigo-50 border-indigo-200 text-indigo-600" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`} title="Rotate"><RotateCcw size={12} /></button>
+                      <button
+                        type="button"
+                        onClick={toggleTopAndBottomBars}
+                        className={`h-8 px-2 flex items-center gap-1 rounded-xl border text-[11px] font-black transition-all active:scale-90 shrink-0 ${
+                          isTopBarHidden || isLandscapeUiHidden || lucentImmersive
+                            ? 'bg-indigo-600 border-indigo-400 text-white shadow-md ring-1 ring-indigo-400/60'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                        title={
+                          isTopBarHidden || isLandscapeUiHidden || lucentImmersive
+                            ? 'Top Bar aur Bottom Navigation Dikhayein'
+                            : 'Top Bar aur Bottom Navigation Chhupayein'
+                        }
+                        aria-label="Toggle Top Bar & Bottom Navigation"
+                      >
+                        <span>IIC×NSTA</span>
+                        <span className="text-[10px]">{(isTopBarHidden || isLandscapeUiHidden || lucentImmersive) ? '👁️' : '⛶'}</span>
+                      </button>
+                    </>
                   )}
 
                   {/* Q&A MODE — Reveal All / Hide All */}
@@ -27878,6 +28066,7 @@ RULES:
                         <CustomPlayer
                           videoUrl={vUrl}
                           onBack={closeLucentViewer}
+                          onRotate={handleRotate}
                           videoTitle={vTitle}
                           badgePos={settings?.iicNstaBadgePos}
                           badgeLabel={settings?.playerBadgeLabel}
