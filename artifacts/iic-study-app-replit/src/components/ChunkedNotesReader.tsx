@@ -237,6 +237,8 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   const wasLongPressRef = useRef(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const doubleTapTopicRef = useRef<{ text: string; time: number; timer?: any } | null>(null);
+  const lastTouchTapRef = useRef<{ text: string; time: number } | null>(null);
+  const lastDoubleTapHandledRef = useRef<number>(0);
 
   const NOTE_PAGES = useMemo(() => {
     if (!noteSections) return [] as { key: 'book' | 'smart' | 'explain'; label: string; badge?: string; badgeColor?: string; locked: boolean; text: string }[];
@@ -773,9 +775,16 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   // Stable ref so playFrom (memoised) can read the latest value without being re-created.
   const showOnlyImportantRef = useRef(false);
   useEffect(() => { showOnlyImportantRef.current = showOnlyImportant; }, [showOnlyImportant]);
+  const [, setLocalStarredVersion] = useState(0);
+  useEffect(() => {
+    const handleUpdate = () => setLocalStarredVersion(v => v + 1);
+    window.addEventListener('nst_notes_updated', handleUpdate);
+    return () => window.removeEventListener('nst_notes_updated', handleUpdate);
+  }, []);
+
   // Helper: is a given topic "important" (starred / mark2 / admin-important)?
   const isTopicImportant = useCallback((text: string) => {
-    if (isStarred) return isStarred(text);
+    if (isStarred && isStarred(text)) return true;
     if (isMarked2 && isMarked2(text)) return true;
     if (isAdminImportant && isAdminImportant(text)) return true;
     try {
@@ -2350,7 +2359,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
           }
 
           // Whole topic is a button so taps anywhere on the line start/stop TTS.
-          const starred = isStarred ? isStarred(topic.text) : false;
+          const starred = Boolean((isStarred ? isStarred(topic.text) : false) || isTopicImportant(topic.text));
           const starCount = getStarCount ? getStarCount(topic.text) : 0;
           const marked2 = isMarked2 ? isMarked2(topic.text) : false;
           const adminImportant = isAdminImportant ? isAdminImportant(topic.text) : false;
@@ -2420,7 +2429,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     }
                   }
                 }}
-                onTouchEnd={() => {
+                onTouchEnd={(e) => {
                   if (longPressTimerRef.current) {
                     clearTimeout(longPressTimerRef.current);
                     longPressTimerRef.current = null;
@@ -2428,7 +2437,42 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   if (wasLongPressRef.current) {
                     // Suppress subsequent synthetic click from touch
                     setTimeout(() => { wasLongPressRef.current = false; }, 350);
+                    return;
                   }
+                  const now = Date.now();
+                  // Reliable native touch double-tap detection for mobile devices
+                  if (
+                    lastTouchTapRef.current &&
+                    lastTouchTapRef.current.text === topic.text &&
+                    (now - lastTouchTapRef.current.time) < 480 &&
+                    (now - lastTouchTapRef.current.time) > 30
+                  ) {
+                    lastTouchTapRef.current = null;
+                    lastDoubleTapHandledRef.current = now;
+                    if (doubleTapTopicRef.current?.timer) {
+                      clearTimeout(doubleTapTopicRef.current.timer);
+                      doubleTapTopicRef.current = null;
+                    }
+                    e.preventDefault();
+                    try { if (navigator.vibrate) navigator.vibrate([35, 45, 60]); } catch {}
+                    const willBeStarred = !starred;
+                    setDoubleTapToast({
+                      visible: true,
+                      message: willBeStarred ? '★ Important Notes में सेव हो गया!' : 'Important से हटा दिया गया',
+                      isSaved: willBeStarred
+                    });
+                    setTimeout(() => {
+                      setDoubleTapToast(prev => (prev?.visible ? { ...prev, visible: false } : null));
+                    }, 1800);
+                    executeStarToggle(topic.text);
+                    return;
+                  }
+                  lastTouchTapRef.current = { text: topic.text, time: now };
+                  setTimeout(() => {
+                    if (lastTouchTapRef.current && (Date.now() - lastTouchTapRef.current.time) >= 480) {
+                      lastTouchTapRef.current = null;
+                    }
+                  }, 500);
                 }}
                 onTouchCancel={() => {
                   if (longPressTimerRef.current) {
@@ -2497,14 +2541,19 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     e.stopPropagation();
                     return;
                   }
+                  if (Date.now() - lastDoubleTapHandledRef.current < 600) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                  }
 
                   const now = Date.now();
-                  // User requirement: Point par 2 baar tap (double-tap) pe Important Save/Unsave hoga
+                  // Mouse/Desktop double-tap handling
                   if (
                     doubleTapTopicRef.current &&
                     doubleTapTopicRef.current.text === topic.text &&
-                    (now - doubleTapTopicRef.current.time) < 400 &&
-                    (now - doubleTapTopicRef.current.time) > 40
+                    (now - doubleTapTopicRef.current.time) < 480 &&
+                    (now - doubleTapTopicRef.current.time) > 30
                   ) {
                     if (doubleTapTopicRef.current.timer) {
                       clearTimeout(doubleTapTopicRef.current.timer);
@@ -2558,10 +2607,10 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   };
 
                   setTimeout(() => {
-                    if (doubleTapTopicRef.current && (Date.now() - doubleTapTopicRef.current.time) >= 400) {
+                    if (doubleTapTopicRef.current && (Date.now() - doubleTapTopicRef.current.time) >= 480) {
                       doubleTapTopicRef.current = null;
                     }
-                  }, 420);
+                  }, 500);
                 }}
                 aria-label={isActive ? 'Stop reading this line' : 'Double tap: Save/Unsave Important ⭐ | Single tap: Read'}
                 title={isActive ? 'Tap to stop' : 'डबल टैप (Double-tap): Important में Save / Unsave करें ⭐ | 1 Tap: Read'}

@@ -11885,11 +11885,13 @@ export const StudentDashboard: React.FC<Props> = ({
                           } catch {}
                         }}
                         noteKey={activeHw.id ? `hw_${activeHw.id}` : undefined}
-                        isStarred={activeHw.id ? (text) => _isAdminUser ? isTopicAdminImportant(text) : isNoteTopicStarred(`hw_${activeHw.id}`, text) : undefined}
-                        onStarToggle={activeHw.id ? (text) => _isAdminUser
-                          ? toggleAdminImportant(`hw_${activeHw.id}`, text, { kind: 'homework', hwId: activeHw.id, lessonTitle: activeHw.title, subject: activeHw.targetSubject })
-                          : toggleStarNote(`hw_${activeHw.id}`, text, { kind: 'homework', hwId: activeHw.id, lessonTitle: activeHw.title, subject: activeHw.targetSubject })
-                        : undefined}
+                        isStarred={activeHw.id ? (text) => isNoteTopicStarred(`hw_${activeHw.id}`, text) || (_isAdminUser && isTopicAdminImportant(text)) : undefined}
+                        onStarToggle={activeHw.id ? (text) => {
+                          toggleStarNote(`hw_${activeHw.id}`, text, { kind: 'homework', hwId: activeHw.id, lessonTitle: activeHw.title, subject: activeHw.targetSubject });
+                          if (_isAdminUser) {
+                            toggleAdminImportant(`hw_${activeHw.id}`, text, { kind: 'homework', hwId: activeHw.id, lessonTitle: activeHw.title, subject: activeHw.targetSubject });
+                          }
+                        } : undefined}
                         isAdminImportant={isTopicAdminImportant}
                         sourceMeta={{ lessonTitle: activeHw.title, subject: activeHw.targetSubject }}
                         readingScoreConfig={user?.id ? {
@@ -14356,7 +14358,14 @@ export const StudentDashboard: React.FC<Props> = ({
                                 ⚡ High Yield
                               </span>
                               {isCompetitionSelected && (
-                                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                <span
+                                  className="px-1.5 py-0.2 rounded-full text-[9px] font-black"
+                                  style={{
+                                    background: `${themePrimary}18`,
+                                    color: themePrimary,
+                                    border: `1px solid ${themePrimary}35`,
+                                  }}
+                                >
                                   🎯 बिहार पुलिस & BSSC
                                 </span>
                               )}
@@ -14411,28 +14420,22 @@ export const StudentDashboard: React.FC<Props> = ({
                               hapticStrong();
                               setShowPracticeSetsModal(true);
                             }}
-                            className={`w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all hover:opacity-95 active:scale-[0.99] cursor-pointer ${
-                              isCompetitionSelected
-                                ? (_isBasicUser || _isUltraUser || _isAdminUser
-                                    ? 'bg-gradient-to-r from-amber-500 via-indigo-600 to-indigo-700 text-white shadow-indigo-900/30'
-                                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-indigo-900/30')
-                                : ''
-                            }`}
-                            style={!isCompetitionSelected ? {
+                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all hover:opacity-95 active:scale-[0.99] cursor-pointer text-white"
+                            style={{
                               background: themeBtnGrad,
                               color: '#ffffff',
                               boxShadow: `0 4px 14px ${themePrimary}35`
-                            } : undefined}
+                            }}
                           >
                             <Sparkles size={14} className="shrink-0" />
                             <span>{isCompetitionSelected ? '🎯 Start Practice Set (बिहार पुलिस & BSSC)' : '🎯 Practice Sets & Leaderboard (10वीं/12वीं & All)'}</span>
                             {isCompetitionSelected && (
                               !_isBasicUser && !_isUltraUser && !_isAdminUser ? (
-                                <span className="px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-black border border-amber-500/30 shrink-0">
+                                <span className="px-1.5 py-0.2 rounded-md bg-black/25 text-amber-200 text-[10px] font-black border border-amber-400/30 shrink-0">
                                   🔒 VIP Sets
                                 </span>
                               ) : (
-                                <span className="px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-black border border-emerald-500/30 shrink-0">
+                                <span className="px-1.5 py-0.2 rounded-md bg-white/20 text-white text-[10px] font-black border border-white/25 shrink-0">
                                   ⭐ Open
                                 </span>
                               )
