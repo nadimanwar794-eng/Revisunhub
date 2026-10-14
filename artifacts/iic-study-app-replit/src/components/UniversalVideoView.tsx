@@ -3,6 +3,7 @@ import { getChapterData } from '../firebase';
 import { ArrowLeft, Play, Lock } from 'lucide-react';
 import { User, SystemSettings } from '../types';
 import { CustomPlayer } from './CustomPlayer';
+import { ModernVideoPlayer } from './ModernVideoPlayer';
 import { rotateScreen } from '../utils/displayPrefs';
 
 interface Props {
@@ -63,30 +64,45 @@ export const UniversalVideoView: React.FC<Props> = ({ user, onBack, settings, is
 
     // ── PLAYER VIEW ──
     if (activeVideo) {
+        const isYt = activeVideo.url ? (activeVideo.url.includes('youtube.com') || activeVideo.url.includes('youtu.be')) : false;
         return (
             <div
                 className="fixed inset-0 bg-black flex flex-col animate-in fade-in"
                 style={{ zIndex: 400 }}
             >
-                {/* Video fills FULL screen — controls appear only on IIC×NSTA badge tap */}
+                {/* Video fills FULL screen */}
                 <div className="flex-1 relative">
                     <div style={{ position: 'absolute', inset: 0 }}>
-                        <CustomPlayer
-                            videoUrl={activeVideo.url}
-                            onBack={closePlayer}
-                            onNext={nextVideo && canAccess(nextVideo) ? handleNext : undefined}
-                            nextTitle={nextVideo?.title}
-                            badgePos={settings?.iicNstaBadgePos}
-                            badgeLabel={settings?.playerBadgeLabel}
-                            fsButtonLabel={settings?.playerFsButtonLabel}
-                            isAdmin={isAdmin}
-                            onBadgePosChange={onBadgePosChange}
-                            videoTitle={activeVideo.title}
-                            onRotate={async () => { await rotateScreen(); }}
-                            hideYtLogoBlocker={settings?.hideYtLogoBlocker}
-                        />
+                        {isYt ? (
+                            <CustomPlayer
+                                videoUrl={activeVideo.url}
+                                onBack={closePlayer}
+                                onNext={nextVideo && canAccess(nextVideo) ? handleNext : undefined}
+                                nextTitle={nextVideo?.title}
+                                badgePos={settings?.iicNstaBadgePos}
+                                badgeLabel={settings?.playerBadgeLabel}
+                                fsButtonLabel={settings?.playerFsButtonLabel}
+                                isAdmin={isAdmin}
+                                onBadgePosChange={onBadgePosChange}
+                                videoTitle={activeVideo.title}
+                                onRotate={async () => { await rotateScreen(); }}
+                                hideYtLogoBlocker={settings?.hideYtLogoBlocker}
+                            />
+                        ) : (
+                            <ModernVideoPlayer
+                                videoUrl={activeVideo.url}
+                                title={activeVideo.title || 'Video Lecture'}
+                                mediaId={`univ_vid_${activeVideo.id || activeIndex}`}
+                                appLogo={settings?.appLogo}
+                                appName={settings?.appShortName || 'NSTA'}
+                                user={user}
+                                isAdmin={isAdmin}
+                                onBack={closePlayer}
+                                onNext={nextVideo && canAccess(nextVideo) ? handleNext : undefined}
+                                nextTitle={nextVideo?.title}
+                            />
+                        )}
                     </div>
-
                 </div>
             </div>
         );

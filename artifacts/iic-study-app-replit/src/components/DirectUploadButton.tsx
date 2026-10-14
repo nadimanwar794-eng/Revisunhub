@@ -16,12 +16,14 @@ import type { CloudinaryMediaKind } from '../services/cloudinaryService';
 
 interface DirectUploadButtonProps {
   kind: CloudinaryMediaKind;
-  onUploaded: (url: string, file: File) => void;
+  onUploaded: (url: string, file?: File) => void;
   onClear?: () => void;
   currentUrl?: string;
   label?: string;
   compact?: boolean;
   className?: string;
+  showLinkInput?: boolean;
+  linkPlaceholder?: string;
 }
 
 const ACCEPT_MAP: Record<CloudinaryMediaKind, string> = {
@@ -58,6 +60,8 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
     label,
     compact = false,
     className = '',
+    showLinkInput = true,
+    linkPlaceholder,
   } = props || {};
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -119,9 +123,17 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
   };
 
   const testUrl = currentUrl ? resolveTelegramUrl(currentUrl) : '';
+  const isYouTube = !!(currentUrl && (currentUrl.includes('youtube.com') || currentUrl.includes('youtu.be')));
+  const isTelegram = !!(
+    currentUrl &&
+    (currentUrl.includes('telegram') ||
+      currentUrl.includes('/api/telegram/') ||
+      currentUrl.includes('api.telegram.org'))
+  );
+  const isDirectVideo = !!(currentUrl && /\.(mp4|webm|mov|m4v|mkv)(\?.*)?$/i.test(currentUrl));
 
   return (
-    <div className={`inline-flex flex-col gap-1.5 ${className}`}>
+    <div className={`flex flex-col gap-1.5 w-full ${className}`}>
       <div className="flex items-center gap-1.5 flex-wrap">
         <input
           ref={fileInputRef}
@@ -182,6 +194,60 @@ export const DirectUploadButton: React.FC<DirectUploadButtonProps> = (props) => 
           </>
         )}
       </div>
+
+      {/* ── Link Input Field (YouTube / Web URL / Drive Link) ── */}
+      {showLinkInput && (
+        <div className="w-full flex items-center gap-1.5 mt-0.5">
+          <input
+            type="text"
+            value={currentUrl || ''}
+            onChange={(e) => onUploaded(e.target.value.trim())}
+            placeholder={
+              linkPlaceholder ||
+              (kind === 'video'
+                ? '🔗 YouTube video link ya URL paste karein...'
+                : kind === 'audio'
+                ? '🔗 Audio link ya URL yahan paste karein...'
+                : kind === 'pdf'
+                ? '🔗 Google Drive PDF ya document link paste karein...'
+                : '🔗 Media URL paste karein...')
+            }
+            className="flex-1 text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+          />
+          {currentUrl && (
+            <button
+              type="button"
+              onClick={() => {
+                onUploaded('');
+                if (onClear) onClear();
+              }}
+              className="text-[11px] font-bold text-red-600 hover:text-red-700 px-2 py-1 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 rounded border border-red-200 dark:border-red-800 transition-colors cursor-pointer shrink-0"
+              title="Link saaf karein"
+            >
+              ✕ Clear
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Player Detection Indicator (YouTube Player vs Modern In-App Player) ── */}
+      {kind === 'video' && currentUrl && (
+        <div className="flex items-center gap-1.5 text-[10px] font-bold mt-0.5">
+          {isYouTube ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-50 text-red-700 border border-red-200">
+              🔴 <b>YouTube Link:</b> Ye video <b>YouTube Video Player</b> me chalegi
+            </span>
+          ) : isTelegram || isDirectVideo ? (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+              ⚡ <b>Telegram / Direct Video:</b> Ye video <b>Modern NSTA Player</b> me chalegi
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200">
+              🌐 <b>Web Video Link:</b> In-App Player me chalegi
+            </span>
+          )}
+        </div>
+      )}
 
       {uploading && (
         <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden shadow-inner">

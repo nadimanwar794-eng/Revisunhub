@@ -1640,20 +1640,35 @@ export const LessonView: React.FC<Props> = ({
               <div className="fixed inset-0 z-50 bg-black flex flex-col">
                   {/* ── Modern Video Player with Watermark, Quality Selector & In-App Offline Download ── */}
                   <div className="flex-1 relative flex flex-col justify-center bg-black" onClick={e => e.stopPropagation()}>
-                    <ModernVideoPlayer
-                      videoUrl={resolvedVideoUrl}
-                      title={content.title}
-                      mediaId={`lesson_vid_${content?.id || content?.title}`}
-                      subject={chapter?.name || subject?.name}
-                      appLogo={settings?.appLogo}
-                      appName={settings?.appShortName || 'NSTA'}
-                      user={user}
-                      isAdmin={isAdmin}
-                      isFirstLesson={isFirstChapter || Boolean(content?.isSampleLesson)}
-                      onBack={handleBack}
-                      onNext={onNext}
-                      nextTitle={nextTitle}
-                    />
+                    {(resolvedVideoUrl.includes('youtube.com') || resolvedVideoUrl.includes('youtu.be')) ? (
+                      <CustomPlayer
+                        videoUrl={resolvedVideoUrl}
+                        onBack={handleBack}
+                        onNext={onNext}
+                        nextTitle={nextTitle}
+                        videoTitle={content.title}
+                        badgePos={settings?.iicNstaBadgePos}
+                        badgeLabel={settings?.playerBadgeLabel}
+                        fsButtonLabel={settings?.playerFsButtonLabel}
+                        isAdmin={isAdmin}
+                        hideYtLogoBlocker={settings?.hideYtLogoBlocker}
+                      />
+                    ) : (
+                      <ModernVideoPlayer
+                        videoUrl={resolvedVideoUrl}
+                        title={content.title}
+                        mediaId={`lesson_vid_${content?.id || content?.title}`}
+                        subject={chapter?.name || subject?.name}
+                        appLogo={settings?.appLogo}
+                        appName={settings?.appShortName || 'NSTA'}
+                        user={user}
+                        isAdmin={isAdmin}
+                        isFirstLesson={isFirstChapter || Boolean(content?.isSampleLesson)}
+                        onBack={handleBack}
+                        onNext={onNext}
+                        nextTitle={nextTitle}
+                      />
+                    )}
                   </div>
 
                   {/* ── Media score HUD ── */}

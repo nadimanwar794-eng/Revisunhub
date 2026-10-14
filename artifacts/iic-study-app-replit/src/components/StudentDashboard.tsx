@@ -11573,21 +11573,39 @@ export const StudentDashboard: React.FC<Props> = ({
             {/* VIDEO PAGE */}
             {effectiveMode === 'video' && hasVideo && (
               <div className={`flex-1 flex flex-col ${isLandscape ? 'p-0' : 'p-2 sm:p-4'} overflow-y-auto bg-black ${!isLandscape ? 'pb-[72px]' : ''}`}>
-                <ModernVideoPlayer
-                  videoUrl={activeHw.videoUrl!}
-                  title={activeHw.title || 'Homework Video'}
-                  mediaId={`hw_vid_${activeHw.id}`}
-                  subject={activeHw.targetSubject || 'Competition'}
-                  appLogo={settings?.appLogo}
-                  appName={settings?.appShortName || 'NSTA'}
-                  user={user}
-                  isAdmin={_isAdminUser}
-                  isFirstLesson={isFirstLessonOfSubject(activeHw, settings?.lucentNotes)}
-                  onBack={goBack}
-                  onNext={effectiveNextHw ? () => goToHw(effectiveNextHw) : undefined}
-                  nextTitle={effectiveNextHw?.title}
-                  onUpgradeRequired={() => onTabChange('STORE')}
-                />
+                {activeHw.videoUrl && (activeHw.videoUrl.includes('youtube.com') || activeHw.videoUrl.includes('youtu.be')) ? (
+                  <div className="flex-1 relative w-full h-full min-h-[320px]">
+                    <CustomPlayer
+                      videoUrl={activeHw.videoUrl!}
+                      onBack={goBack}
+                      onNext={effectiveNextHw ? () => goToHw(effectiveNextHw) : undefined}
+                      nextTitle={effectiveNextHw?.title}
+                      videoTitle={activeHw.title || 'Homework Video'}
+                      badgePos={settings?.iicNstaBadgePos}
+                      badgeLabel={settings?.playerBadgeLabel}
+                      fsButtonLabel={settings?.playerFsButtonLabel}
+                      isAdmin={_isAdminUser}
+                      onBadgePosChange={handleBadgePosChange}
+                      hideYtLogoBlocker={settings?.hideYtLogoBlocker}
+                    />
+                  </div>
+                ) : (
+                  <ModernVideoPlayer
+                    videoUrl={activeHw.videoUrl!}
+                    title={activeHw.title || 'Homework Video'}
+                    mediaId={`hw_vid_${activeHw.id}`}
+                    subject={activeHw.targetSubject || 'Competition'}
+                    appLogo={settings?.appLogo}
+                    appName={settings?.appShortName || 'NSTA'}
+                    user={user}
+                    isAdmin={_isAdminUser}
+                    isFirstLesson={isFirstLessonOfSubject(activeHw, settings?.lucentNotes)}
+                    onBack={goBack}
+                    onNext={effectiveNextHw ? () => goToHw(effectiveNextHw) : undefined}
+                    nextTitle={effectiveNextHw?.title}
+                    onUpgradeRequired={() => onTabChange('STORE')}
+                  />
+                )}
               </div>
             )}
 
@@ -12011,7 +12029,21 @@ export const StudentDashboard: React.FC<Props> = ({
                       ) : (
                         <div className="flex-1 relative bg-black">
                           <div style={{ position: 'absolute', inset: 0 }}>
-                            <CustomPlayer videoUrl={hwFullscreenMedia.url} onBack={goBack} onBrandingClick={() => setHwImmersive(v => !v)} badgePos={settings?.iicNstaBadgePos} isAdmin={_isAdminUser} onBadgePosChange={handleBadgePosChange} badgeLabel={settings?.playerBadgeLabel} fsButtonLabel={settings?.playerFsButtonLabel} hideYtLogoBlocker={settings?.hideYtLogoBlocker} />
+                            {hwFullscreenMedia.url && (hwFullscreenMedia.url.includes('youtube.com') || hwFullscreenMedia.url.includes('youtu.be')) ? (
+                              <CustomPlayer videoUrl={hwFullscreenMedia.url} onBack={goBack} onBrandingClick={() => setHwImmersive(v => !v)} badgePos={settings?.iicNstaBadgePos} isAdmin={_isAdminUser} onBadgePosChange={handleBadgePosChange} badgeLabel={settings?.playerBadgeLabel} fsButtonLabel={settings?.playerFsButtonLabel} hideYtLogoBlocker={settings?.hideYtLogoBlocker} />
+                            ) : (
+                              <ModernVideoPlayer
+                                videoUrl={hwFullscreenMedia.url}
+                                title={hwFullscreenMedia.title || 'Video Lecture'}
+                                mediaId={`hw_fs_${activeHw?.id || 'vid'}`}
+                                subject={activeHw?.targetSubject || 'Study Video'}
+                                appLogo={settings?.appLogo}
+                                appName={settings?.appShortName || 'NSTA'}
+                                user={user}
+                                isAdmin={_isAdminUser}
+                                onBack={goBack}
+                              />
+                            )}
                           </div>
                         </div>
                       )}
@@ -27828,18 +27860,38 @@ RULES:
             {lucentActiveTab === 'VIDEO' && (
               <div className={`flex-1 flex flex-col ${isLandscape ? 'p-0' : 'p-2 sm:p-4'} overflow-y-auto bg-black`}>
                 {((currentPage as any)?.videoUrl || entry.videoUrl) ? (
-                  <ModernVideoPlayer
-                    videoUrl={(currentPage as any)?.videoUrl || entry.videoUrl}
-                    title={currentPage?.topicName || entry.lessonTitle || `Page ${currentPage?.pageNo}`}
-                    mediaId={`lucent_vid_${currentPage?.id || entry.id}_${currentPage?.pageNo || 'all'}`}
-                    subject={selectedSubject?.name || 'Study Page'}
-                    appLogo={settings?.appLogo}
-                    appName={settings?.appShortName || 'NSTA'}
-                    user={user}
-                    isAdmin={_isAdminUser}
-                    onBack={closeLucentViewer}
-                    onUpgradeRequired={() => onTabChange('STORE')}
-                  />
+                  (() => {
+                    const vUrl = (((currentPage as any)?.videoUrl || entry.videoUrl) as string) || '';
+                    const isYt = vUrl.includes('youtube.com') || vUrl.includes('youtu.be');
+                    const vTitle = currentPage?.topicName || entry.lessonTitle || `Page ${currentPage?.pageNo}`;
+                    return isYt ? (
+                      <div className="flex-1 relative w-full h-full min-h-[320px]">
+                        <CustomPlayer
+                          videoUrl={vUrl}
+                          onBack={closeLucentViewer}
+                          videoTitle={vTitle}
+                          badgePos={settings?.iicNstaBadgePos}
+                          badgeLabel={settings?.playerBadgeLabel}
+                          fsButtonLabel={settings?.playerFsButtonLabel}
+                          isAdmin={_isAdminUser}
+                          hideYtLogoBlocker={settings?.hideYtLogoBlocker}
+                        />
+                      </div>
+                    ) : (
+                      <ModernVideoPlayer
+                        videoUrl={vUrl}
+                        title={vTitle}
+                        mediaId={`lucent_vid_${currentPage?.id || entry.id}_${currentPage?.pageNo || 'all'}`}
+                        subject={selectedSubject?.name || 'Study Page'}
+                        appLogo={settings?.appLogo}
+                        appName={settings?.appShortName || 'NSTA'}
+                        user={user}
+                        isAdmin={_isAdminUser}
+                        onBack={closeLucentViewer}
+                        onUpgradeRequired={() => onTabChange('STORE')}
+                      />
+                    );
+                  })()
                 ) : (
                   <div className="w-full max-w-md mx-auto my-auto p-6 bg-slate-900/90 border border-slate-800 rounded-2xl text-center space-y-3 text-white">
                     <div className="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto text-2xl">
