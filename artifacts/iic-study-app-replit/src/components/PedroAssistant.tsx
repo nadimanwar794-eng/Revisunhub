@@ -3667,26 +3667,6 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
     }
   };
 
-  // Double tap backup for mouse double clicks
-  const handleDoubleTapCheck = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const now = Date.now();
-    if (now - lastTapRef.current < 380) {
-      if (singleTapTimerRef.current) {
-        clearTimeout(singleTapTimerRef.current);
-        singleTapTimerRef.current = null;
-      }
-      setIsHidden(true);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('nst_pedro_hidden', 'true');
-        window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: true } }));
-        playSoftChime();
-        pedroSpeak('Pedro paused.', { rate: 1.2, showBubble: false });
-      }
-    }
-    lastTapRef.current = now;
-  };
-
   if (isHidden && authWelcomePhase === 'none') {
     return null;
   }
@@ -3723,7 +3703,6 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onClick={handleDoubleTapCheck}
         className={`group cursor-grab active:cursor-grabbing select-none ${
           isDragging ? 'scale-110 opacity-90' : 'hover:scale-105 active:scale-95'
         }`}

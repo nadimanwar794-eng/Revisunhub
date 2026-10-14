@@ -150,7 +150,6 @@ try {
 } catch (e) {
   console.error('[Firebase] getAuth failed:', e);
 }
-
 export const VAPID_KEY = 'BIZ9FrX99-hm4cM6pgBIKqZPevNkrVNM0AliLpTPbSr23eX4Vw_DGyC2GMLyJqTbogbuTseW5suFRWE6qQzbrL0';
 
 let _messagingInstance: any = null;

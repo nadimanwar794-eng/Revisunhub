@@ -618,7 +618,7 @@ export const ALL_FEATURES: Feature[] = [
     },
     {
         id: 'ADMIN_COMPETITION_MCQ',
-        label: 'MCQ Practice Sets',
+        label: 'प्रैक्टिस सेट (बिहार पुलिस & BSSC)',
         group: 'CONTENT',
         surfaceLevel: 3,
         adminVisible: true,
@@ -626,7 +626,7 @@ export const ALL_FEATURES: Feature[] = [
         requiredPermission: 'MANAGE_CONTENT',
         icon: 'CheckSquare',
         color: 'violet',
-        description: 'Competition Books → MCQ Practice ke liye MCQ sets add karein.'
+        description: 'बिहार पुलिस, BSSC व BSEB बोर्ड के 60m/120m प्रैक्टिस सेट्स व क्वेश्चन बैंक बनाएं व मैनेज करें।'
     },
     {
         id: 'ADMIN_CLASS_NOTES',

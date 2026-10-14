@@ -500,6 +500,18 @@ export const AdminClassMcqManager: React.FC<Props> = ({ settings, onSave }) => {
       <button onClick={goBack} className="flex items-center gap-1 text-xs text-indigo-600 font-bold mb-3">
         <ArrowLeft size={14} /> Back to Classes
       </button>
+
+      {(selectedClass === '10' || selectedClass === '12') && (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-300 text-xs space-y-1.5 mb-3 shadow-xs">
+          <div className="font-black text-emerald-800 flex items-center gap-1.5">
+            <span>⚡ ऑटो-प्रैक्टिस सेट व साप्ताहिक लीडरबोर्ड (Automated Sets & Ranking)</span>
+          </div>
+          <p className="text-[11px] text-slate-700 leading-relaxed">
+            कक्षा {selectedClass} में सेट्स मैन्युअल बनाने की आवश्यकता नहीं है। आप सिर्फ विषय में प्रश्न जोड़ते जाएं—सिस्टम 25-25 प्रश्नों के <strong>सेट 1, सेट 2, सेट 3...</strong> अपने-आप तैयार कर देता है। <strong>सभी छात्रों का सेट 1 बिल्कुल समान रहेगा</strong> और हर सेट का <strong>साप्ताहिक लीडरबोर्ड</strong> प्रत्येक हफ्ते रविवार को अपडेट होता रहेगा!
+          </p>
+        </div>
+      )}
+
       <p className="text-xs font-bold text-slate-500 uppercase mb-2">Class {selectedClass} — Subject Choose Karein</p>
       {subjectsList.map(sub => {
         const cnt = lessonCountForSubject(selectedClass!, sub);

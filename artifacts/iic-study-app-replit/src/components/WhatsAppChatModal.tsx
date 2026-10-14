@@ -523,7 +523,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       selectedContact?.email,
       selectedContact?.displayId,
       selectedContact?.mobile,
-    ].filter((value): value is string => Boolean(value && value.trim())))),
+    ]
+      .filter((value) => value !== null && value !== undefined && String(value).trim().length > 0)
+      .map(String))),
     [
       selectedContact?.id,
       selectedContact?.uid,
@@ -538,7 +540,9 @@ export const WhatsAppChatModal: React.FC<Props> = ({
       selectedContact?.uid,
       selectedContact?.displayId,
       selectedContact?.mobile,
-    ].filter((value): value is string => Boolean(value && value.trim())))),
+    ]
+      .filter((value) => value !== null && value !== undefined && String(value).trim().length > 0)
+      .map(String))),
     [
       selectedContact?.id,
       selectedContact?.uid,

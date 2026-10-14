@@ -28,6 +28,7 @@ import {
   ChevronLeft,
   LayoutGrid,
   Smartphone,
+  User,
   UserCheck,
   Minimize2,
   Compass,
@@ -62,6 +63,50 @@ const FaWhatsapp = ({ size = 14, className = "" }: { size?: number; className?: 
     <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
   </svg>
 );
+
+const StudyRoomSetupProgress = ({ currentStep }: { currentStep: 1 | 2 | 3 }) => {
+  const steps = ['Room', 'Question set', 'Launch'];
+
+  return (
+    <div
+      className="grid grid-cols-3 gap-2 rounded-2xl border border-slate-700/80 bg-slate-950/70 p-3"
+      aria-label={`Study Room setup: step ${currentStep} of 3`}
+    >
+      {steps.map((label, index) => {
+        const step = index + 1;
+        const isComplete = step < currentStep;
+        const isCurrent = step === currentStep;
+
+        return (
+          <div
+            key={label}
+            className={`flex min-w-0 items-center gap-2 rounded-xl px-2 py-2 ${
+              isCurrent
+                ? 'bg-indigo-500/15 text-white ring-1 ring-indigo-400/40'
+                : isComplete
+                ? 'text-emerald-300'
+                : 'text-slate-500'
+            }`}
+          >
+            <span
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[10px] font-black ${
+                isCurrent
+                  ? 'border-indigo-300 bg-indigo-500 text-white'
+                  : isComplete
+                  ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-300'
+                  : 'border-slate-700 bg-slate-900 text-slate-500'
+              }`}
+            >
+              {isComplete ? <CheckCircle2 size={13} /> : `0${step}`}
+            </span>
+            <span className="truncate text-[10px] font-bold sm:text-[11px]">{label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 import {
   type GroupStudyRoom,
   type GroupStudyMember,
@@ -103,6 +148,7 @@ import {
   awardRoomStudyXp,
   syncMemberLiveStats,
   formatDayHourMinSec,
+  updateMemberDisplayName,
 } from '../services/groupStudyService';
 import { getLevelFromScore } from '../utils/levelSystem';
 import { rotateScreen } from '../utils/displayPrefs';
@@ -111,7 +157,8 @@ import { STATIC_SYLLABUS, ADMIN_EMAIL, LUCENT_SUBJECT_OPTIONS_BASE, getLucentSub
 import { parseMCQText, extractStatements } from '../utils/mcqParser';
 import { parseMcqQuestion } from '../utils/mcqRender';
 import { type MCQResult } from '../types';
-import { notifyStudyRoomInviteInBackground } from './NotificationManager';
+import { notifyStudyRoomInviteInBackground, notifyStudyRoomChallengeInBackground } from './NotificationManager';
+import { MarksheetCard } from './MarksheetCard';
 
 // Normalize any raw MCQ question to GroupStudyMcqQuestion format
 function parseQuestionToGroupMcq(q: any): GroupStudyMcqQuestion | null {
@@ -176,6 +223,9 @@ function parseQuestionToGroupMcq(q: any): GroupStudyMcqQuestion | null {
     options: rawOptions.slice(0, 4),
     correctIndex,
     explanation: q.explanation ? String(q.explanation).trim() : '',
+    topic: String(q.topic || q.chapterTitle || q.chapter || q.subtopic || '').trim(),
+    chapterTitle: String(q.chapterTitle || q.chapter || '').trim(),
+    subject: String(q.subject || '').trim(),
   };
 }
 
@@ -369,11 +419,15 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'MCQ' | 'LEADERBOARD' | 'MEMBERS' | 'CHAT'>('MCQ');
 
-  // ── Password Protection State for Joining ─────────────────────────────────
+  // ── Password Protection & Optional Name on Entry State ───────────────────
   const [passwordModalRoom, setPasswordModalRoom] = useState<GroupStudyRoom | null>(null);
   const [enteredPassword, setEnteredPassword] = useState<string>('');
   const [passwordError, setPasswordError] = useState<string>('');
   const [showPasswordText, setShowPasswordText] = useState<boolean>(false);
+  const [entryCustomName, setEntryCustomName] = useState<string>('');
+  const [joinNameInput, setJoinNameInput] = useState<string>('');
+  const [showChangeNameModal, setShowChangeNameModal] = useState<boolean>(false);
+  const [changeNameInputValue, setChangeNameInputValue] = useState<string>('');
 
   // ── Create Room Form State ────────────────────────────────────────────────
   const [newRoomName, setNewRoomName] = useState<string>('');
@@ -384,6 +438,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [newRoomDurationMinutes, setNewRoomDurationMinutes] = useState<number>(maxDurationMinutesAllowed);
   const [newRoomMaxMembers, setNewRoomMaxMembers] = useState<number>(30);
   const [showRulesGuideModal, setShowRulesGuideModal] = useState<boolean>(false);
+  // ── Room Setup Drawers (Compact Drawer System: Assessment Mode, Section, Class, Competition Book, Lessons, Duration, Question Limits) ──
+  const [activeSetupDrawer, setActiveSetupDrawer] = useState<'ASSESSMENT_MODE' | 'SECTION' | 'CLASS' | 'COMPETITION_BOOK' | 'LESSONS' | 'DURATION' | 'QUESTION_LIMITS' | null>(null);
   const [isScheduleMode, setIsScheduleMode] = useState<boolean>(false);
   const [scheduledDate, setScheduledDate] = useState<string>(() => {
     const d = new Date();
@@ -436,6 +492,11 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [selectedOption, setSelectedOption] = useState<number | null>(null);
   const [hasAnsweredCurrentQ, setHasAnsweredCurrentQ] = useState<boolean>(false);
   const [mcqSecondsLeft, setMcqSecondsLeft] = useState<number>(20);
+  const questionTimerRef = useRef<{ key: string; startedAt: number; sourceStart: number }>({
+    key: '',
+    startedAt: 0,
+    sourceStart: 0,
+  });
   const [selectedCuratedSet, setSelectedCuratedSet] = useState<string>('');
   const [lastXpOutcome, setLastXpOutcome] = useState<McqAnswerOutcome | null>(null);
   const [showXpBanner, setShowXpBanner] = useState<boolean>(false);
@@ -445,7 +506,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [showLiveAnswersSheet, setShowLiveAnswersSheet] = useState<boolean>(false);
 
   // ── Advanced Exam Timer & Pacing Modes ─────────────────────────────────────
-  const [testTimerMode, setTestTimerMode] = useState<'PER_QUESTION' | 'TOTAL_TEST' | 'MIX'>('PER_QUESTION');
+  // Default to MIX mode (Self-paced test with Question Grid and alerts)
+  const [testTimerMode, setTestTimerMode] = useState<'PER_QUESTION' | 'TOTAL_TEST' | 'MIX'>('MIX');
   const [totalTestMinutes, setTotalTestMinutes] = useState<number>(15);
   const [mixPaceSeconds, setMixPaceSeconds] = useState<number>(20);
   const [mixVibrateAlert, setMixVibrateAlert] = useState<boolean>(true);
@@ -456,8 +518,35 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [showQuestionPalette, setShowQuestionPalette] = useState<boolean>(false);
   const [hasStudentSubmittedEarly, setHasStudentSubmittedEarly] = useState<boolean>(false);
   const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [lobbyActionTab, setLobbyActionTab] = useState<'LAUNCH' | 'SCHEDULE'>('LAUNCH');
   const [isSchedulingTest, setIsSchedulingTest] = useState<boolean>(false);
+
+  // ── Student-controlled Ideal Question Pace & Vibration Alert ────────────────
+  const [userPaceSeconds, setUserPaceSeconds] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('study_user_pace_seconds');
+      if (saved) {
+        const val = parseInt(saved, 10);
+        if (Number.isFinite(val) && val >= 5 && val <= 300) return val;
+      }
+    } catch {}
+    return 20;
+  });
+
+  const [userVibrateAlert, setUserVibrateAlert] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('study_user_vibrate_alert');
+      if (saved !== null) return saved === 'true';
+    } catch {}
+    return true; // Default ON: Phone vibrates when pace alert triggers
+  });
+
+  const [showPaceSettingsModal, setShowPaceSettingsModal] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (showSubmitConfirmModal) setSubmitError(null);
+  }, [showSubmitConfirmModal]);
 
   // ── Staggered Batch Submission State (Zero Continuous RTDB Writes during questions) ──
   const [localBattleStats, setLocalBattleStats] = useState<{
@@ -519,6 +608,37 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
   const [showHostNextPicker, setShowHostNextPicker] = useState<boolean>(false);
   const [reviewFilter, setReviewFilter] = useState<'ALL' | 'CORRECT' | 'WRONG' | 'UNANSWERED'>('ALL');
   const savedSessionsRef = useRef<Set<string>>(new Set());
+  const battleSessionKeyRef = useRef('');
+
+  const battleSessionKey = currentRoom?.id && currentRoom.liveMcq?.testStartTime
+    ? `${currentRoom.id}:${currentRoom.liveMcq.testStartTime}`
+    : '';
+
+  // A room can host multiple battles. Do not carry a previous battle's score
+  // or submitted state into the next lesson launched in the same room.
+  useEffect(() => {
+    if (!battleSessionKey || battleSessionKeyRef.current === battleSessionKey) return;
+    battleSessionKeyRef.current = battleSessionKey;
+    setLocalBattleStats({
+      score: 0,
+      correctCount: 0,
+      wrongCount: 0,
+      totalAnswered: 0,
+      currentStreak: 0,
+      maxStreak: 0,
+      userXp: 0,
+      streakBonusXp: 0,
+      answers: {},
+    });
+    setHasBatchSubmitted(false);
+    setIsSubmittingBatch(false);
+    setBatchSyncSecondsRemaining(0);
+    setHasStudentSubmittedEarly(false);
+    setStudentActiveQIndex(0);
+    setSelectedOption(null);
+    setHasAnsweredCurrentQ(false);
+    setShowQuestionPalette(false);
+  }, [battleSessionKey]);
 
   // Is an MCQ actively being answered or revealed right now?
   const isMcqRunning = Boolean(
@@ -546,6 +666,9 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     description: string;
     targetTier: 'BASIC' | 'ULTRA';
   } | null>(null);
+  const [showDetailedMarksheet, setShowDetailedMarksheet] = useState<boolean>(false);
+  const [currentExamResult, setCurrentExamResult] = useState<MCQResult | null>(null);
+  const [topicFilterTab, setTopicFilterTab] = useState<'ALL' | 'WEAK' | 'STRONG'>('ALL');
   const [battleCategory, setBattleCategory] = useState<'ALL' | 'NOTES' | 'HOMEWORK'>('ALL');
   const [battleSearch, setBattleSearch] = useState<string>('');
   const [showChapterChooser, setShowChapterChooser] = useState<boolean>(false);
@@ -654,7 +777,14 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       const cleanQs: GroupStudyMcqQuestion[] = [];
       for (const q of rawQs) {
         const parsed = parseQuestionToGroupMcq(q);
-        if (parsed) cleanQs.push(parsed);
+        if (parsed) {
+          cleanQs.push({
+            ...parsed,
+            topic: parsed.topic || (q as any).topic || title,
+            chapterTitle: parsed.chapterTitle || (q as any).chapterTitle || title,
+            subject: parsed.subject || l.subject || 'General',
+          });
+        }
       }
 
       if (cleanQs.length === 0) return; // Only include if it actually has MCQs!
@@ -725,7 +855,13 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
                 for (const q of page[qKey]) {
                   const parsed = parseQuestionToGroupMcq(q);
                   if (parsed) {
-                    cleanQs.push(parsed);
+                    const pageTopic = (page as any).topicName || (page as any).topic || (page as any).title || title;
+                    cleanQs.push({
+                      ...parsed,
+                      topic: parsed.topic || pageTopic,
+                      chapterTitle: parsed.chapterTitle || title,
+                      subject: parsed.subject || n.subject || 'General',
+                    });
                     found = true;
                   }
                 }
@@ -737,7 +873,15 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
                 if (parsed && Array.isArray(parsed.questions)) {
                   for (const q of parsed.questions) {
                     const pq = parseQuestionToGroupMcq(q);
-                    if (pq) cleanQs.push(pq);
+                    if (pq) {
+                      const pageTopic = (page as any).topicName || (page as any).topic || (page as any).title || title;
+                      cleanQs.push({
+                        ...pq,
+                        topic: pq.topic || pageTopic,
+                        chapterTitle: pq.chapterTitle || title,
+                        subject: pq.subject || n.subject || 'General',
+                      });
+                    }
                   }
                 }
               } catch (_) {}
@@ -998,7 +1142,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     }> = [];
 
     const isSubjectAllowed = (subj: string) => {
-      if (isBasicUser && battleSubjects && battleSubjects.length > 0) {
+      if (currentRoom?.mcqType !== 'REVISION_HUB' && battleSubjects && battleSubjects.length > 0) {
         if (battleSubjects.includes('ALL')) return true;
         return battleSubjects.includes(subj);
       }
@@ -1455,7 +1599,10 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         return;
       }
       setCurrentRoom((prev) => {
-        if (prev?.id === room.id && prev.liveMcq?.isActive && (!room.liveMcq || !room.liveMcq.isActive)) {
+        // Keep the last good MCQ only if a snapshot briefly omits that branch.
+        // A real isActive=false snapshot is how ENDED/WAITING reaches members;
+        // preserving the previous active state here hid final results for them.
+        if (prev?.id === room.id && prev.liveMcq?.isActive && !room.liveMcq) {
           return {
             ...room,
             mode: 'LIVE_MCQ',
@@ -1596,7 +1743,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
               const next = Math.max(0, prev - 1);
               if (next === 0 && !hasPaceAlertTriggered) {
                 setHasPaceAlertTriggered(true);
-                if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                if (userVibrateAlert && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
                   try {
                     navigator.vibrate([150, 70, 150]);
                   } catch {}
@@ -1607,17 +1754,44 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           }
         } else {
           // Standard Per-Question countdown
-          if (liveMcq.questionStartTime) {
-            const elapsedSec = Math.floor((now - liveMcq.questionStartTime) / 1000);
-            const duration = liveMcq.durationPerQuestion || 20;
-            const remaining = Math.max(0, duration - elapsedSec);
-            setMcqSecondsLeft(remaining);
+          const rawStart = liveMcq.questionStartTime as unknown;
+          const sourceStart = typeof rawStart === 'number'
+            ? rawStart
+            : typeof rawStart === 'string'
+              ? (Number.isFinite(Number(rawStart)) ? Number(rawStart) : Date.parse(rawStart))
+              : 0;
+          const validSourceStart = Number.isFinite(sourceStart) && sourceStart > 0 ? sourceStart : 0;
+          const questionKey = `${currentRoom.id}:${liveMcq.currentQuestionIndex ?? 0}`;
+          const previousTimer = questionTimerRef.current;
 
-            // Auto-reveal exactly when selected timer expires (0s) - Host or Elected Runner
-            if (isElectedRunner && remaining <= 0 && liveMcq.status === 'QUESTION') {
-              handleRevealAnswer();
-              return;
-            }
+          if (previousTimer.key !== questionKey) {
+            // Prefer the room's synchronized start time, but don't carry an old
+            // question's timestamp forward if a room snapshot arrives out of order.
+            const sourceWasRefreshed = validSourceStart > 0 && validSourceStart !== previousTimer.sourceStart;
+            questionTimerRef.current = {
+              key: questionKey,
+              startedAt: sourceWasRefreshed || !previousTimer.key ? (validSourceStart || now) : now,
+              sourceStart: validSourceStart,
+            };
+            setMcqSecondsLeft(liveMcq.durationPerQuestion || 20);
+          } else if (validSourceStart > questionTimerRef.current.startedAt) {
+            // A later synchronized timestamp for this same question wins.
+            questionTimerRef.current = {
+              ...questionTimerRef.current,
+              startedAt: validSourceStart,
+              sourceStart: validSourceStart,
+            };
+          }
+
+          const duration = liveMcq.durationPerQuestion || 20;
+          const elapsedSec = Math.floor((now - questionTimerRef.current.startedAt) / 1000);
+          const remaining = Math.max(0, duration - elapsedSec);
+          setMcqSecondsLeft(remaining);
+
+          // Auto-reveal exactly when selected timer expires (0s) - Host or Elected Runner
+          if (isElectedRunner && remaining <= 0 && liveMcq.status === 'QUESTION') {
+            handleRevealAnswer();
+            return;
           }
         }
       };
@@ -1631,6 +1805,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     };
   }, [
     currentRoom?.liveMcq?.status,
+    currentRoom?.id,
+    currentRoom?.liveMcq?.currentQuestionIndex,
     currentRoom?.liveMcq?.questionStartTime,
     currentRoom?.liveMcq?.durationPerQuestion,
     currentRoom?.liveMcq?.timerMode,
@@ -1638,6 +1814,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     currentRoom?.liveMcq?.testStartTime,
     isElectedRunner,
     hasPaceAlertTriggered,
+    userVibrateAlert,
   ]);
 
   // ── Auto-advance Countdown during REVEAL ──
@@ -1899,7 +2076,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     const durationPerQ = liveMcq.durationPerQuestion || 20;
 
     const userAnswersRecord: Record<number, number> = {};
-    const wrongQuestionsList: any[] = [];
+    const topicAnalysisMap: Record<string, { correct: number; total: number; percentage: number }> = {};
+    const omrDataList: any[] = [];
 
     questions.forEach((q, qIndex) => {
       const localAns = localBattleStats.answers?.[qIndex];
@@ -1909,7 +2087,16 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         : (qAns?.selectedOption !== undefined ? qAns.selectedOption : -1);
       userAnswersRecord[qIndex] = selected;
 
-      if (selected !== -1 && selected !== q.correctIndex) {
+      const topicKey = (q as any).topic || (q as any).chapterTitle || currentRoom.subject || 'General';
+      if (!topicAnalysisMap[topicKey]) {
+        topicAnalysisMap[topicKey] = { correct: 0, total: 0, percentage: 0 };
+      }
+      topicAnalysisMap[topicKey].total++;
+
+      const isAnsCorrect = selected === q.correctIndex;
+      if (isAnsCorrect) {
+        topicAnalysisMap[topicKey].correct++;
+      } else if (selected !== -1) {
         wrongQuestionsList.push({
           question: q.question,
           statements: q.statements,
@@ -1918,6 +2105,18 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
           explanation: q.explanation || '',
         });
       }
+
+      omrDataList.push({
+        qIndex,
+        selected,
+        correct: q.correctIndex,
+        timeSpent: localAns?.timeTakenSec || 0,
+      });
+    });
+
+    Object.keys(topicAnalysisMap).forEach((tKey) => {
+      const item = topicAnalysisMap[tKey];
+      item.percentage = item.total > 0 ? Math.round((item.correct / item.total) * 100) : 0;
     });
 
     const groupStudyResult: MCQResult = {
@@ -1938,6 +2137,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
       performanceTag: accuracy >= 80 ? 'EXCELLENT' : accuracy >= 50 ? 'GOOD' : 'BAD',
       userAnswers: userAnswersRecord,
       wrongQuestions: wrongQuestionsList,
+      topicAnalysis: topicAnalysisMap,
+      omrData: omrDataList,
       questions: questions.map((q, qIndex) => ({
         id: q.id || `q_${qIndex}`,
         question: q.question,
@@ -1947,6 +2148,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         explanation: q.explanation || '',
       })),
     };
+
+    setCurrentExamResult(groupStudyResult);
 
     // 1. Save to local storage for immediate HistoryPage access
     try {
@@ -2165,14 +2368,19 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     }
   };
 
-  // ── Action Handlers: Join Room with Password Prompt ───────────────────────
+  // ── Action Handlers: Join Room with Password Prompt & Optional Name ─────────
   const handleInitiateJoin = (room: GroupStudyRoom) => {
     // Only the verified room creator can enter without entering the password
     const currentUid = auth.currentUser?.uid || user?.id;
     const isCreator = Boolean(currentUid && room.hostId && currentUid === room.hostId);
 
+    // Initialize entry custom name with user's name or saved custom name
+    if (!entryCustomName) {
+      setEntryCustomName(user?.name || '');
+    }
+
     if (isCreator) {
-      handleJoinRoom(room);
+      handleJoinRoom(room, entryCustomName);
       return;
     }
 
@@ -2186,12 +2394,14 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     e.preventDefault();
     if (!passwordModalRoom) return;
 
+    const chosenName = entryCustomName.trim() || user?.name || 'Student';
+
     const hasPassword = Boolean(passwordModalRoom.password && passwordModalRoom.password.trim().length > 0);
     if (!hasPassword) {
       // Password-free public room: confirm and join directly
       const roomToJoin = passwordModalRoom;
       setPasswordModalRoom(null);
-      await handleJoinRoom(roomToJoin);
+      await handleJoinRoom(roomToJoin, chosenName);
       return;
     }
 
@@ -2207,13 +2417,13 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     if (typedPassword === correctPassword) {
       const roomToJoin = passwordModalRoom;
       setPasswordModalRoom(null);
-      await handleJoinRoom(roomToJoin);
+      await handleJoinRoom(roomToJoin, chosenName);
     } else {
       setPasswordError('Galat Password! Kripya Host se sahi room password maangein.');
     }
   };
 
-  const handleJoinRoom = async (room: GroupStudyRoom) => {
+  const handleJoinRoom = async (room: GroupStudyRoom, customName?: string) => {
     setIsLoading(true);
     // Cache immediately so any background listener finds it locally
     saveCachedRoom(room);
@@ -2224,10 +2434,15 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     try {
       const userXp = Number(user?.totalScore ?? (user as any)?.xp ?? 0);
       const userLevel = Number(getLevelFromScore(userXp));
+      const effectiveName = (customName && customName.trim()) 
+        || entryCustomName.trim() 
+        || user?.name 
+        || auth.currentUser?.displayName 
+        || 'Student';
 
       await joinGroupRoom(room.id, {
         id: user?.id || auth.currentUser?.uid || 'guest',
-        name: user?.name || auth.currentUser?.displayName || 'Student',
+        name: effectiveName,
         photoURL: user?.photoURL || auth.currentUser?.photoURL || '',
         level: userLevel,
         xp: userXp,
@@ -2269,6 +2484,8 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         return;
       }
 
+      const effectiveName = joinNameInput.trim() || entryCustomName.trim() || user?.name || 'Student';
+
       // Check if user has already entered a password in the join form
       const typedPass = joinPasswordInput.trim().toLowerCase();
       const actualPass = (found.password?.trim() || found.code?.trim() || '').toLowerCase();
@@ -2279,12 +2496,16 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
         // Direct password match or creator: Join immediately!
         setJoinCodeInput('');
         setJoinPasswordInput('');
+        setJoinNameInput('');
         setJoinCodeError('');
-        await handleJoinRoom(found);
+        await handleJoinRoom(found, effectiveName);
       } else if (typedPass && typedPass !== actualPass) {
         setJoinCodeError('Galat Password! Kripya sahi room password enter karein.');
       } else {
         // No password typed in the form: open the password prompt modal
+        if (joinNameInput.trim()) {
+          setEntryCustomName(joinNameInput.trim());
+        }
         handleInitiateJoin(found);
       }
     } catch (err: any) {
@@ -2428,19 +2649,20 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     if (!room || sendingInviteNotif) return;
     setSendingInviteNotif(true);
     try {
-      const roomClass = String(room.hostSync?.selectedClass || (room as any).classLevel || user?.classLevel || '10').trim();
-      await notifyStudyRoomInviteInBackground({
+      const challengeTitle = room.liveMcq?.title || room.name || 'Practice Challenge';
+      const qCount = room.liveMcq?.totalQuestions || room.preloadedQuestions?.length || 0;
+      await notifyStudyRoomChallengeInBackground({
         senderId: user?.id || 'host',
-        senderName: user?.name || 'Classmate',
-        roomName: room.name || 'Group Study Room',
+        senderName: user?.name || 'Study Room',
+        challengeTitle,
         roomId: room.id,
         roomCode: (room.code || room.id?.slice(-6) || 'STUDY1').toUpperCase(),
         password: room.password || '',
-        classLevel: roomClass,
+        totalQuestions: qCount > 0 ? qCount : undefined,
       });
       setInviteNotifSent(true);
       setTimeout(() => setInviteNotifSent(false), 5000);
-      alert(`📢 Push Notification Sent!\nClass ${roomClass} ke sabhi students ko direct notification bhej diya gaya hai.\nRoom ID: ${(room.code || room.id?.slice(-6)).toUpperCase()} aur Password notification me chala gaya hai!`);
+      alert(`📢 Push Notification Sent!\nSabhi students ko Study Room Challenge notification bhej diya gaya hai (Kisi bhi class ke students jud sakte hain).\nRoom ID: ${(room.code || room.id?.slice(-6)).toUpperCase()} notification me bhej di gayi hai!`);
     } catch (err) {
       console.warn('Invite notification error:', err);
     } finally {
@@ -2465,13 +2687,15 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     setChatMessage('');
   };
 
-  // ── Subject & Lesson Selection Helpers (Free vs Basic vs Ultra) ─────────
+  // ── Subject & Lesson Selection Helpers (MCQ vs MCQ+) ─────────
   const handleToggleBattleSubject = (subj: string) => {
-    if (!isBasicUser) {
+    // In MCQ+ (REVISION_HUB), user selects only 1 subject
+    if (currentRoom?.mcqType === 'REVISION_HUB') {
       setBattleSubject(subj);
       setBattleSubjects([subj]);
       return;
     }
+    // In standard MCQ, all users can choose multiple subjects
     if (subj === 'ALL') {
       setBattleSubject('ALL');
       setBattleSubjects(['ALL']);
@@ -2495,21 +2719,26 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
   };
 
   const isBattleSubjectActive = (subj: string) => {
+    if (currentRoom?.mcqType === 'REVISION_HUB') {
+      return battleSubject === subj;
+    }
     if (subj === 'ALL') {
       return battleSubjects.includes('ALL') || battleSubject === 'ALL';
     }
-    if (isBasicUser && battleSubjects && battleSubjects.length > 0 && !battleSubjects.includes('ALL')) {
+    if (battleSubjects && battleSubjects.length > 0 && !battleSubjects.includes('ALL')) {
       return battleSubjects.includes(subj);
     }
     return battleSubject === subj;
   };
 
   const handleToggleBattleLesson = (setId: string) => {
-    if (!isBasicUser) {
+    // In MCQ+ (REVISION_HUB), STRICTLY single lesson only!
+    if (currentRoom?.mcqType === 'REVISION_HUB') {
       setSelectedCuratedSet(setId);
       setSelectedCuratedSets([setId]);
       return;
     }
+    // In standard MCQ mode, users can pick multiple lessons freely!
     setSelectedCuratedSets((prev) => {
       if (prev.includes(setId)) {
         if (prev.length <= 1) return prev;
@@ -2525,12 +2754,8 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
   };
 
   const handleSelectAllBattleLessons = () => {
-    if (!isBasicUser) {
-      setTierFeaturePrompt({
-        title: '⭐ Basic & Ultra Power: Multi-Lesson Battle',
-        description: 'Ek sath kayi lessons aur chapters ke sawaal chune ki power Basic aur Ultra Host ke liye uplabdh hai.',
-        targetTier: 'BASIC',
-      });
+    if (currentRoom?.mcqType === 'REVISION_HUB') {
+      alert('⚡ MCQ+ Mode me sirf 1 single lesson ka test hota hai (Fixed 100 Questions & Revision Hub Analysis). Multiple lessons ke liye Standard MCQ Mode chunein.');
       return;
     }
     const allIds = availableBattleSets.map((s) => s.id);
@@ -2547,12 +2772,21 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
   // ── MCQ Battle Handlers & Host Free Lesson Launch ─────────────────────────
   const compileSelectedQuestions = (): { targetSets: typeof availableBattleSets; compiledQuestions: GroupStudyMcqQuestion[]; battleTitle: string } | null => {
+    const isMcqPlus = currentRoom?.mcqType === 'REVISION_HUB';
     let targetSets: typeof availableBattleSets = [];
-    if (isBasicUser && selectedCuratedSets.length > 0) {
-      targetSets = availableBattleSets.filter((s) => selectedCuratedSets.includes(s.id));
-    } else {
-      const single = availableBattleSets.find((s) => s.id === selectedCuratedSet);
+
+    if (isMcqPlus) {
+      // ⚡ MCQ+ Mode: Strictly 1 lesson only!
+      const single = availableBattleSets.find((s) => s.id === selectedCuratedSet) || availableBattleSets[0];
       if (single) targetSets = [single];
+    } else {
+      // 🎯 Standard MCQ Mode: Multiple lessons allowed
+      if (selectedCuratedSets.length > 0) {
+        targetSets = availableBattleSets.filter((s) => selectedCuratedSets.includes(s.id));
+      } else {
+        const single = availableBattleSets.find((s) => s.id === selectedCuratedSet);
+        if (single) targetSets = [single];
+      }
     }
 
     if (targetSets.length === 0) {
@@ -2566,53 +2800,79 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
     let compiledQuestions: GroupStudyMcqQuestion[] = [];
 
-    if (limitMode === 'PER_LESSON' && questionsPerLessonLimit > 0) {
-      targetSets.forEach((s) => {
-        const pool = questionOrderMode === 'RANDOM'
-          ? [...s.questions].sort(() => 0.5 - Math.random())
-          : s.questions;
-        compiledQuestions.push(...pool.slice(0, questionsPerLessonLimit));
-      });
-    } else if (limitMode === 'PER_SUBJECT' && questionsPerSubjectLimit > 0) {
-      const bySubj = new Map<string, GroupStudyMcqQuestion[]>();
-      targetSets.forEach((s) => {
-        const subKey = s.subject || 'General';
-        const list = bySubj.get(subKey) || [];
-        list.push(...s.questions);
-        bySubj.set(subKey, list);
-      });
-      bySubj.forEach((list) => {
-        const pool = questionOrderMode === 'RANDOM'
-          ? [...list].sort(() => 0.5 - Math.random())
-          : list;
-        compiledQuestions.push(...pool.slice(0, questionsPerSubjectLimit));
-      });
-    } else {
-      targetSets.forEach((s) => compiledQuestions.push(...s.questions));
-    }
+    if (isMcqPlus) {
+      // ⚡ MCQ+ MODE: Fixed 100 Questions!
+      // Pool all questions from this 1 lesson and ensure 100 questions (or exact count if < 100)
+      const basePool = questionOrderMode === 'RANDOM'
+        ? [...targetSets[0].questions].sort(() => 0.5 - Math.random())
+        : [...targetSets[0].questions];
 
-    if (isUltraUser && ultraExcludedQuestionKeys.size > 0) {
-      let filtered: GroupStudyMcqQuestion[] = [];
-      targetSets.forEach((s) => {
-        (s.questions || []).forEach((q, idx) => {
-          const key = `${s.id}__${idx}__${(q.question || '').slice(0, 30)}`;
-          if (!ultraExcludedQuestionKeys.has(key)) {
-            filtered.push(q);
-          }
-        });
-      });
-      if (filtered.length > 0) {
-        compiledQuestions = filtered;
+      if (basePool.length >= 100) {
+        compiledQuestions = basePool.slice(0, 100);
+      } else if (basePool.length > 0) {
+        // Repeat or cycle through questions to make exactly 100 questions as requested by user
+        const expanded: GroupStudyMcqQuestion[] = [];
+        let i = 0;
+        while (expanded.length < 100) {
+          const originalQ = basePool[i % basePool.length];
+          expanded.push({
+            ...originalQ,
+            id: `${originalQ.id || 'q'}_idx_${expanded.length}`,
+          });
+          i++;
+        }
+        compiledQuestions = expanded;
       }
-    }
+    } else {
+      // 🎯 Standard MCQ Mode: Variable questions based on limits
+      if (limitMode === 'PER_LESSON' && questionsPerLessonLimit > 0) {
+        targetSets.forEach((s) => {
+          const pool = questionOrderMode === 'RANDOM'
+            ? [...s.questions].sort(() => 0.5 - Math.random())
+            : s.questions;
+          compiledQuestions.push(...pool.slice(0, questionsPerLessonLimit));
+        });
+      } else if (limitMode === 'PER_SUBJECT' && questionsPerSubjectLimit > 0) {
+        const bySubj = new Map<string, GroupStudyMcqQuestion[]>();
+        targetSets.forEach((s) => {
+          const subKey = s.subject || 'General';
+          const list = bySubj.get(subKey) || [];
+          list.push(...s.questions);
+          bySubj.set(subKey, list);
+        });
+        bySubj.forEach((list) => {
+          const pool = questionOrderMode === 'RANDOM'
+            ? [...list].sort(() => 0.5 - Math.random())
+            : list;
+          compiledQuestions.push(...pool.slice(0, questionsPerSubjectLimit));
+        });
+      } else {
+        targetSets.forEach((s) => compiledQuestions.push(...s.questions));
+      }
 
-    if (limitMode === 'TOTAL' && totalQuestionsLimit > 0) {
-      if (questionOrderMode === 'RANDOM') {
+      if (isUltraUser && ultraExcludedQuestionKeys.size > 0) {
+        let filtered: GroupStudyMcqQuestion[] = [];
+        targetSets.forEach((s) => {
+          (s.questions || []).forEach((q, idx) => {
+            const key = `${s.id}__${idx}__${(q.question || '').slice(0, 30)}`;
+            if (!ultraExcludedQuestionKeys.has(key)) {
+              filtered.push(q);
+            }
+          });
+        });
+        if (filtered.length > 0) {
+          compiledQuestions = filtered;
+        }
+      }
+
+      if (limitMode === 'TOTAL' && totalQuestionsLimit > 0) {
+        if (questionOrderMode === 'RANDOM') {
+          compiledQuestions = compiledQuestions.sort(() => 0.5 - Math.random());
+        }
+        compiledQuestions = compiledQuestions.slice(0, totalQuestionsLimit);
+      } else if (questionOrderMode === 'RANDOM') {
         compiledQuestions = compiledQuestions.sort(() => 0.5 - Math.random());
       }
-      compiledQuestions = compiledQuestions.slice(0, totalQuestionsLimit);
-    } else if (questionOrderMode === 'RANDOM') {
-      compiledQuestions = compiledQuestions.sort(() => 0.5 - Math.random());
     }
 
     if (compiledQuestions.length === 0) {
@@ -2620,7 +2880,9 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       return null;
     }
 
-    const battleTitle = targetSets.length > 1
+    const battleTitle = isMcqPlus
+      ? `⚡ ${targetSets[0].name} (Fixed 100 Qs • MCQ+)`
+      : targetSets.length > 1
       ? `${targetSets.length} Lessons Battle (${compiledQuestions.length} Questions)`
       : targetSets[0].name;
 
@@ -2676,11 +2938,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         compiled.compiledQuestions,
         compiled.battleTitle,
         selectedTimerDuration || 20,
-        testTimerMode === 'PER_QUESTION' ? autoAdvanceEnabled : false,
-        testTimerMode,
+        false,
+        'MIX',
         totalTestMinutes,
-        mixPaceSeconds,
-        mixVibrateAlert,
+        userPaceSeconds,
+        userVibrateAlert,
         autoRunWithoutHost
       );
 
@@ -2699,11 +2961,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
           currentQuestionIndex: 0,
           questionStartTime: 0,
           durationPerQuestion: selectedTimerDuration || 20,
-          autoAdvance: testTimerMode === 'PER_QUESTION' ? autoAdvanceEnabled : false,
-          timerMode: testTimerMode,
+          autoAdvance: false,
+          timerMode: 'MIX',
           totalTestDurationMinutes: totalTestMinutes,
-          targetPaceSeconds: mixPaceSeconds,
-          vibrateOnPaceAlert: mixVibrateAlert,
+          targetPaceSeconds: userPaceSeconds,
+          vibrateOnPaceAlert: userVibrateAlert,
           questions: compiled.compiledQuestions,
           scores: {},
           questionAnswers: {},
@@ -2713,8 +2975,17 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       saveCachedRoom(updatedRoom);
       // Room schedule karne ke baad host room se bahar chala jayega (returns to lobby/list)
       setCurrentRoom(null);
-      if (onActiveRoomChange) onActiveRoomChange(null);
       await leaveGroupRoom(updatedRoom.id, user?.id || 'guest', user?.name || 'Student');
+      // User requirement: Notify all users about the scheduled challenge (no class restriction)
+      void notifyStudyRoomChallengeInBackground({
+        senderId: user?.id || 'host',
+        senderName: user?.name || 'Study Room',
+        challengeTitle: `⏳ Scheduled Challenge: ${compiled.battleTitle}`,
+        roomId: updatedRoom.id,
+        roomCode: (updatedRoom.code || updatedRoom.id?.slice(-6) || 'STUDY1').toUpperCase(),
+        password: updatedRoom.password || '',
+        totalQuestions: compiled.compiledQuestions.length,
+      }).catch((e) => console.warn('Schedule notify notice:', e));
 
       alert(`🎉 Test schedule ho gaya!\n⏰ Start Time: ${new Date(scheduledStartTime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}\n\nHost room se bahar aa gaye hain. Room list me countdown chal raha hai. Samay aane par test auto-start hoga aur aap ya koi bhi sadasya kabhi bhi wapas join kar sakte hain!`);
     } catch (e: any) {
@@ -2832,13 +3103,13 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
           totalQuestions: cleanQuestions.length,
           questionStartTime: now,
           durationPerQuestion: duration,
-          autoAdvance: testTimerMode === 'PER_QUESTION' ? autoAdvanceEnabled : false,
-          timerMode: testTimerMode,
+          autoAdvance: false,
+          timerMode: 'MIX',
           totalTestDurationMinutes: totalTestMinutes,
           testStartTime,
           testEndTime,
-          targetPaceSeconds: mixPaceSeconds,
-          vibrateOnPaceAlert: mixVibrateAlert,
+          targetPaceSeconds: userPaceSeconds,
+          vibrateOnPaceAlert: userVibrateAlert,
           status: 'QUESTION',
           questions: cleanQuestions,
           scores: {},
@@ -2850,7 +3121,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       saveCachedRoom(updatedRoom);
       setCurrentRoom(updatedRoom);
       setStudentActiveQIndex(0);
-      setPaceSecondsLeft(mixPaceSeconds || 20);
+      setPaceSecondsLeft(userPaceSeconds || 20);
       setHasPaceAlertTriggered(false);
       if (onActiveRoomChange) onActiveRoomChange(updatedRoom);
 
@@ -2860,16 +3131,27 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         displayTitle,
         cleanQuestions,
         duration,
-        testTimerMode === 'PER_QUESTION' ? autoAdvanceEnabled : false,
-        testTimerMode,
+        false,
+        'MIX',
         totalTestMinutes,
-        mixPaceSeconds,
-        mixVibrateAlert
+        userPaceSeconds,
+        userVibrateAlert
       );
 
       if (chosenType !== targetRoom.mcqType) {
         await setRoomMcqType(targetRoom.id, chosenType);
       }
+
+      // User requirement: Study room practice questions notify ALL users without class restriction
+      void notifyStudyRoomChallengeInBackground({
+        senderId: user?.id || targetRoom.hostId || 'host',
+        senderName: user?.name || targetRoom.hostName || 'Study Room',
+        challengeTitle: displayTitle,
+        roomId: targetRoom.id,
+        roomCode: (targetRoom.code || targetRoom.id.slice(-6)).toUpperCase(),
+        password: targetRoom.password,
+        totalQuestions: cleanQuestions.length,
+      }).catch((e) => console.warn('Challenge notify notice:', e));
     } catch (err: any) {
       console.warn('[GroupStudy] Live battle background sync error:', err);
     } finally {
@@ -2917,12 +3199,23 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         `${chapterTitle} · Free Lesson MCQ`,
         questions,
         duration,
-        autoAdvanceEnabled,
-        testTimerMode,
+        false,
+        'MIX',
         totalTestMinutes,
-        mixPaceSeconds,
-        mixVibrateAlert
+        userPaceSeconds,
+        userVibrateAlert
       );
+
+      // User requirement: Study room practice questions notify ALL users without class restriction
+      void notifyStudyRoomChallengeInBackground({
+        senderId: user?.id || currentRoom.hostId || 'host',
+        senderName: user?.name || currentRoom.hostName || 'Study Room',
+        challengeTitle: `${chapterTitle} · Practice Challenge`,
+        roomId: currentRoom.id,
+        roomCode: (currentRoom.code || currentRoom.id.slice(-6)).toUpperCase(),
+        password: currentRoom.password,
+        totalQuestions: questions.length,
+      }).catch((e) => console.warn('Challenge notify notice:', e));
 
       setShowChapterChooser(false);
     } catch (err: any) {
@@ -3140,6 +3433,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     const nextIdx = (liveMcq.currentQuestionIndex || 0) + 1;
     const totalQuestions = liveMcq.totalQuestions || liveMcq.questions?.length || 0;
     const isFinished = nextIdx >= totalQuestions;
+    const nextQuestionStartTime = Date.now();
 
     // Reset local option selection & timers for next question
     setSelectedOption(null);
@@ -3147,6 +3441,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     setShowXpBanner(false);
     setRevealSecondsLeft(2);
     setMcqSecondsLeft(liveMcq.durationPerQuestion || 20);
+    questionTimerRef.current = {
+      key: `${currentRoom.id}:${nextIdx}`,
+      startedAt: nextQuestionStartTime,
+      sourceStart: nextQuestionStartTime,
+    };
 
     // 1. Optimistically update local React state immediately so UI switches to next question instantly!
     setCurrentRoom((prev) => {
@@ -3155,13 +3454,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         ...prev.liveMcq,
         currentQuestionIndex: nextIdx,
         status: isFinished ? ('ENDED' as const) : ('QUESTION' as const),
-        questionStartTime: Date.now(),
+        questionStartTime: nextQuestionStartTime,
         isActive: !isFinished,
       };
       const updatedRoom: GroupStudyRoom = {
         ...prev,
         liveMcq: updatedLiveMcq,
-        isExpired: isFinished ? true : prev.isExpired,
       };
       saveCachedRoom(updatedRoom);
       return updatedRoom;
@@ -3192,6 +3490,20 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
     setCurrentRoom(updated);
     saveCachedRoom(updated);
     setChooserMcqType(type);
+
+    if (type === 'REVISION_HUB') {
+      // In MCQ+, strictly single lesson & 100 questions benchmark
+      if (selectedCuratedSets.length > 1) {
+        setSelectedCuratedSets([selectedCuratedSets[0]]);
+        setSelectedCuratedSet(selectedCuratedSets[0]);
+      }
+      setLimitMode('TOTAL');
+      setTotalQuestionsLimit(100);
+    } else {
+      // In standard MCQ, allow variable questions & multiple lessons
+      setLimitMode('ALL');
+    }
+
     try {
       await setRoomMcqType(currentRoom.id, type);
     } catch (err) {
@@ -3536,13 +3848,13 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     </div>
 
                     {/* Password input */}
-                    <div className="sm:col-span-5 relative">
+                    <div className="sm:col-span-3 relative">
                       <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                         <Lock size={13} />
                       </div>
                       <input
                         type={showJoinPasswordInput ? 'text' : 'password'}
-                        placeholder="Room Password (if protected)"
+                        placeholder="Password (if any)"
                         value={joinPasswordInput}
                         onChange={(e) => {
                           setJoinPasswordInput(e.target.value);
@@ -3560,15 +3872,33 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       </button>
                     </div>
 
+                    {/* Optional Name input */}
+                    <div className="sm:col-span-3 relative">
+                      <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                        <User size={13} />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder={user?.name || "Naam (Optional)"}
+                        value={joinNameInput}
+                        onChange={(e) => {
+                          setJoinNameInput(e.target.value);
+                          setJoinCodeError('');
+                        }}
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-indigo-400 rounded-xl pl-8 pr-3 py-2 text-xs text-white placeholder:text-slate-500 outline-none transition"
+                        maxLength={30}
+                      />
+                    </div>
+
                     {/* Join button */}
-                    <div className="sm:col-span-3">
+                    <div className="sm:col-span-2">
                       <button
                         type="submit"
                         disabled={!joinCodeInput.trim() || isLoading}
                         className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-black text-xs shadow-md active:scale-95 disabled:opacity-50 transition cursor-pointer flex items-center justify-center gap-1.5"
                       >
                         {isLoading ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} className="fill-current" />}
-                        <span>Join Room</span>
+                        <span>Join</span>
                       </button>
                     </div>
                   </form>
@@ -4292,14 +4622,18 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   {/* Battle State: WAITING (Host launches quiz, members wait in lobby) */}
                   {(!currentRoom.liveMcq || currentRoom.liveMcq?.status === 'WAITING') && currentRoom.liveMcq?.status !== 'ENDED' && !currentRoom.isExpired && (
                     <div className="rounded-2xl bg-slate-800/60 border border-slate-700 p-6 text-center space-y-4 my-auto shadow-xl">
-                      <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto text-3xl">
-                        🎯
-                      </div>
-                      <h3 className="text-xl font-black text-white">Live MCQ Battle Arena</h3>
-                      <p className="text-xs text-slate-300 max-w-md mx-auto leading-relaxed">
-                        Sabhi members ek hi samay par sawal hal karenge. Har sahi sawal par <b>+5 XP</b> aur speed points
-                        milenge. Galat uttar par <b>-2 XP</b> aur streak tootne par bonus milega!
-                      </p>
+                      {/* Top waiting arena: only show to members waiting in lobby, NOT host ("tup pe rules na dikhega") */}
+                      {!isHost && (
+                        <div className="text-center space-y-3 pb-2">
+                          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto text-2xl">
+                            🎯
+                          </div>
+                          <h3 className="text-lg font-black text-white">Live MCQ Battle Arena</h3>
+                          <p className="text-xs text-slate-300 max-w-md mx-auto leading-relaxed">
+                            Host question set choose kar rahe hain. Jaise hi test launch hoga, sawal yahan live ho jayenge!
+                          </p>
+                        </div>
+                      )}
 
                       {/* Scheduled Room Countdown Banner */}
                       {currentRoom.isScheduled && currentRoom.scheduledStartTime && (() => {
@@ -4347,1064 +4681,232 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       })()}
 
                       {isHost ? (
-                        <div className="space-y-3.5 max-w-lg mx-auto pt-2 text-left">
-                          {/* 1. Mode Switcher (🎯 MCQ vs ⚡ MCQ +) */}
-                          <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 space-y-2.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-black text-slate-200 flex items-center gap-1.5">
-                                <span>1. MCQ Battle Mode:</span>
-                              </span>
-                              <span className="text-[10px] font-bold text-slate-400">
-                                {currentRoom.mcqType === 'REVISION_HUB' ? '⚡ MCQ + Active' : '🎯 MCQ Mode Active'}
-                              </span>
+                        <div className="space-y-4 w-full max-w-3xl mx-auto pt-2 text-left">
+                          <div className="rounded-2xl border border-indigo-400/25 bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/30 p-4 sm:p-5 shadow-xl">
+                            <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                              <div>
+                                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-300">Assessment builder · Step 02</p>
+                                <h4 className="text-lg sm:text-xl font-black text-white tracking-tight mt-1">Exam question set tayyar karein</h4>
+                                <p className="text-xs text-slate-400 mt-1">Mode aur syllabus chunein, phir questions ko set karke test launch ya schedule karein.</p>
+                              </div>
+                              <div className="rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-right">
+                                <p className="text-[9px] font-bold uppercase tracking-wider text-slate-500">Room</p>
+                                <p className="max-w-48 truncate text-xs font-black text-slate-100">{currentRoom.name}</p>
+                              </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  handleSwitchMcqType('PROJECTOR_MODE');
-                                  setBattleSearch('');
-                                  setBattleSubject('ALL');
-                                  setBattleCategory('ALL');
-                                  setBattleBook('ALL');
-                                }}
-                                className={`p-2.5 rounded-xl border text-left cursor-pointer transition relative ${
-                                  currentRoom.mcqType !== 'REVISION_HUB'
-                                    ? 'bg-cyan-600/30 border-cyan-400 text-white shadow ring-1 ring-cyan-500/50'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-black flex items-center gap-1">
-                                    <span>🎯</span> MCQ Mode
-                                  </span>
-                                  {currentRoom.mcqType !== 'REVISION_HUB' && (
-                                    <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-                                  )}
-                                </div>
-                                <p className="text-[9px] text-slate-300 mt-0.5">Syllabus & All Competition Books</p>
-                              </button>
+                            <StudyRoomSetupProgress currentStep={2} />
+                          </div>
 
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (isFreeUser) {
-                                    alert('🔒 MCQ+ Question Sets sirf Pro / Ultra members host kar sakte hain! Free users standard MCQ practice sets host kar sakte hain.');
-                                    return;
-                                  }
-                                  handleSwitchMcqType('REVISION_HUB');
-                                  setBattleSearch('');
-                                  setBattleSubject('ALL');
-                                  setBattleBook('ALL');
-                                }}
-                                className={`p-2.5 rounded-xl border text-left cursor-pointer transition relative ${
-                                  isFreeUser
-                                    ? 'bg-slate-950/50 border-slate-800 text-slate-500 hover:border-amber-500/40'
-                                    : currentRoom.mcqType === 'REVISION_HUB'
-                                    ? 'bg-purple-600/30 border-purple-400 text-white shadow ring-1 ring-purple-500/50'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs font-black flex items-center gap-1">
-                                    <span>⚡</span> MCQ + Mode {isFreeUser && <span className="text-[10px] text-amber-400 font-bold ml-1">🔒 PRO</span>}
-                                  </span>
-                                  {currentRoom.mcqType === 'REVISION_HUB' && (
-                                    <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
-                                  )}
+                          {/* ── COMPACT SETUP CONTROLLER TILES (2-Column Grid on all screens: Drawer System) ── */}
+                          <div className="grid grid-cols-2 gap-2 sm:gap-2.5">
+                            {/* 1. Assessment Mode Tile */}
+                            <button
+                              type="button"
+                              onClick={() => setActiveSetupDrawer('ASSESSMENT_MODE')}
+                              className="p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/80 hover:border-cyan-400/60 transition cursor-pointer text-left flex flex-col justify-between gap-2 shadow-md active:scale-[0.98]"
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-base shrink-0 ${
+                                  currentRoom.mcqType === 'REVISION_HUB'
+                                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                    : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                                }`}>
+                                  {currentRoom.mcqType === 'REVISION_HUB' ? '⚡' : '🎯'}
                                 </div>
-                                <p className="text-[9px] text-slate-300 mt-0.5">
-                                  {isFreeUser ? '🔒 Pro/Ultra Host Only (Locked)' : 'Revision Hub & Only Lucent Comp'}
+                                <div className="flex items-center gap-0.5 text-slate-400 group-hover:text-cyan-300">
+                                  <span className="text-[9px] font-bold text-slate-500 hidden sm:inline">Badlein</span>
+                                  <ChevronRight size={13} />
+                                </div>
+                              </div>
+                              <div className="min-w-0 w-full">
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block truncate">Assessment Mode</span>
+                                <p className="text-xs font-black text-white truncate mt-0.5">
+                                  {currentRoom.mcqType === 'REVISION_HUB' ? '⚡ MCQ + Mode (100 Qs)' : '🎯 MCQ Mode (Variable)'}
                                 </p>
-                              </button>
-                            </div>
+                                <p className="text-[10px] text-cyan-400/90 truncate mt-0.5">
+                                  {currentRoom.mcqType === 'REVISION_HUB' ? '1 Lesson • Revision Hub Result' : 'Multi-Subject & Multi-Lesson'}
+                                </p>
+                              </div>
+                            </button>
 
-                            {/* 1.1 Sub-Category: Academic Syllabus vs Competition */}
-                            <div className="pt-2 border-t border-slate-800">
-                              <div className="flex items-center justify-between mb-1.5">
-                                <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1">
-                                  <span>2. Section Chunein:</span>
-                                </span>
-                                <span className="text-[9px] text-amber-300 font-bold">
+                            {/* 2. Section Chunein Tile */}
+                            <button
+                              type="button"
+                              onClick={() => setActiveSetupDrawer('SECTION')}
+                              className="p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/80 hover:border-amber-400/60 transition cursor-pointer text-left flex flex-col justify-between gap-2 shadow-md active:scale-[0.98]"
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-base shrink-0 ${
+                                  battleDomain === 'COMPETITION'
+                                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                    : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                }`}>
+                                  {battleDomain === 'COMPETITION' ? '🏆' : '📚'}
+                                </div>
+                                <div className="flex items-center gap-0.5 text-slate-400 group-hover:text-amber-300">
+                                  <span className="text-[9px] font-bold text-slate-500 hidden sm:inline">Badlein</span>
+                                  <ChevronRight size={13} />
+                                </div>
+                              </div>
+                              <div className="min-w-0 w-full">
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block truncate">Section Chunein</span>
+                                <p className="text-xs font-black text-white truncate mt-0.5">
+                                  {battleDomain === 'COMPETITION' ? '🏆 Competition' : '📚 Academic'}
+                                </p>
+                                <p className="text-[10px] text-amber-400/90 truncate mt-0.5">
+                                  {battleDomain === 'COMPETITION' ? 'Exam Books' : 'Class 6-12 Notes'}
+                                </p>
+                              </div>
+                            </button>
+
+                            {/* 3. Class Chunein OR Competition Book Tile */}
+                            {battleDomain === 'ACADEMIC' ? (
+                              <button
+                                type="button"
+                                onClick={() => setActiveSetupDrawer('CLASS')}
+                                className="p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/80 hover:border-purple-400/60 transition cursor-pointer text-left flex flex-col justify-between gap-2 shadow-md active:scale-[0.98]"
+                              >
+                                <div className="flex items-center justify-between w-full">
+                                  <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 flex items-center justify-center text-base shrink-0">
+                                    🏫
+                                  </div>
+                                  <div className="flex items-center gap-0.5 text-slate-400 group-hover:text-purple-300">
+                                    <span className="text-[9px] font-bold text-slate-500 hidden sm:inline">Chunein</span>
+                                    <ChevronRight size={13} />
+                                  </div>
+                                </div>
+                                <div className="min-w-0 w-full">
+                                  <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block truncate">Class Chunein</span>
+                                  <p className="text-xs font-black text-white truncate mt-0.5">
+                                    {battleClass === 'ALL' ? 'Sabhi Classes' : `Class ${battleClass}`}
+                                  </p>
+                                  <p className="text-[10px] text-purple-300 truncate mt-0.5">
+                                    {battleSubject === 'ALL' ? 'All Subjects' : battleSubject}
+                                  </p>
+                                </div>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setActiveSetupDrawer('COMPETITION_BOOK')}
+                                className="p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/80 hover:border-amber-400/60 transition cursor-pointer text-left flex flex-col justify-between gap-2 shadow-md active:scale-[0.98]"
+                              >
+                                <div className="flex items-center justify-between w-full">
+                                  <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 flex items-center justify-center text-base shrink-0">
+                                    📖
+                                  </div>
+                                  <div className="flex items-center gap-0.5 text-slate-400 group-hover:text-amber-300">
+                                    <span className="text-[9px] font-bold text-slate-500 hidden sm:inline">Chunein</span>
+                                    <ChevronRight size={13} />
+                                  </div>
+                                </div>
+                                <div className="min-w-0 w-full">
+                                  <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block truncate">Book Chunein</span>
+                                  <p className="text-xs font-black text-white truncate mt-0.5">
+                                    {currentRoom.mcqType === 'REVISION_HUB'
+                                      ? (battleSubject === 'ALL' ? 'Lucent GK' : `Lucent: ${battleSubject}`)
+                                      : (allCompetitionBooks.find((b) => b.id === battleBook)?.name || 'Sabhi Books')}
+                                  </p>
+                                  <p className="text-[10px] text-amber-400 truncate mt-0.5">
+                                    {currentRoom.mcqType === 'REVISION_HUB' ? 'Revision Hub' : `${allCompetitionBooks.length} Books`}
+                                  </p>
+                                </div>
+                              </button>
+                            )}
+
+                            {/* 4. Lesson Chunein Tile */}
+                            <button
+                              type="button"
+                              onClick={() => setActiveSetupDrawer('LESSONS')}
+                              className="p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/80 hover:border-emerald-400/60 transition cursor-pointer text-left flex flex-col justify-between gap-2 shadow-md active:scale-[0.98]"
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 flex items-center justify-center text-base shrink-0">
+                                  📋
+                                </div>
+                                <div className="flex items-center gap-0.5 text-slate-400 group-hover:text-emerald-300">
+                                  <span className="text-[9px] font-bold text-slate-500 hidden sm:inline">Kholein</span>
+                                  <ChevronRight size={13} />
+                                </div>
+                              </div>
+                              <div className="min-w-0 w-full">
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block truncate">Lesson Chunein</span>
+                                <p className="text-xs font-black text-white truncate mt-0.5">
                                   {currentRoom.mcqType === 'REVISION_HUB'
-                                    ? battleDomain === 'COMPETITION'
-                                      ? '⚡ Revision Hub: Only Lucent'
-                                      : '⚡ Board Syllabus'
-                                    : battleDomain === 'COMPETITION'
-                                    ? '🎯 Sabhi Competition Books'
-                                    : '🎯 Academic Notes & HW'}
-                                </span>
-                              </div>
-                              <div className="grid grid-cols-2 gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setBattleDomain('ACADEMIC');
-                                    setBattleSubject('ALL');
-                                    setBattleCategory('ALL');
-                                  }}
-                                  className={`px-3 py-2 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                                    battleDomain === 'ACADEMIC'
-                                      ? currentRoom.mcqType === 'REVISION_HUB'
-                                        ? 'bg-purple-600 text-white border-purple-400 shadow'
-                                        : 'bg-cyan-600 text-white border-cyan-400 shadow'
-                                      : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200'
-                                  }`}
-                                >
-                                  <span>📚</span>
-                                  <span>Academic Syllabus</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setBattleDomain('COMPETITION');
-                                    setBattleSubject('ALL');
-                                    setBattleBook('ALL');
-                                  }}
-                                  className={`px-3 py-2 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 ${
-                                    battleDomain === 'COMPETITION'
-                                      ? 'bg-amber-600 text-white border-amber-400 shadow'
-                                      : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200'
-                                  }`}
-                                >
-                                  <span>🏆</span>
-                                  <span>
-                                    Competition {currentRoom.mcqType === 'REVISION_HUB' ? '(Only Lucent)' : '(All Books)'}
-                                  </span>
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* 2. Advanced Exam Timer Mode Controller (Host Setup) */}
-                          <div className="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-700/80 space-y-3 shadow-lg">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-black text-white flex items-center gap-1.5">
-                                <Clock size={15} className="text-amber-400" /> Test Timing Mode:
-                              </span>
-                              <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                                {testTimerMode === 'PER_QUESTION' ? '⚡ Per-Question' : testTimerMode === 'TOTAL_TEST' ? '⏱️ Full Exam Mode' : '📳 Mix / Alert Mode'}
-                              </span>
-                            </div>
-
-                            {/* 3 Timing Mode Cards */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                              {/* Option 1: Per-Question Timer */}
-                              <button
-                                type="button"
-                                onClick={() => setTestTimerMode('PER_QUESTION')}
-                                className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                                  testTimerMode === 'PER_QUESTION'
-                                    ? 'bg-amber-500/20 border-amber-400 text-white ring-1 ring-amber-400/50 shadow-md'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-xs font-black text-amber-300 flex items-center gap-1">
-                                    ⚡ Per-Question
-                                  </span>
-                                  {testTimerMode === 'PER_QUESTION' && <span className="w-2 h-2 rounded-full bg-amber-400" />}
-                                </div>
-                                <p className="text-[10px] text-slate-300 leading-snug">
-                                  Har sawal ka fix timer (10s-60s). Auto-next rapid fire battle.
+                                    ? (availableBattleSets.find((s) => s.id === selectedCuratedSet)?.name || (availableBattleSets[0]?.name || '1 Lesson (Fixed 100 Qs)'))
+                                    : (selectedCuratedSets.length > 0
+                                        ? `⭐ ${selectedCuratedSets.length} Lessons`
+                                        : (availableBattleSets.find((s) => s.id === selectedCuratedSet)?.name || 'Lesson Chunein'))}
                                 </p>
-                              </button>
-
-                              {/* Option 2: Total Test Timer */}
-                              <button
-                                type="button"
-                                onClick={() => setTestTimerMode('TOTAL_TEST')}
-                                className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                                  testTimerMode === 'TOTAL_TEST'
-                                    ? 'bg-emerald-500/20 border-emerald-400 text-white ring-1 ring-emerald-400/50 shadow-md'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-xs font-black text-emerald-300 flex items-center gap-1">
-                                    ⏱️ Total Test Time
-                                  </span>
-                                  {testTimerMode === 'TOTAL_TEST' && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
-                                </div>
-                                <p className="text-[10px] text-slate-300 leading-snug">
-                                  Pura test ka timer. Question Grid se jump & time up par auto-submit.
+                                <p className="text-[10px] text-emerald-400 truncate mt-0.5">
+                                  {currentRoom.mcqType === 'REVISION_HUB'
+                                    ? '⚡ 1 Lesson • 100 Qs Fixed'
+                                    : `${availableBattleSets.length} Lessons • Multiple Allowed`}
                                 </p>
-                              </button>
+                              </div>
+                            </button>
 
-                              {/* Option 3: Mix Mode with Vibration */}
-                              <button
-                                type="button"
-                                onClick={() => setTestTimerMode('MIX')}
-                                className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
-                                  testTimerMode === 'MIX'
-                                    ? 'bg-purple-500/20 border-purple-400 text-white ring-1 ring-purple-400/50 shadow-md'
-                                    : 'bg-slate-950/70 border-slate-800 text-slate-400 hover:border-slate-700'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between mb-1">
-                                  <span className="text-xs font-black text-purple-300 flex items-center gap-1">
-                                    📳 Mix (Vibrate Alert)
-                                  </span>
-                                  {testTimerMode === 'MIX' && <span className="w-2 h-2 rounded-full bg-purple-400" />}
+                            {/* 5. Total Exam Duration Tile (Opens Drawer) */}
+                            <button
+                              type="button"
+                              onClick={() => setActiveSetupDrawer('DURATION')}
+                              className="p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/80 hover:border-purple-400/60 transition cursor-pointer text-left flex flex-col justify-between gap-2 shadow-md active:scale-[0.98]"
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 flex items-center justify-center text-base shrink-0">
+                                  ⏱️
                                 </div>
-                                <p className="text-[10px] text-slate-300 leading-snug">
-                                  No auto-next. Time hone par mobile vibrate karega & Grid se switch.
+                                <div className="flex items-center gap-0.5 text-slate-400 group-hover:text-purple-300">
+                                  <span className="text-[9px] font-bold text-slate-500 hidden sm:inline">Badlein</span>
+                                  <ChevronRight size={13} />
+                                </div>
+                              </div>
+                              <div className="min-w-0 w-full">
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block truncate">Total Exam Time</span>
+                                <p className="text-xs font-black text-purple-300 truncate mt-0.5">
+                                  ⏱️ {totalTestMinutes} Minutes
                                 </p>
-                              </button>
-                            </div>
-
-                            {/* Mode Specific Settings */}
-                            {testTimerMode === 'PER_QUESTION' && (
-                              <div className="space-y-2.5 pt-2 border-t border-slate-800">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[11px] font-bold text-slate-300">Har Sawal Ka Time:</span>
-                                  <span className="text-xs font-black text-amber-400">{selectedTimerDuration} Sec</span>
-                                </div>
-                                <div className="grid grid-cols-6 gap-1.5">
-                                  {[10, 15, 20, 30, 45, 60].map((sec) => (
-                                    <button
-                                      key={`dur_top_${sec}`}
-                                      type="button"
-                                      onClick={() => setSelectedTimerDuration(sec)}
-                                      className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                                        selectedTimerDuration === sec
-                                          ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-300'
-                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                      }`}
-                                    >
-                                      {sec}s
-                                    </button>
-                                  ))}
-                                </div>
-
-                                {/* Custom Seconds Input */}
-                                <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-950/70 border border-slate-800">
-                                  <span className="text-[11px] font-bold text-slate-400">Custom Time (Sec):</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <input
-                                      type="number"
-                                      min={5}
-                                      max={300}
-                                      value={selectedTimerDuration}
-                                      onChange={(e) => setSelectedTimerDuration(Math.max(5, Math.min(300, Number(e.target.value) || 5)))}
-                                      className="w-16 px-2 py-1 bg-slate-900 border border-amber-500/40 rounded-lg text-amber-300 font-mono text-xs font-black text-center focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                    />
-                                    <span className="text-xs font-bold text-slate-400">Seconds</span>
-                                  </div>
-                                </div>
-
-                                <div className="pt-1 flex items-center justify-between">
-                                  <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5">
-                                    <Zap size={13} className="text-emerald-400" /> Auto-Advance (Agla Sawal):
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setAutoAdvanceEnabled(!autoAdvanceEnabled)}
-                                    className={`px-2.5 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
-                                      autoAdvanceEnabled
-                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
-                                        : 'bg-slate-800 text-slate-400 border border-slate-700'
-                                    }`}
-                                  >
-                                    {autoAdvanceEnabled ? '⚡ ON (Auto Next)' : 'OFF (Manual)'}
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-
-                            {testTimerMode === 'TOTAL_TEST' && (
-                              <div className="space-y-2.5 pt-2 border-t border-slate-800">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[11px] font-bold text-slate-300">Pura Test Ka Total Time:</span>
-                                  <span className="text-xs font-black text-emerald-400">{totalTestMinutes} Minutes</span>
-                                </div>
-                                <div className="grid grid-cols-7 gap-1">
-                                  {[5, 10, 15, 20, 30, 45, 60].map((min) => (
-                                    <button
-                                      key={`total_min_${min}`}
-                                      type="button"
-                                      onClick={() => setTotalTestMinutes(min)}
-                                      className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                                        totalTestMinutes === min
-                                          ? 'bg-emerald-500 text-slate-950 shadow-md ring-2 ring-emerald-300'
-                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                      }`}
-                                    >
-                                      {min}m
-                                    </button>
-                                  ))}
-                                </div>
-
-                                {/* Custom Total Test Minutes Input */}
-                                <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-950/70 border border-slate-800">
-                                  <span className="text-[11px] font-bold text-slate-400">Custom Exam Time:</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={240}
-                                      value={totalTestMinutes}
-                                      onChange={(e) => setTotalTestMinutes(Math.max(1, Math.min(240, Number(e.target.value) || 1)))}
-                                      className="w-16 px-2 py-1 bg-slate-900 border border-emerald-500/40 rounded-lg text-emerald-300 font-mono text-xs font-black text-center focus:outline-none focus:ring-1 focus:ring-emerald-400"
-                                    />
-                                    <span className="text-xs font-bold text-slate-400">Minutes</span>
-                                  </div>
-                                </div>
-
-                                <div className="p-2 rounded-xl bg-slate-900/80 border border-emerald-500/30 text-[11px] text-emerald-300 space-y-1">
-                                  <p className="flex items-center gap-1.5 font-black text-emerald-400">
-                                    <CheckCircle2 size={13} /> 🚫 Auto-Next Band (Free Navigation Mode)
-                                  </p>
-                                  <p className="text-slate-300 text-[10px] leading-relaxed">
-                                    User kisi bhi sawal par kitna bhi time le sakta hai. <b>Question Palette / Grid</b> aur Previous/Next buttons se kisi bhi sawal par aage-peeche ja sakta hai. <b>{totalTestMinutes} minute</b> hone par hi test submit hoga.
-                                  </p>
-                                </div>
-                              </div>
-                            )}
-
-                            {testTimerMode === 'MIX' && (
-                              <div className="space-y-2.5 pt-2 border-t border-slate-800">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[11px] font-bold text-slate-300">1. Total Exam Time:</span>
-                                  <span className="text-xs font-black text-purple-400">{totalTestMinutes} Min</span>
-                                </div>
-                                <div className="grid grid-cols-6 gap-1">
-                                  {[5, 10, 15, 20, 30, 45].map((min) => (
-                                    <button
-                                      key={`mix_total_${min}`}
-                                      type="button"
-                                      onClick={() => setTotalTestMinutes(min)}
-                                      className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                                        totalTestMinutes === min
-                                          ? 'bg-purple-500 text-white shadow-md ring-2 ring-purple-300'
-                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                      }`}
-                                    >
-                                      {min}m
-                                    </button>
-                                  ))}
-                                </div>
-
-                                {/* Custom Total Minutes Input for Mix */}
-                                <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-950/70 border border-slate-800">
-                                  <span className="text-[11px] font-bold text-slate-400">Custom Exam Time:</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      max={240}
-                                      value={totalTestMinutes}
-                                      onChange={(e) => setTotalTestMinutes(Math.max(1, Math.min(240, Number(e.target.value) || 1)))}
-                                      className="w-16 px-2 py-1 bg-slate-900 border border-purple-500/40 rounded-lg text-purple-300 font-mono text-xs font-black text-center focus:outline-none focus:ring-1 focus:ring-purple-400"
-                                    />
-                                    <span className="text-xs font-bold text-slate-400">Minutes</span>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center justify-between pt-1">
-                                  <span className="text-[11px] font-bold text-slate-300">2. Ideal Question Pace (Alert):</span>
-                                  <span className="text-xs font-black text-amber-400">{mixPaceSeconds} Sec</span>
-                                </div>
-                                <div className="grid grid-cols-5 gap-1">
-                                  {[15, 20, 30, 45, 60].map((sec) => (
-                                    <button
-                                      key={`mix_pace_${sec}`}
-                                      type="button"
-                                      onClick={() => setMixPaceSeconds(sec)}
-                                      className={`py-1.5 rounded-lg text-xs font-black transition cursor-pointer ${
-                                        mixPaceSeconds === sec
-                                          ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-300'
-                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                      }`}
-                                    >
-                                      {sec}s
-                                    </button>
-                                  ))}
-                                </div>
-
-                                {/* Custom Pace Seconds Input */}
-                                <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-950/70 border border-slate-800">
-                                  <span className="text-[11px] font-bold text-slate-400">Custom Question Pace:</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <input
-                                      type="number"
-                                      min={5}
-                                      max={300}
-                                      value={mixPaceSeconds}
-                                      onChange={(e) => setMixPaceSeconds(Math.max(5, Math.min(300, Number(e.target.value) || 5)))}
-                                      className="w-16 px-2 py-1 bg-slate-900 border border-amber-500/40 rounded-lg text-amber-300 font-mono text-xs font-black text-center focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                    />
-                                    <span className="text-xs font-bold text-slate-400">Seconds</span>
-                                  </div>
-                                </div>
-
-                                <div className="pt-1 flex items-center justify-between border-t border-slate-800/80">
-                                  <span className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5">
-                                    <Smartphone size={13} className="text-purple-400" /> Phone Vibration Alert:
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setMixVibrateAlert(!mixVibrateAlert)}
-                                    className={`px-2.5 py-1 rounded-lg text-xs font-black transition cursor-pointer ${
-                                      mixVibrateAlert
-                                        ? 'bg-purple-500/20 text-purple-300 border border-purple-500/50'
-                                        : 'bg-slate-800 text-slate-400 border border-slate-700'
-                                    }`}
-                                  >
-                                    {mixVibrateAlert ? '📳 Vibrate ON' : 'Mute'}
-                                  </button>
-                                </div>
-
-                                <div className="p-2 rounded-xl bg-slate-900/80 border border-purple-500/30 text-[11px] text-purple-300 space-y-1">
-                                  <p className="flex items-center gap-1.5 font-black text-purple-400">
-                                    <CheckCircle2 size={13} /> 🚫 Auto-Next Band (Vibration + Free Grid)
-                                  </p>
-                                  <p className="text-slate-300 text-[10px] leading-relaxed">
-                                    Sawal auto-change <b>nahi hoga</b>! Har sawal par <b>{mixPaceSeconds}s</b> hone par mobile vibrate karega taaki pata chale ideal time beet gaya, aur student <b>Question Grid</b> se kisi bhi sawal par aage-peeche ja sakta hai.
-                                  </p>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* 3. Filter Section based on Mode & Domain */}
-                          {currentRoom.mcqType === 'REVISION_HUB' ? (
-                            battleDomain === 'ACADEMIC' ? (
-                              /* ⚡ MCQ+ Mode: Academic Syllabus (Class 6-12) */
-                              <div className="p-3 rounded-2xl bg-purple-950/20 border border-purple-500/30 space-y-2.5">
-                                <div className="space-y-1">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-bold text-purple-300">Class Chunein:</span>
-                                    <span className="text-[10px] text-slate-400 font-bold">
-                                      Revision Hub (Class 6th se 12th)
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-wrap gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setBattleClass('ALL');
-                                        setBattleSubject('ALL');
-                                      }}
-                                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition ${
-                                        battleClass === 'ALL'
-                                          ? 'bg-purple-500 text-slate-950 shadow-md'
-                                          : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
-                                      }`}
-                                    >
-                                      Sabhi Classes
-                                    </button>
-                                    {academicClasses.map((cls, cIdx) => {
-                                      const revCount = allRealLessons.filter(
-                                        (l) => l.sourceType === 'REVISION_HUB' && l.classLevel === cls
-                                      ).length;
-                                      return (
-                                        <button
-                                          key={`avail_cls_${cls || cIdx}`}
-                                          type="button"
-                                          onClick={() => {
-                                            setBattleClass(cls);
-                                            setBattleSubject('ALL');
-                                          }}
-                                          className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition ${
-                                            battleClass === cls
-                                              ? 'bg-purple-500 text-slate-950 shadow-md'
-                                              : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
-                                          }`}
-                                        >
-                                          Class {cls} {revCount > 0 ? `(${revCount})` : ''}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-
-                                {/* Subject Selection */}
-                                {(() => {
-                                  const classLessons = allRealLessons.filter(
-                                    (l) =>
-                                      l.sourceType === 'REVISION_HUB' &&
-                                      l.classLevel !== 'COMPETITION' &&
-                                      (battleClass === 'ALL' || l.classLevel === battleClass)
-                                  );
-                                  const subjects = Array.from(new Set(classLessons.map((l) => l.subject))).filter(Boolean).sort();
-                                  if (subjects.length === 0) return null;
-                                  return (
-                                    <div className="space-y-1">
-                                      <span className="text-[11px] font-bold text-purple-300 block">Subject Chunein:</span>
-                                      <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto pr-1">
-                                        <button
-                                          type="button"
-                                          onClick={() => handleToggleBattleSubject('ALL')}
-                                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${isBattleSubjectActive('ALL')
-                                              ? 'bg-purple-600 text-white font-black shadow'
-                                              : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
-                                          }`}
-                                        >
-                                          Sabhi ({classLessons.length})
-                                        </button>
-                                        {subjects.map((sub, subIdx) => {
-                                          const subCount = classLessons.filter((l) => l.subject === sub).length;
-                                          return (
-                                            <button
-                                              key={`avail_sub_${sub || subIdx}`}
-                                              type="button"
-                                              onClick={() => handleToggleBattleSubject(sub)}
-                                              className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${
-                                                isBattleSubjectActive(sub)
-                                                  ? 'bg-purple-600 text-white font-black shadow'
-                                                  : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
-                                              }`}
-                                            >
-                                              {sub} ({subCount})
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
-
-                                {/* Search input */}
-                                <div className="relative">
-                                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                                  <input
-                                    type="text"
-                                    value={battleSearch}
-                                    onChange={(e) => setBattleSearch(e.target.value)}
-                                    placeholder="🔍 Revision Hub syllabus lesson search karein..."
-                                    className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700/80 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-purple-400"
-                                  />
-                                  {battleSearch && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setBattleSearch('')}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
-                                    >
-                                      ✕
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            ) : (
-                              /* ⚡ MCQ+ Mode: Competition (STRICTLY ONLY LUCENT) */
-                              <div className="p-3 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-2.5">
-                                <div className="space-y-1">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-bold text-amber-300">
-                                      📖 Lucent Samanya Gyan / GK (Only Lucent):
-                                    </span>
-                                    <span className="text-[10px] text-amber-400 font-bold">
-                                      ⚡ Revision Hub Competition
-                                    </span>
-                                  </div>
-                                  <p className="text-[10px] text-slate-400">
-                                    MCQ + Mode me competition me Revision Hub se <b>sirf Lucent</b> ke sets aate hain.
-                                  </p>
-                                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pr-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleToggleBattleSubject('ALL')}
-                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${
-                                        isBattleSubjectActive('ALL')
-                                          ? 'bg-amber-500 text-slate-950 font-black shadow'
-                                          : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
-                                      }`}
-                                    >
-                                      Sabhi Lucent Topics
-                                    </button>
-                                    {lucentSubjectOptions.map((opt) => {
-                                      const isActive = isBattleSubjectActive(opt.name);
-                                      return (
-                                        <button
-                                          key={`luc_subj_${opt.id}`}
-                                          type="button"
-                                          onClick={() => handleToggleBattleSubject(opt.name)}
-                                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold cursor-pointer transition ${
-                                            isActive
-                                              ? 'bg-amber-500 text-slate-950 font-black shadow ring-1 ring-amber-300'
-                                              : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
-                                          }`}
-                                        >
-                                          {opt.name}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-
-                                <div className="relative">
-                                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                                  <input
-                                    type="text"
-                                    value={battleSearch}
-                                    onChange={(e) => setBattleSearch(e.target.value)}
-                                    placeholder="🔍 Lucent topic ya chapter search karein..."
-                                    className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700/80 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-400"
-                                  />
-                                  {battleSearch && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setBattleSearch('')}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
-                                    >
-                                      ✕
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            )
-                          ) : (
-                            /* 🎯 MCQ Mode: Academic vs Competition */
-                            battleDomain === 'ACADEMIC' ? (
-                              /* 🎯 MCQ Mode: Academic Syllabus (Notes & Homework) */
-                              <div className="p-3 rounded-2xl bg-cyan-950/20 border border-cyan-500/30 space-y-2.5">
-                                <div className="space-y-1">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-bold text-cyan-300">Class Chunein:</span>
-                                    <span className="text-[10px] text-slate-400 font-bold">
-                                      Notes & Homework Sets
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-wrap gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => setBattleClass('ALL')}
-                                      className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition ${
-                                        battleClass === 'ALL'
-                                          ? 'bg-cyan-500 text-slate-950 shadow-md'
-                                          : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
-                                      }`}
-                                    >
-                                      Sabhi Classes
-                                    </button>
-                                    {academicClasses.map((cls, cIdx) => (
-                                      <button
-                                        key={`mcq_acad_cls_${cls || cIdx}`}
-                                        type="button"
-                                        onClick={() => setBattleClass(cls)}
-                                        className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition ${
-                                          battleClass === cls
-                                            ? 'bg-cyan-500 text-slate-950 shadow-md'
-                                            : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
-                                        }`}
-                                      >
-                                        Class {cls}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-
-                                <div className="space-y-1">
-                                  <span className="text-[11px] font-bold text-cyan-300 block">Category:</span>
-                                  <div className="flex flex-wrap gap-1">
-                                    {(['ALL', 'NOTES', 'HOMEWORK'] as const).map((cat, catIdx) => (
-                                      <button
-                                        key={`cat_${cat}_${catIdx}`}
-                                        type="button"
-                                        onClick={() => setBattleCategory(cat)}
-                                        className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition ${
-                                          battleCategory === cat
-                                            ? 'bg-cyan-500 text-slate-950 shadow-md'
-                                            : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200'
-                                        }`}
-                                      >
-                                        {cat === 'ALL'
-                                          ? 'Sabhi'
-                                          : cat === 'NOTES'
-                                          ? '📖 Notes ke MCQs'
-                                          : '📝 Homework'}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-
-                                <div className="relative">
-                                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                                  <input
-                                    type="text"
-                                    value={battleSearch}
-                                    onChange={(e) => setBattleSearch(e.target.value)}
-                                    placeholder="🔍 Lesson ka naam search karein (Math, Science, Chapter)..."
-                                    className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700/80 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
-                                  />
-                                  {battleSearch && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setBattleSearch('')}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
-                                    >
-                                      ✕
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            ) : (
-                              /* 🎯 MCQ Mode: Competition (ALL COMPETITION BOOKS) */
-                              <div className="p-3 rounded-2xl bg-amber-950/20 border border-amber-500/30 space-y-2.5">
-                                <div className="space-y-1">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-bold text-amber-300">
-                                      📚 Competition Book Chunein (Sabhi Books):
-                                    </span>
-                                    <span className="text-[10px] text-amber-400 font-bold">
-                                      {allCompetitionBooks.length} Books
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto pr-1">
-                                    {allCompetitionBooks.map((b) => (
-                                      <button
-                                        key={`comp_book_${b.id}`}
-                                        type="button"
-                                        onClick={() => setBattleBook(b.id)}
-                                        className={`px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition flex items-center gap-1 ${
-                                          battleBook === b.id
-                                            ? 'bg-amber-500 text-slate-950 shadow-md ring-1 ring-amber-300'
-                                            : 'bg-slate-900 border border-slate-800 text-slate-300 hover:text-white'
-                                        }`}
-                                      >
-                                        <span>{b.emoji}</span>
-                                        <span>{b.name}</span>
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-
-                                <div className="relative">
-                                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                                  <input
-                                    type="text"
-                                    value={battleSearch}
-                                    onChange={(e) => setBattleSearch(e.target.value)}
-                                    placeholder="🔍 Book / Chapter / Subject search karein..."
-                                    className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700/80 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-400"
-                                  />
-                                  {battleSearch && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setBattleSearch('')}
-                                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
-                                    >
-                                      ✕
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            )
-                          )}
-
-                          {/* 4. Lesson Selection List with Multi-Select Powers */}
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                                {currentRoom.mcqType === 'REVISION_HUB' ? (
-                                  <span className="text-purple-300 flex items-center gap-1.5">
-                                    <Zap size={14} className="text-purple-400 fill-purple-400" />
-                                    <span>3. Lesson Chunein:</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-cyan-300 flex items-center gap-1.5">
-                                    <BookOpen size={14} className="text-cyan-400" />
-                                    <span>Lesson Chunein:</span>
-                                  </span>
-                                )}
-                              </span>
-                              <div className="flex items-center gap-1.5">
-                                {isBasicUser ? (
-                                  <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-black border border-indigo-500/30">
-                                    ⭐ {selectedCuratedSets.length} Chune Gaye
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] font-black text-slate-400">
-                                    {availableBattleSets.length} Lessons Uplabdh
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Host Multi-Select Toolbar for Basic & Ultra */}
-                            {isBasicUser ? (
-                              <div className="flex items-center justify-between bg-slate-900/80 p-2 rounded-xl border border-indigo-500/30 text-[11px]">
-                                <span className="font-bold text-slate-300 flex items-center gap-1.5 text-[11px]">
-                                  <span className="text-amber-400 font-black">⭐ Multi-Lesson Mode:</span>
-                                  <span>{selectedCuratedSets.length} Lessons Selected</span>
-                                </span>
-                                <div className="flex items-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={handleSelectAllBattleLessons}
-                                    className="px-2 py-0.5 rounded-lg bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 font-bold hover:bg-indigo-600/50 cursor-pointer text-[10px]"
-                                  >
-                                    ✓ Sabhi Select
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={handleDeselectAllBattleLessons}
-                                    className="px-2 py-0.5 rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 cursor-pointer text-[10px]"
-                                  >
-                                    Reset
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-between bg-slate-900/60 p-2 rounded-xl border border-slate-800 text-[11px]">
-                                <span className="text-slate-400 text-[10px]">
-                                  🎓 Free Host: Single lesson battle test
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setTierFeaturePrompt({
-                                      title: '⭐ Basic & Ultra Host: Multi-Lesson Battle',
-                                      description: 'Ek sath multipul subjects aur lessons select karne ka option Basic aur Ultra hosts ke liye hai!',
-                                      targetTier: 'BASIC',
-                                    })
-                                  }
-                                  className="text-[10px] text-amber-400 font-bold hover:underline cursor-pointer"
-                                >
-                                  Multiple Lessons Unlock Karein →
-                                </button>
-                              </div>
-                            )}
-
-                            {availableBattleSets.length > 0 ? (
-                              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                                {availableBattleSets.map((set, sIdx) => {
-                                  const isSelected = isBasicUser
-                                    ? selectedCuratedSets.includes(set.id)
-                                    : selectedCuratedSet === set.id;
-                                  const isRevision = currentRoom.mcqType === 'REVISION_HUB';
-                                  return (
-                                    <div
-                                      key={set.id ? `${set.id}_${sIdx}` : `battle_set_${sIdx}`}
-                                      onClick={() => handleToggleBattleLesson(set.id)}
-                                      className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer transition text-left ${
-                                        isSelected
-                                          ? isRevision
-                                            ? 'bg-purple-600/25 border-purple-400 text-white ring-1 ring-purple-500/50 shadow-md'
-                                            : 'bg-cyan-600/25 border-cyan-400 text-white ring-1 ring-cyan-500/50 shadow-md'
-                                          : 'bg-slate-900/90 border-slate-800 text-slate-300 hover:border-slate-700'
-                                      }`}
-                                    >
-                                      {isBasicUser ? (
-                                        <input
-                                          type="checkbox"
-                                          checked={isSelected}
-                                          onChange={() => {}}
-                                          className="w-4 h-4 rounded text-amber-500 focus:ring-amber-400 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
-                                        />
-                                      ) : (
-                                        <input
-                                          type="radio"
-                                          name="mcqSet"
-                                          checked={isSelected}
-                                          onChange={() => {}}
-                                          className="w-4 h-4 text-cyan-500 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
-                                        />
-                                      )}
-                                      <span className="text-xl shrink-0">{set.emoji}</span>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-1.5">
-                                          <p className="text-xs font-black truncate">{set.name}</p>
-                                          {set.tag && (
-                                            <span
-                                              className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border shrink-0 ${
-                                                set.badgeColor || 'bg-slate-800 text-slate-300 border-slate-700'
-                                              }`}
-                                            >
-                                              {set.tag}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <p className="text-[10px] text-slate-400 mt-0.5">
-                                          {set.questions.length} Questions • {set.subject || 'General'}
-                                        </p>
-                                      </div>
-                                      {isSelected && (
-                                        <CheckCircle2
-                                          size={16}
-                                          className={`shrink-0 ${isRevision ? 'text-purple-400' : 'text-cyan-400'}`}
-                                        />
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            ) : (
-                              <div className="py-4 text-center space-y-2 bg-slate-900/60 rounded-xl border border-slate-800 p-3">
-                                <p className="text-xs text-slate-400 font-semibold">
-                                  Is filter me koi lesson nahi mila.
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                  Time Limit Set Karein
                                 </p>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setBattleSearch('');
-                                    setBattleSubject('ALL');
-                                    setBattleSubjects(['ALL']);
-                                    setBattleClass('ALL');
-                                    setBattleCategory('ALL');
-                                  }}
-                                  className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold transition cursor-pointer"
-                                >
-                                  Filter Reset Karein
-                                </button>
                               </div>
-                            )}
-                          </div>
+                            </button>
 
-                          {/* ── QUESTION LIMIT & CUSTOMIZATION PANEL (Basic & Ultra) ── */}
-                          <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-700/80 space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-black text-slate-200 flex items-center gap-1.5">
-                                <SlidersHorizontal size={14} className="text-amber-400" />
-                                <span>Question Limits & Order ({isBasicUser ? '⭐ Active' : '🔒 Basic & Ultra'})</span>
-                              </span>
-                              {!isBasicUser && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setTierFeaturePrompt({
-                                      title: '⭐ Basic & Ultra Power: Custom Question Limits',
-                                      description: 'Subject-wise, lesson-wise ya total question limits tay karne ka option Basic aur Ultra hosts ke liye hai.',
-                                      targetTier: 'BASIC',
-                                    })
-                                  }
-                                  className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black cursor-pointer"
-                                >
-                                  Upgrade Power ⚡
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Limit Mode Switcher */}
-                            <div className="grid grid-cols-4 gap-1.5">
-                              {[
-                                { id: 'ALL', label: 'Sabhi (All)' },
-                                { id: 'PER_LESSON', label: 'Per Lesson' },
-                                { id: 'PER_SUBJECT', label: 'Per Subject' },
-                                { id: 'TOTAL', label: 'Total Limit' },
-                              ].map((m) => (
-                                <button
-                                  key={m.id}
-                                  type="button"
-                                  onClick={() => {
-                                    if (!isBasicUser) {
-                                      setTierFeaturePrompt({
-                                        title: '⭐ Basic Power: Question Limits',
-                                        description: 'Question limits tay karne ka feature Basic aur Ultra members ke liye hai.',
-                                        targetTier: 'BASIC',
-                                      });
-                                      return;
-                                    }
-                                    setLimitMode(m.id as any);
-                                  }}
-                                  className={`py-1.5 px-1 rounded-xl text-[10px] font-black transition cursor-pointer text-center ${
-                                    limitMode === m.id
-                                      ? 'bg-amber-500 text-slate-950 font-black shadow'
-                                      : 'bg-slate-950/80 border border-slate-800 text-slate-300 hover:text-white'
-                                  }`}
-                                >
-                                  {m.label}
-                                </button>
-                              ))}
-                            </div>
-
-                            {/* Numeric Selector depending on Limit Mode */}
-                            {limitMode === 'PER_LESSON' && (
-                              <div className="flex items-center justify-between pt-1">
-                                <span className="text-[11px] text-slate-300 font-bold">Har Lesson se Kitne Sawaal?</span>
-                                <div className="flex items-center gap-1">
-                                  {[5, 10, 15, 20].map((num) => (
-                                    <button
-                                      key={`pl_${num}`}
-                                      type="button"
-                                      onClick={() => setQuestionsPerLessonLimit(num)}
-                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition ${
-                                        questionsPerLessonLimit === num
-                                          ? 'bg-amber-500 text-slate-950 shadow'
-                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                      }`}
-                                    >
-                                      {num}
-                                    </button>
-                                  ))}
+                            {/* 6. Question Limits & Order Tile (Opens Drawer) */}
+                            <button
+                              type="button"
+                              onClick={() => setActiveSetupDrawer('QUESTION_LIMITS')}
+                              className="p-2.5 sm:p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border border-slate-700/80 hover:border-amber-400/60 transition cursor-pointer text-left flex flex-col justify-between gap-2 shadow-md active:scale-[0.98]"
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 text-amber-300 flex items-center justify-center text-base shrink-0">
+                                  🎛️
+                                </div>
+                                <div className="flex items-center gap-0.5 text-slate-400 group-hover:text-amber-300">
+                                  <span className="text-[9px] font-bold text-slate-500 hidden sm:inline">Settings</span>
+                                  <ChevronRight size={13} />
                                 </div>
                               </div>
-                            )}
-
-                            {limitMode === 'PER_SUBJECT' && (
-                              <div className="flex items-center justify-between pt-1">
-                                <span className="text-[11px] text-slate-300 font-bold">Har Subject se Kitne Sawaal?</span>
-                                <div className="flex items-center gap-1">
-                                  {[5, 10, 15, 20, 25, 30].map((num) => (
-                                    <button
-                                      key={`ps_${num}`}
-                                      type="button"
-                                      onClick={() => setQuestionsPerSubjectLimit(num)}
-                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition ${
-                                        questionsPerSubjectLimit === num
-                                          ? 'bg-amber-500 text-slate-950 shadow'
-                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                      }`}
-                                    >
-                                      {num}
-                                    </button>
-                                  ))}
-                                </div>
+                              <div className="min-w-0 w-full">
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block truncate">Question Limits & Order</span>
+                                <p className="text-xs font-black text-amber-300 truncate mt-0.5">
+                                  {currentRoom.mcqType === 'REVISION_HUB'
+                                    ? '100 Questions (Fixed)'
+                                    : (limitMode === 'ALL'
+                                      ? 'Sabhi Questions (Variable)'
+                                      : limitMode === 'PER_LESSON'
+                                      ? `${questionsPerLessonLimit}/Lesson`
+                                      : limitMode === 'PER_SUBJECT'
+                                      ? `${questionsPerSubjectLimit}/Subject`
+                                      : `Total ${totalQuestionsLimit} Qs`)}
+                                </p>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                  {currentRoom.mcqType === 'REVISION_HUB'
+                                    ? '⚡ MCQ+ Fixed 100 Qs'
+                                    : (questionOrderMode === 'RANDOM' ? '🎲 Shuffled' : '📋 Sequential')}
+                                </p>
                               </div>
-                            )}
-
-                            {limitMode === 'TOTAL' && (
-                              <div className="flex items-center justify-between pt-1">
-                                <span className="text-[11px] text-slate-300 font-bold">Kul (Total) Questions Limit:</span>
-                                <div className="flex items-center gap-1">
-                                  {[10, 15, 20, 30, 50, 100].map((num) => (
-                                    <button
-                                      key={`tot_${num}`}
-                                      type="button"
-                                      onClick={() => setTotalQuestionsLimit(num)}
-                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-black cursor-pointer transition ${
-                                        totalQuestionsLimit === num
-                                          ? 'bg-amber-500 text-slate-950 shadow'
-                                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                                      }`}
-                                    >
-                                      {num}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Question Shuffling / Order */}
-                            <div className="flex items-center justify-between pt-1 border-t border-slate-800">
-                              <span className="text-[11px] text-slate-300 font-bold">Sawaal Ka Order:</span>
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setQuestionOrderMode('RANDOM')}
-                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition cursor-pointer ${
-                                    questionOrderMode === 'RANDOM'
-                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
-                                      : 'bg-slate-800 text-slate-400'
-                                  }`}
-                                >
-                                  🎲 Shuffled (Random)
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setQuestionOrderMode('SEQUENTIAL')}
-                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition cursor-pointer ${
-                                    questionOrderMode === 'SEQUENTIAL'
-                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50'
-                                      : 'bg-slate-800 text-slate-400'
-                                  }`}
-                                >
-                                  📋 Sequential
-                                </button>
-                              </div>
-                            </div>
+                            </button>
                           </div>
 
                           {/* ── ULTRA USER QUESTION INSPECTOR CARD ── */}
@@ -5444,7 +4946,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           </div>
 
                           {/* 5. Launch or Schedule Action Section (Last Step after choosing questions) */}
-                          <div className="space-y-3 pt-1">
+                          <div className="space-y-3.5 p-4 rounded-2xl bg-slate-900/80 border border-indigo-400/20 shadow-lg">
                             {/* Toggle between Launch Now vs Schedule */}
                             <div className="p-1 rounded-2xl bg-slate-950 border border-slate-800 grid grid-cols-2 gap-1">
                               <button
@@ -5457,7 +4959,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 }`}
                               >
                                 <Play size={13} className="fill-current" />
-                                <span>🚀 Abhi Shuru Karein</span>
+                                <span>Test abhi launch karein</span>
                               </button>
                               <button
                                 type="button"
@@ -5475,7 +4977,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 }`}
                               >
                                 <Clock size={13} />
-                                <span>⏰ Schedule Karein</span>
+                                <span>Test schedule karein</span>
                                 {!isBasicUser && !isUltraUser && !isAdmin && (
                                   <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">VIP</span>
                                 )}
@@ -5498,13 +5000,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               >
                                 <Play size={16} className="fill-current" />
                                 <span>
-                                  🚀 Launch {currentRoom.mcqType === 'REVISION_HUB' ? 'MCQ + Battle' : 'MCQ Battle'} Now (
-                                  {testTimerMode === 'PER_QUESTION'
-                                    ? `${selectedTimerDuration}s/Q`
-                                    : testTimerMode === 'TOTAL_TEST'
-                                    ? `${totalTestMinutes}m Exam`
-                                    : `${totalTestMinutes}m + ${mixPaceSeconds}s Alert`}
-                                  )
+                                  🚀 Launch {currentRoom.mcqType === 'REVISION_HUB' ? 'MCQ + Battle' : 'MCQ Battle'} Now ({totalTestMinutes}m Exam)
                                 </span>
                               </button>
                             )}
@@ -5751,6 +5247,8 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       const qIdx = Math.max(0, Math.min(studentActiveQIndex, totalQuestions - 1));
                       const q = currentRoom.liveMcq!.questions[qIdx];
                       if (!q) return null;
+                      const savedMyScore = user?.id ? currentRoom.liveMcq!.scores?.[user.id] : undefined;
+                      const hasSubmittedThisTest = hasStudentSubmittedEarly || Boolean(savedMyScore?.submittedAt);
 
                       const isReveal = currentRoom.liveMcq!.status === 'REVEAL';
                       const isProjector = currentRoom.mcqType === 'PROJECTOR_MODE';
@@ -5775,7 +5273,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                           }`}
                         >
                           {/* ── EARLY SUBMITTED STATE: Waiting for Room Timer to Complete ── */}
-                          {hasStudentSubmittedEarly && !currentRoom.isExpired && totalTestSecondsLeft > 0 ? (
+                          {hasSubmittedThisTest && !currentRoom.isExpired && totalTestSecondsLeft > 0 ? (
                             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center space-y-5 rounded-3xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl animate-in zoom-in-95 duration-200">
                               <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 text-emerald-400 flex items-center justify-center text-3xl shadow-lg">
                                 <CheckCircle2 size={36} className="text-emerald-400 animate-pulse" />
@@ -5786,28 +5284,52 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   Test Submitted Successfully
                                 </span>
                                 <h3 className="text-xl sm:text-2xl font-black text-white pt-1">
-                                  Aapka Test Darj Ho Chuka Hai!
+                                  Aapka Result Tayyar Hai!
                                 </h3>
                                 <p className="text-xs text-slate-300 max-w-md mx-auto leading-relaxed">
-                                  Aapka score aur answers surakshit submit ho gaye hain. Room ka samay pura hote hi sabhi participants ka final result aur rank declare hogi.
+                                  Aapka score abhi dekh sakte hain. Room ka samay pura hone par sabhi participants ki final rank aur leaderboard bhi dikhegi.
                                 </p>
                               </div>
 
-                              {/* Timer & Attempt Summary */}
-                              <div className="grid grid-cols-3 gap-3 w-full max-w-md">
+                              {/* Show this student's score immediately; the room leaderboard remains live until the test ends. */}
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full max-w-md">
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Score</span>
+                                  <span className="text-lg font-black text-amber-400">
+                                    {savedMyScore?.score ?? localBattleStats.score} pts
+                                  </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Sahi</span>
+                                  <span className="text-lg font-black text-emerald-400">
+                                    {savedMyScore?.correctCount ?? localBattleStats.correctCount}
+                                  </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Galat</span>
+                                  <span className="text-lg font-black text-rose-400">
+                                    {savedMyScore?.wrongCount ?? localBattleStats.wrongCount}
+                                  </span>
+                                </div>
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                  <span className="block text-[10px] font-bold text-slate-400">Accuracy</span>
+                                  <span className="text-lg font-black text-cyan-300">
+                                    {Math.round(((savedMyScore?.correctCount ?? localBattleStats.correctCount) / Math.max(totalQuestions, 1)) * 100)}%
+                                  </span>
+                                </div>
                                 <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
                                   <span className="block text-[10px] font-bold text-slate-400">Kul Attempt</span>
-                                  <span className="text-lg font-black text-emerald-400">
-                                    {answeredQuestionsCount}
+                                  <span className="text-lg font-black text-indigo-300">
+                                    {savedMyScore?.totalAnswered ?? localBattleStats.totalAnswered}
                                   </span>
                                 </div>
                                 <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
-                                  <span className="block text-[10px] font-bold text-slate-400">Chhute Huye</span>
+                                  <span className="block text-[10px] font-bold text-slate-400">Bache Sawal</span>
                                   <span className="text-lg font-black text-amber-400">
-                                    {Math.max(0, totalQuestions - answeredQuestionsCount)}
+                                    {Math.max(0, totalQuestions - (savedMyScore?.totalAnswered ?? localBattleStats.totalAnswered))}
                                   </span>
                                 </div>
-                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center">
+                                <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-center col-span-2 sm:col-span-3">
                                   <span className="block text-[10px] font-bold text-slate-400">Bacha Samay</span>
                                   <span className="text-lg font-black text-cyan-300 font-mono">
                                     {Math.floor(totalTestSecondsLeft / 60)}:{String(totalTestSecondsLeft % 60).padStart(2, '0')}
@@ -5858,20 +5380,44 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                           <span>Exam: {formattedExamTime}</span>
                                         </span>
 
-                                        {/* Mix Mode Pace Badge */}
-                                        {currentRoom.liveMcq?.timerMode === 'MIX' && (
-                                          <span
-                                            className={`font-mono font-black px-2 py-1 rounded-xl border text-[11px] flex items-center gap-1 transition ${
-                                              paceSecondsLeft === 0
-                                                ? 'bg-purple-600 text-white border-purple-400 animate-bounce'
-                                                : 'bg-slate-800 text-purple-300 border-slate-700'
-                                            }`}
-                                            title="Ideal time for this question"
-                                          >
-                                            <Smartphone size={12} className={paceSecondsLeft === 0 ? 'text-white' : 'text-purple-400'} />
-                                            {paceSecondsLeft === 0 ? '📳 Pace Alert!' : `${paceSecondsLeft}s Pace`}
-                                          </span>
-                                        )}
+                                        {/* Ideal Question Pace Badge (User controls their own pace) */}
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowPaceSettingsModal(true)}
+                                          className={`font-mono font-black px-2 py-1 rounded-xl border text-[11px] flex items-center gap-1 transition cursor-pointer select-none active:scale-95 ${
+                                            paceSecondsLeft === 0
+                                              ? 'bg-purple-600 text-white border-purple-400 animate-bounce shadow-md shadow-purple-500/30'
+                                              : 'bg-slate-800/90 hover:bg-slate-700 text-purple-300 border-purple-500/40 hover:border-purple-300'
+                                          }`}
+                                          title="Ideal Question Pace: Click to change time & vibration alert"
+                                        >
+                                          <Smartphone size={12} className={paceSecondsLeft === 0 ? 'text-white' : 'text-purple-400'} />
+                                          <span>{paceSecondsLeft === 0 ? '📳 Pace Alert!' : `${paceSecondsLeft}s Pace`}</span>
+                                          <SlidersHorizontal size={11} className="text-purple-300 opacity-70 ml-0.5" />
+                                        </button>
+
+                                        {/* Direct Phone Vibration Alert Toggle (In user's hands) */}
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const nextVal = !userVibrateAlert;
+                                            setUserVibrateAlert(nextVal);
+                                            try {
+                                              localStorage.setItem('study_user_vibrate_alert', String(nextVal));
+                                              if (nextVal && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                                                navigator.vibrate(60);
+                                              }
+                                            } catch {}
+                                          }}
+                                          className={`px-2 py-1 rounded-xl text-[11px] font-black border transition cursor-pointer flex items-center gap-1 select-none active:scale-95 ${
+                                            userVibrateAlert
+                                              ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 hover:bg-purple-500/30'
+                                              : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-300'
+                                          }`}
+                                          title={userVibrateAlert ? 'Vibration Alert is ON (Click to Mute)' : 'Vibration is Muted (Click to turn ON)'}
+                                        >
+                                          <span>{userVibrateAlert ? '📳 Vibrate ON' : '🔕 Mute'}</span>
+                                        </button>
 
                                         {/* Quick Finish Button */}
                                         <button
@@ -5984,7 +5530,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                           type="button"
                                           onClick={() => {
                                             setStudentActiveQIndex(idx);
-                                            setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                            setPaceSecondsLeft(userPaceSeconds || 20);
                                             setHasPaceAlertTriggered(false);
                                           }}
                                           className={`w-7 h-7 sm:w-8 sm:h-8 rounded-xl text-xs font-black transition flex items-center justify-center cursor-pointer select-none ${
@@ -6004,25 +5550,37 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               )}
 
                               {/* Mix Mode Alert Banner if pace is reached */}
-                              {isSelfPaced && currentRoom.liveMcq?.timerMode === 'MIX' && paceSecondsLeft === 0 && (
-                                <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/40 flex items-center justify-between text-xs text-purple-200 animate-in fade-in duration-150">
+                              {isSelfPaced && paceSecondsLeft === 0 && (
+                                <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/40 flex flex-wrap items-center justify-between gap-2 text-xs text-purple-200 animate-in fade-in duration-150">
                                   <span className="flex items-center gap-1.5 font-bold">
                                     <Smartphone size={14} className="text-purple-400 animate-pulse" />
-                                    <b>Pace Alert:</b> Is sawal ka chuna hua time pura ho gaya! Mobile vibrate hua. Agle sawal par switch karein.
+                                    <span>
+                                      <b>Pace Alert:</b> Is sawal ka ideal time ({userPaceSeconds}s) pura ho gaya! {userVibrateAlert ? '📳 Mobile vibrate hua.' : '🔕 (Muted).'} Agle sawal par switch karein.
+                                    </span>
                                   </span>
-                                  {qIdx < totalQuestions - 1 && (
+                                  <div className="flex items-center gap-1.5 shrink-0">
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        setStudentActiveQIndex(qIdx + 1);
-                                        setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
-                                        setHasPaceAlertTriggered(false);
-                                      }}
-                                      className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black shrink-0 transition cursor-pointer"
+                                      onClick={() => setShowPaceSettingsModal(true)}
+                                      className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-purple-500/30 text-purple-300 text-[10px] font-black transition cursor-pointer"
+                                      title="Change Ideal Question Pace seconds or vibration"
                                     >
-                                      Next Q ➡
+                                      ⏱️ Pace ({userPaceSeconds}s)
                                     </button>
-                                  )}
+                                    {qIdx < totalQuestions - 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setStudentActiveQIndex(qIdx + 1);
+                                          setPaceSecondsLeft(userPaceSeconds || 20);
+                                          setHasPaceAlertTriggered(false);
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-black shrink-0 transition cursor-pointer"
+                                      >
+                                        Next Q ➡
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               )}
 
@@ -6188,38 +5746,42 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               {/* ── FIXED BOTTOM NAVIGATION & ACTION BAR (Never shifts or jumps with MCQ height!) ── */}
                               <div className="sticky bottom-0 z-20 mt-auto pt-3 pb-1 border-t border-slate-800 bg-slate-950/95 backdrop-blur-md flex items-center justify-between gap-2 shadow-2xl">
                                 <div className="flex items-center gap-1.5 sm:gap-2">
-                                  <button
-                                    type="button"
-                                    disabled={qIdx === 0}
-                                    onClick={() => {
-                                      if (qIdx > 0) {
-                                        setStudentActiveQIndex(qIdx - 1);
-                                        setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
-                                        setHasPaceAlertTriggered(false);
-                                      }
-                                    }}
-                                    className="px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-slate-700 bg-slate-800/90 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-black text-slate-200 flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-sm shrink-0"
-                                    title="Pichla Sawal"
-                                  >
-                                    <ChevronLeft size={16} /> <span className="hidden xs:inline">Pichla</span>
-                                  </button>
+                                  {isSelfPaced && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={qIdx === 0}
+                                        onClick={() => {
+                                          if (qIdx > 0) {
+                                            setStudentActiveQIndex(qIdx - 1);
+                                            setPaceSecondsLeft(userPaceSeconds || 20);
+                                            setHasPaceAlertTriggered(false);
+                                          }
+                                        }}
+                                        className="px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl border border-slate-700 bg-slate-800/90 hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-black text-slate-200 flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-sm shrink-0"
+                                        title="Pichla Sawal"
+                                      >
+                                        <ChevronLeft size={16} /> <span className="hidden xs:inline">Pichla</span>
+                                      </button>
 
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowQuestionPalette((prev) => !prev)}
-                                    className={`px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl border text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer shrink-0 ${
-                                      showQuestionPalette
-                                        ? 'bg-indigo-600 text-white border-indigo-400 shadow-md'
-                                        : 'bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border-indigo-500/40'
-                                    }`}
-                                    title="Sawal Grid kholein ya band karein"
-                                  >
-                                    <LayoutGrid size={15} />
-                                    <span className="hidden sm:inline">Sawal Grid</span>
-                                    <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-[10px] font-black text-white">
-                                      {answeredQuestionsCount}/{totalQuestions}
-                                    </span>
-                                  </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowQuestionPalette((prev) => !prev)}
+                                        className={`px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-xl border text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer shrink-0 ${
+                                          showQuestionPalette
+                                            ? 'bg-indigo-600 text-white border-indigo-400 shadow-md'
+                                            : 'bg-indigo-950/40 hover:bg-indigo-900/50 text-indigo-300 border-indigo-500/40'
+                                        }`}
+                                        title="Sawal Grid kholein ya band karein"
+                                      >
+                                        <LayoutGrid size={15} />
+                                        <span className="hidden sm:inline">Sawal Grid</span>
+                                        <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/30 text-[10px] font-black text-white">
+                                          {answeredQuestionsCount}/{totalQuestions}
+                                        </span>
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
 
                                 <span className="text-xs font-bold text-slate-400 hidden md:inline">
@@ -6227,30 +5789,19 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                 </span>
 
                                 <div className="flex items-center gap-1.5 sm:gap-2 ml-auto">
-                                  {/* Show Answer button: STRICTLY for Admin / Host only! */}
-                                  {isHost && (
-                                    !isReveal ? (
-                                      <button
-                                        type="button"
-                                        onClick={handleRevealAnswer}
-                                        className="px-3 sm:px-3.5 py-2 sm:py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow active:scale-95 transition cursor-pointer flex items-center gap-1 shrink-0"
-                                        title="Admin only: Sahi answer sabko reveal karein"
-                                      >
-                                        <Eye size={14} /> <span className="hidden sm:inline">Reveal</span>
-                                      </button>
-                                    ) : !isSelfPaced ? (
-                                      <button
-                                        type="button"
-                                        onClick={handleNextMcqQuestion}
-                                        className="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
-                                      >
-                                        {qIdx + 1 >= totalQuestions ? (
-                                          <>Podium 🏆</>
-                                        ) : (
-                                          <>Sync Next ➡️ ({revealSecondsLeft}s)</>
-                                        )}
-                                      </button>
-                                    ) : null
+                                  {/* No manual answer-reveal control: users see the answer only after the timer reveals it. */}
+                                  {isHost && isReveal && !isSelfPaced && (
+                                    <button
+                                      type="button"
+                                      onClick={handleNextMcqQuestion}
+                                      className="px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs shadow-lg active:scale-95 transition flex items-center gap-1 cursor-pointer shrink-0"
+                                    >
+                                      {qIdx + 1 >= totalQuestions ? (
+                                        <>Podium 🏆</>
+                                      ) : (
+                                        <>Sync Next ➡️ ({revealSecondsLeft}s)</>
+                                      )}
+                                    </button>
                                   )}
 
                                   {/* Next Question / Submit Test Button */}
@@ -6258,8 +5809,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                     <button
                                       type="button"
                                       onClick={() => {
+                                        if (!isSelfPaced) {
+                                          void handleNextMcqQuestion();
+                                          return;
+                                        }
                                         setStudentActiveQIndex(qIdx + 1);
-                                        setPaceSecondsLeft(currentRoom.liveMcq?.targetPaceSeconds || mixPaceSeconds || 20);
+                                        setPaceSecondsLeft(userPaceSeconds || 20);
                                         setHasPaceAlertTriggered(false);
                                       }}
                                       className="px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl border border-indigo-500 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-600 text-xs font-black text-white flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-lg shadow-indigo-600/30 shrink-0"
@@ -6269,10 +5824,16 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   ) : (
                                     <button
                                       type="button"
-                                      onClick={() => setShowSubmitConfirmModal(true)}
+                                      onClick={() => {
+                                        if (!isSelfPaced) {
+                                          void handleNextMcqQuestion();
+                                          return;
+                                        }
+                                        setShowSubmitConfirmModal(true);
+                                      }}
                                       className="px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl border border-emerald-500 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-600 text-xs font-black text-white flex items-center gap-1 transition active:scale-95 cursor-pointer shadow-lg shadow-emerald-600/30 shrink-0"
                                     >
-                                      <span>Submit</span> <CheckCircle2 size={16} />
+                                      <span>{isSelfPaced ? 'Submit' : 'Finish'}</span> <CheckCircle2 size={16} />
                                     </button>
                                   )}
                                 </div>
@@ -6285,10 +5846,24 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
                   {/* Battle State: ENDED (Complete Results, Podium & Question-by-Question Review) */}
                   {(currentRoom.liveMcq?.status === 'ENDED' || currentRoom.isExpired) && (() => {
-                    const scores = Object.entries(currentRoom.liveMcq?.scores || {}).sort(
+                    const scoreMap = currentRoom.liveMcq?.scores || {};
+                    const scores = Object.entries(scoreMap).sort(
                       (a, b) => (b[1].score || 0) - (a[1].score || 0)
                     );
-                    const myScore = user?.id ? currentRoom.liveMcq?.scores?.[user.id] : null;
+                    const myScore = user?.id
+                      ? scoreMap[user.id] || {
+                          name: user.name || 'Student',
+                          score: localBattleStats.score,
+                          correctCount: localBattleStats.correctCount,
+                          wrongCount: localBattleStats.wrongCount,
+                          totalAnswered: localBattleStats.totalAnswered,
+                          userXp: localBattleStats.userXp,
+                        }
+                      : null;
+                    if (user?.id && !scoreMap[user.id]) {
+                      scores.push([user.id, myScore!]);
+                      scores.sort((a, b) => (b[1].score || 0) - (a[1].score || 0));
+                    }
                     const myRank = user?.id ? scores.findIndex(([uid]) => uid === user.id) + 1 : 0;
                     const totalQ = currentRoom.liveMcq?.totalQuestions || currentRoom.liveMcq?.questions?.length || 0;
                     const questions = currentRoom.liveMcq?.questions || [];
@@ -6416,6 +5991,219 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             </div>
                           </div>
                         )}
+
+                        {/* ── REVISION HUB STYLE TOPIC ANALYSIS (Weak vs Strong Topics Analysis) ── */}
+                        {(() => {
+                          const topicStatsMap: Record<string, { total: number; correct: number; percent: number }> = {};
+                          questions.forEach((q, qIdx) => {
+                            const topicKey = (q as any).topic || (q as any).chapterTitle || (q as any).chapter || currentRoom.subject || 'General';
+                            if (!topicStatsMap[topicKey]) {
+                              topicStatsMap[topicKey] = { total: 0, correct: 0, percent: 0 };
+                            }
+                            topicStatsMap[topicKey].total++;
+                            const qAnswers = allAnswersMap[qIdx] || {};
+                            const myAns = user?.id ? qAnswers[user.id] : null;
+                            if (myAns && myAns.isCorrect) {
+                              topicStatsMap[topicKey].correct++;
+                            }
+                          });
+
+                          Object.keys(topicStatsMap).forEach((k) => {
+                            const itm = topicStatsMap[k];
+                            itm.percent = itm.total > 0 ? Math.round((itm.correct / itm.total) * 100) : 0;
+                          });
+
+                          const topicEntries = Object.entries(topicStatsMap);
+                          if (topicEntries.length === 0) return null;
+
+                          const strongTopics = topicEntries.filter(([_, s]) => s.percent >= 70);
+                          const averageTopics = topicEntries.filter(([_, s]) => s.percent >= 40 && s.percent < 70);
+                          const weakTopics = topicEntries.filter(([_, s]) => s.percent < 40);
+
+                          const isRevisionHubRoom = currentRoom.mcqType === 'REVISION_HUB';
+
+                          return (
+                            <div className="bg-slate-800/90 border border-purple-500/30 rounded-2xl p-4 max-w-xl mx-auto text-left space-y-3.5 shadow-lg">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-300 flex items-center justify-center text-sm font-black border border-purple-500/30">
+                                    {isRevisionHubRoom ? '⚡' : '📊'}
+                                  </div>
+                                  <div>
+                                    <h4 className="text-xs font-black uppercase text-white tracking-wider flex items-center gap-1.5">
+                                      {isRevisionHubRoom ? '⚡ Revision Hub Topic Analysis' : '📊 Topic-Wise Mastery Report'}
+                                    </h4>
+                                    <p className="text-[10px] text-slate-400">
+                                      Aapka kon sa topic majboot hai aur kon sa kamzor
+                                    </p>
+                                  </div>
+                                </div>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                                  weakTopics.length > 0
+                                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                    : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                }`}>
+                                  {weakTopics.length > 0 ? `⚠️ ${weakTopics.length} Kamzor Topic` : '🌟 Sabhi Topics Majboot'}
+                                </span>
+                              </div>
+
+                              {/* Donut / Badge Summary Row */}
+                              <div className="grid grid-cols-3 gap-2 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => setTopicFilterTab(topicFilterTab === 'STRONG' ? 'ALL' : 'STRONG')}
+                                  className={`p-2 rounded-xl border text-center transition cursor-pointer ${
+                                    topicFilterTab === 'STRONG'
+                                      ? 'bg-emerald-600/30 border-emerald-400 ring-2 ring-emerald-400'
+                                      : 'bg-emerald-950/40 border-emerald-500/30 hover:bg-emerald-900/30'
+                                  }`}
+                                >
+                                  <span className="block text-[10px] font-bold text-emerald-400">🟢 Majboot (Strong)</span>
+                                  <span className="text-sm font-black text-white">{strongTopics.length} Topics</span>
+                                </button>
+                                <div className="p-2 rounded-xl bg-amber-950/40 border border-amber-500/30">
+                                  <span className="block text-[10px] font-bold text-amber-400">🟠 Madhyam (Average)</span>
+                                  <span className="text-sm font-black text-white">{averageTopics.length} Topics</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setTopicFilterTab(topicFilterTab === 'WEAK' ? 'ALL' : 'WEAK')}
+                                  className={`p-2 rounded-xl border text-center transition cursor-pointer ${
+                                    topicFilterTab === 'WEAK'
+                                      ? 'bg-rose-600/30 border-rose-400 ring-2 ring-rose-400'
+                                      : 'bg-rose-950/40 border-rose-500/30 hover:bg-rose-900/30'
+                                  }`}
+                                >
+                                  <span className="block text-[10px] font-bold text-rose-400">🔴 Kamzor (Weak)</span>
+                                  <span className="text-sm font-black text-white">{weakTopics.length} Topics</span>
+                                </button>
+                              </div>
+
+                              {/* Interactive Filter Pills */}
+                              <div className="flex items-center gap-1.5 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setTopicFilterTab('ALL')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition cursor-pointer ${
+                                    topicFilterTab === 'ALL'
+                                      ? 'bg-purple-600 text-white shadow'
+                                      : 'bg-slate-900 text-slate-400 hover:bg-slate-800'
+                                  }`}
+                                >
+                                  Sabhi Topics ({topicEntries.length})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setTopicFilterTab('WEAK')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition cursor-pointer ${
+                                    topicFilterTab === 'WEAK'
+                                      ? 'bg-rose-600 text-white shadow'
+                                      : 'bg-slate-900 text-rose-400 hover:bg-slate-800'
+                                  }`}
+                                >
+                                  🔴 Kamzor Topics ({weakTopics.length})
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setTopicFilterTab('STRONG')}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition cursor-pointer ${
+                                    topicFilterTab === 'STRONG'
+                                      ? 'bg-emerald-600 text-white shadow'
+                                      : 'bg-slate-900 text-emerald-400 hover:bg-slate-800'
+                                  }`}
+                                >
+                                  🟢 Majboot Topics ({strongTopics.length})
+                                </button>
+                              </div>
+
+                              {/* Topic Breakdown Progress Bars */}
+                              {(() => {
+                                const displayed = topicFilterTab === 'WEAK'
+                                  ? weakTopics
+                                  : topicFilterTab === 'STRONG'
+                                  ? strongTopics
+                                  : topicEntries;
+
+                                return (
+                                  <div className="space-y-2 pt-1 max-h-60 overflow-y-auto pr-1">
+                                    {displayed.length === 0 ? (
+                                      <p className="text-center py-4 text-xs text-slate-400">
+                                        Is category me koi topic nahi mila.
+                                      </p>
+                                    ) : (
+                                      displayed.map(([tName, tStat], tIdx) => {
+                                        const isWeak = tStat.percent < 40;
+                                        const isStrong = tStat.percent >= 70;
+                                        return (
+                                          <div
+                                            key={`t_stat_${tIdx}`}
+                                            className={`p-2.5 rounded-xl border text-xs space-y-1.5 transition ${
+                                              isWeak
+                                                ? 'bg-rose-950/25 border-rose-500/40 ring-1 ring-rose-500/20'
+                                                : isStrong
+                                                ? 'bg-emerald-950/20 border-emerald-500/30'
+                                                : 'bg-slate-900/60 border-slate-800'
+                                            }`}
+                                          >
+                                            <div className="flex items-center justify-between">
+                                              <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className="text-sm">
+                                                  {isWeak ? '🔴' : isStrong ? '🟢' : '🟠'}
+                                                </span>
+                                                <span className="font-bold text-slate-200 truncate">
+                                                  {tName}
+                                                </span>
+                                                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                                                  isWeak
+                                                    ? 'bg-rose-500/30 text-rose-300'
+                                                    : isStrong
+                                                    ? 'bg-emerald-500/30 text-emerald-300'
+                                                    : 'bg-amber-500/30 text-amber-300'
+                                                }`}>
+                                                  {isWeak ? 'Kamzor (Weak)' : isStrong ? 'Majboot (Strong)' : 'Average'}
+                                                </span>
+                                              </div>
+                                              <span className="font-black text-white text-xs shrink-0">
+                                                {tStat.correct}/{tStat.total} ({tStat.percent}%)
+                                              </span>
+                                            </div>
+
+                                            {/* Visual Progress Track */}
+                                            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                                              <div
+                                                className={`h-full rounded-full transition-all duration-500 ${
+                                                  isWeak ? 'bg-rose-500' : isStrong ? 'bg-emerald-500' : 'bg-amber-500'
+                                                }`}
+                                                style={{ width: `${tStat.percent}%` }}
+                                              />
+                                            </div>
+
+                                            {/* Revision Hub Recommendation Note */}
+                                            {isWeak && (
+                                              <p className="text-[10px] text-rose-300/90 leading-tight">
+                                                ⚠️ <b>Sudhar ki zaroorat:</b> Is topic ke basic concepts aur short notes ko Revision Hub me dubara padhein!
+                                              </p>
+                                            )}
+                                          </div>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                );
+                              })()}
+
+                              {/* Button to Open Full Revision Hub Marksheet Card */}
+                              <button
+                                type="button"
+                                onClick={() => setShowDetailedMarksheet(true)}
+                                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-black flex items-center justify-center gap-2 shadow-lg transition cursor-pointer mt-2"
+                              >
+                                <span>📑</span>
+                                <span>Revision Hub Pura Marksheet Card Kholein (Solutions, Weak Topics & Audio)</span>
+                              </button>
+                            </div>
+                          );
+                        })()}
 
                         {/* Full Participants Leaderboard Table */}
                         <div className="max-w-xl mx-auto text-left space-y-2">
@@ -6672,7 +6460,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                               <button
                                 type="button"
                                 onClick={async () => {
-                                  await resetLiveMcqToWaiting(currentRoom.id);
+                                  await resetLiveMcqToWaiting(currentRoom.id, currentRoom.durationMinutes);
                                 }}
                                 className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs active:scale-95 transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-amber-900/30"
                               >
@@ -7176,21 +6964,31 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
       {/* ── CREATE ROOM MODAL (Mandatory Password & MCQ Mode Selection) ── */}
       {showCreateModal && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-in zoom-in-95 duration-150">
-          <div className="w-full max-w-lg bg-slate-900 border border-slate-700 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-3.5 text-slate-100 max-h-[92vh] flex flex-col">
-            <div className="flex items-center justify-between shrink-0">
-              <h3 className="text-base font-black text-white flex items-center gap-2">
-                <Trophy size={18} className="text-indigo-400" /> Naya MCQ Study Room Banayein
-              </h3>
+          <div className="w-full max-w-4xl bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/70 border border-indigo-400/25 rounded-[28px] p-4 sm:p-6 shadow-[0_28px_100px_rgba(0,0,0,0.65)] space-y-4 text-slate-100 max-h-[92vh] flex flex-col overflow-hidden">
+            <div className="flex items-start justify-between gap-4 shrink-0">
+              <div className="flex items-start gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-500/15 border border-indigo-400/25 text-indigo-300 flex items-center justify-center shrink-0">
+                  <Trophy size={19} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-indigo-300">Assessment workspace · Step 01</p>
+                  <h3 className="text-lg sm:text-xl font-black text-white tracking-tight">Study Room tayyar karein</h3>
+                  <p className="text-xs text-slate-400 mt-1">Room details set karein, phir lobby mein apna exam question set banayein.</p>
+                </div>
+              </div>
               <button
                 onClick={() => setShowCreateModal(false)}
-                className="w-7 h-7 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+                aria-label="Close room setup"
+                className="w-8 h-8 rounded-xl bg-slate-800/90 border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 flex items-center justify-center cursor-pointer transition-colors shrink-0"
               >
                 <X size={14} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateRoom} className="space-y-3.5 overflow-y-auto pr-1 flex-1">
-              <div>
+            <StudyRoomSetupProgress currentStep={1} />
+
+            <form onSubmit={handleCreateRoom} className="grid grid-cols-1 md:grid-cols-2 gap-4 overflow-y-auto pr-1 flex-1 min-h-0">
+              <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-slate-300 mb-1">Room Name:</label>
                 <input
                   type="text"
@@ -7198,12 +6996,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   placeholder="e.g. Mission Bihar SSC & Lucent MCQ Battle"
                   value={newRoomName}
                   onChange={(e) => setNewRoomName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/15 transition"
                 />
               </div>
 
               {/* Optional Password Field */}
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
                   <span>
                     Room Password <span className="text-slate-400 font-normal">(Optional / Marzi Hai)</span>
@@ -7216,7 +7014,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     placeholder="Khali chhodein ya secret password daalein (e.g. 1234)"
                     value={newRoomPassword}
                     onChange={(e) => setNewRoomPassword(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 focus:border-amber-400 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none pr-10 shadow-inner"
+                    className="w-full bg-slate-950/80 border border-slate-700 focus:border-indigo-400 rounded-xl px-4 py-3 text-sm text-white outline-none pr-11 transition"
                   />
                   <button
                     type="button"
@@ -7232,7 +7030,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               </div>
 
               {/* Informational Card: MCQ Mode & Chapter Selection happens inside the Room Lobby */}
-              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-950/60 to-purple-950/60 border border-indigo-500/30 text-xs text-slate-200 flex items-start gap-2.5">
+              <div className="md:col-span-2 p-4 rounded-2xl bg-indigo-500/[0.07] border border-indigo-400/20 text-xs text-slate-200 flex items-start gap-3">
                 <span className="text-base shrink-0">💡</span>
                 <div className="space-y-1">
                   <p className="font-bold text-white text-xs">
@@ -7261,7 +7059,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 <select
                   value={newRoomDurationMinutes}
                   onChange={(e) => setNewRoomDurationMinutes(parseInt(e.target.value, 10))}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                  className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white outline-none focus:border-indigo-400 transition"
                 >
                   {durationOptions.map((m) => (
                     <option key={`dur_opt_${m}`} value={m}>
@@ -7286,7 +7084,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 <select
                   value={newRoomMaxMembers}
                   onChange={(e) => setNewRoomMaxMembers(parseInt(e.target.value, 10))}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-950/80 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white outline-none focus:border-indigo-400 transition"
                 >
                   {(isAdmin || userTier === 'ULTRA') && (
                     <option value={100}>🚀 100 Members (Mega Battle Room - Full Cohort / High Speed)</option>
@@ -7303,7 +7101,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               </div>
 
               {/* ── ROOM COLOR THEME SELECTOR ── */}
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
                   <span>Room Theme / Color:</span>
                   <span className="text-[10px] text-indigo-300 font-bold">
@@ -7347,7 +7145,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </div>
               </div>
 
-              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px]">
+              <div className="md:col-span-2 flex items-center justify-between px-4 py-3 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px]">
                 <span className="text-slate-400">Daily Room Limit:</span>
                 <span className="font-bold">
                   {isAdmin ? (
@@ -7365,7 +7163,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-3 rounded-xl font-black text-xs text-white shadow-xl active:scale-95 transition cursor-pointer shrink-0"
+                className="md:col-span-2 w-full py-3.5 rounded-xl font-black text-sm text-white shadow-xl active:scale-[0.99] transition cursor-pointer shrink-0"
                 style={{ background: brandColor }}
               >
                 {isLoading ? 'Creating Room...' : '🚀 Room Banayein (Lobby Kholein)'}
@@ -7406,6 +7204,25 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </p>
 
                 <form onSubmit={handleVerifyPasswordAndJoin} className="space-y-3">
+                  {/* Optional Name on Entry */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center justify-between">
+                      <span className="flex items-center gap-1">👤 Aapka Naam (Optional)</span>
+                      <span className="text-[10px] text-cyan-400 font-medium">🌐 Sabhi Classes Allowed</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={user?.name || "Apna naam likhein (optional)..."}
+                      value={entryCustomName}
+                      onChange={(e) => setEntryCustomName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white outline-none focus:border-amber-400 placeholder:text-slate-500"
+                      maxLength={30}
+                    />
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {entryCustomName.trim() ? `Room me aapka naam: "${entryCustomName.trim()}" dikhega.` : `Default: "${user?.name || 'Student'}"`}
+                    </p>
+                  </div>
+
                   <div className="relative">
                     <input
                       type={showPasswordText ? 'text' : 'password'}
@@ -7469,6 +7286,25 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   </div>
                 </div>
 
+                {/* Optional Name on Entry */}
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-300 mb-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1">👤 Aapka Naam (Optional)</span>
+                    <span className="text-[10px] text-cyan-400 font-medium">🌐 Sabhi Classes Allowed</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={user?.name || "Apna naam likhein (optional)..."}
+                    value={entryCustomName}
+                    onChange={(e) => setEntryCustomName(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2 text-xs text-white outline-none focus:border-amber-400 placeholder:text-slate-500"
+                    maxLength={30}
+                  />
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {entryCustomName.trim() ? `Room me aapka naam: "${entryCustomName.trim()}" dikhega.` : `Default: "${user?.name || 'Student'}"`}
+                  </p>
+                </div>
+
                 <p className="text-xs text-slate-300">
                   Yeh public room hai. Kya aap abhi is room me join karna chahte hain?
                 </p>
@@ -7479,7 +7315,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     onClick={() => {
                       const roomToJoin = passwordModalRoom;
                       setPasswordModalRoom(null);
-                      handleJoinRoom(roomToJoin);
+                      handleJoinRoom(roomToJoin, entryCustomName.trim());
                     }}
                     className="flex-1 py-2.5 rounded-xl font-black text-xs text-slate-950 bg-emerald-400 hover:bg-emerald-300 shadow-md active:scale-95 transition cursor-pointer"
                   >
@@ -7495,6 +7331,87 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── CHANGE DISPLAY NAME MODAL (Inside Study Room) ── */}
+      {showChangeNameModal && (
+        <div className="fixed inset-0 z-[10002] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in zoom-in-95 duration-150">
+          <div className="w-full max-w-sm bg-slate-900 border border-indigo-500/40 rounded-3xl p-6 shadow-2xl space-y-4 text-slate-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                  <User size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">Naam Badlein (Display Name)</h3>
+                  <p className="text-[10px] text-slate-400">Is Study Room ke liye apna naam update karein</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowChangeNameModal(false)}
+                className="w-7 h-7 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Naya Display Naam:</label>
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="Apna naya naam yahan likhein..."
+                  value={changeNameInputValue}
+                  onChange={(e) => setChangeNameInputValue(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none focus:border-indigo-400"
+                  maxLength={30}
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={!changeNameInputValue.trim()}
+                  onClick={async () => {
+                    if (!currentRoom || !changeNameInputValue.trim()) return;
+                    const newName = changeNameInputValue.trim();
+                    setShowChangeNameModal(false);
+                    await updateMemberDisplayName(currentRoom.id, user?.id || 'guest', newName);
+                    setCurrentRoom((prev) => {
+                      if (!prev || !prev.members) return prev;
+                      const uid = auth.currentUser?.uid || user?.id || 'guest';
+                      if (!prev.members[uid]) return prev;
+                      const updated = {
+                        ...prev,
+                        members: {
+                          ...prev.members,
+                          [uid]: {
+                            ...prev.members[uid],
+                            name: newName,
+                          },
+                        },
+                      };
+                      saveCachedRoom(updated);
+                      return updated;
+                    });
+                  }}
+                  className="flex-1 py-2.5 rounded-xl font-black text-xs text-white bg-indigo-600 hover:bg-indigo-500 shadow-md active:scale-95 transition cursor-pointer disabled:opacity-50"
+                >
+                  ✓ Naam Save Karein
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowChangeNameModal(false)}
+                  className="px-4 py-2.5 rounded-xl font-bold text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 active:scale-95 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -7909,6 +7826,974 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
         </div>
       )}
 
+      {/* ── ROOM SETUP DRAWER SYSTEM (Bottom Sheet on Mobile, Centered Modal on Desktop) ── */}
+      {activeSetupDrawer && (
+        <div className="fixed inset-0 z-[11500] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="absolute inset-0" onClick={() => setActiveSetupDrawer(null)} />
+          <div className="relative w-full sm:max-w-2xl bg-gradient-to-b from-slate-900 via-slate-900 to-slate-950 border border-slate-700/80 rounded-t-[32px] sm:rounded-3xl p-4 sm:p-6 shadow-2xl max-h-[85vh] flex flex-col text-slate-100 z-10 animate-in slide-in-from-bottom-6 duration-200">
+            {/* Mobile Drag Bar */}
+            <div className="w-12 h-1.5 rounded-full bg-slate-700 mx-auto mb-3 sm:hidden shrink-0" />
+
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 flex items-center justify-center text-lg shrink-0">
+                  {activeSetupDrawer === 'ASSESSMENT_MODE' && '🎯'}
+                  {activeSetupDrawer === 'SECTION' && '📚'}
+                  {activeSetupDrawer === 'CLASS' && '🏫'}
+                  {activeSetupDrawer === 'COMPETITION_BOOK' && '📖'}
+                  {activeSetupDrawer === 'LESSONS' && '📋'}
+                  {activeSetupDrawer === 'DURATION' && '⏱️'}
+                  {activeSetupDrawer === 'QUESTION_LIMITS' && '🎛️'}
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-white">
+                    {activeSetupDrawer === 'ASSESSMENT_MODE' && 'Assessment Mode Chunein'}
+                    {activeSetupDrawer === 'SECTION' && 'Section Chunein'}
+                    {activeSetupDrawer === 'CLASS' && 'Class & Subject Chunein'}
+                    {activeSetupDrawer === 'COMPETITION_BOOK' && 'Competition Book Chunein'}
+                    {activeSetupDrawer === 'LESSONS' && 'Lesson Chunein'}
+                    {activeSetupDrawer === 'DURATION' && 'Total Exam Duration Chunein'}
+                    {activeSetupDrawer === 'QUESTION_LIMITS' && 'Question Limits & Order'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {activeSetupDrawer === 'ASSESSMENT_MODE' && 'MCQ Mode ya MCQ + Mode select karein'}
+                    {activeSetupDrawer === 'SECTION' && 'Academic Syllabus ya Competition select karein'}
+                    {activeSetupDrawer === 'CLASS' && 'Class aur Subject ke mutabiq filter karein'}
+                    {activeSetupDrawer === 'COMPETITION_BOOK' && 'Competition exam ki book chunein'}
+                    {activeSetupDrawer === 'LESSONS' && `${availableBattleSets.length} Lessons uplabdh hain`}
+                    {activeSetupDrawer === 'DURATION' && 'Pure test ka kul samay (minutes) tay karein'}
+                    {activeSetupDrawer === 'QUESTION_LIMITS' && 'Har lesson, subject ya total question limit aur sequence tay karein'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveSetupDrawer(null)}
+                className="w-8 h-8 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer transition shrink-0"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Scrollable Body */}
+            <div className="flex-1 overflow-y-auto py-3 space-y-3 min-h-0 pr-1">
+              {/* 1. ASSESSMENT MODE DRAWER CONTENT */}
+              {activeSetupDrawer === 'ASSESSMENT_MODE' && (
+                <div className="space-y-3">
+                  <div
+                    onClick={() => {
+                      handleSwitchMcqType('PROJECTOR_MODE');
+                      setBattleSearch('');
+                      setBattleSubject('ALL');
+                      setBattleCategory('ALL');
+                      setBattleBook('ALL');
+                      setActiveSetupDrawer(null);
+                    }}
+                    className={`p-4 rounded-2xl border cursor-pointer transition flex items-start gap-3 ${
+                      currentRoom.mcqType !== 'REVISION_HUB'
+                        ? 'bg-cyan-600/25 border-cyan-400 text-white ring-1 ring-cyan-500 shadow-lg'
+                        : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-xl shrink-0">
+                      🎯
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-black text-white">🎯 MCQ Mode</h4>
+                        {currentRoom.mcqType !== 'REVISION_HUB' && (
+                          <span className="px-2 py-0.5 rounded-full bg-cyan-500 text-slate-950 text-[10px] font-black">
+                            ✓ Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-300 font-bold mt-0.5">Syllabus & All Competition Books</p>
+                      <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                        Lucent, Speedy Science, Speedy SST aur NCERT School Syllabus (Class 6-12) ke MCQs available hain. Sabhi users ke liye free practice.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => {
+                      if (isFreeUser) {
+                        alert('🔒 MCQ+ Question Sets sirf Pro / Ultra members host kar sakte hain! Free users standard MCQ practice sets host kar sakte hain.');
+                        return;
+                      }
+                      handleSwitchMcqType('REVISION_HUB');
+                      setBattleSearch('');
+                      setBattleSubject('ALL');
+                      setBattleBook('ALL');
+                      setActiveSetupDrawer(null);
+                    }}
+                    className={`p-4 rounded-2xl border cursor-pointer transition flex items-start gap-3 ${
+                      isFreeUser
+                        ? 'bg-slate-950/50 border-slate-800 text-slate-500'
+                        : currentRoom.mcqType === 'REVISION_HUB'
+                        ? 'bg-purple-600/25 border-purple-400 text-white ring-1 ring-purple-500 shadow-lg'
+                        : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-300 flex items-center justify-center text-xl shrink-0">
+                      ⚡
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-black text-white">⚡ MCQ + Mode</h4>
+                          {isFreeUser && (
+                            <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-black">
+                              🔒 PRO
+                            </span>
+                          )}
+                        </div>
+                        {currentRoom.mcqType === 'REVISION_HUB' && (
+                          <span className="px-2 py-0.5 rounded-full bg-purple-500 text-white text-[10px] font-black">
+                            ✓ Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-300 font-bold mt-0.5">Revision Hub & Strictly Lucent GK</p>
+                      <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                        Curated Revision Hub questions aur Lucent Samanya Gyan ke special sets. Pro & Ultra members ke liye exclusive.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 2. SECTION DRAWER CONTENT */}
+              {activeSetupDrawer === 'SECTION' && (
+                <div className="space-y-3">
+                  <div
+                    onClick={() => {
+                      setBattleDomain('ACADEMIC');
+                      setBattleSubject('ALL');
+                      setBattleCategory('ALL');
+                      setActiveSetupDrawer(null);
+                    }}
+                    className={`p-4 rounded-2xl border cursor-pointer transition flex items-start gap-3 ${
+                      battleDomain === 'ACADEMIC'
+                        ? 'bg-cyan-600/25 border-cyan-400 text-white ring-1 ring-cyan-500 shadow-lg'
+                        : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center text-xl shrink-0">
+                      📚
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-black text-white">📚 Academic Syllabus</h4>
+                        {battleDomain === 'ACADEMIC' && (
+                          <span className="px-2 py-0.5 rounded-full bg-cyan-500 text-slate-950 text-[10px] font-black">
+                            ✓ Selected
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-300 font-bold mt-0.5">Class 6th se 12th Notes & Homework</p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        School & Board syllabus ke mutabiq subjects jaise Science, Math, SST, Hindi, etc.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => {
+                      setBattleDomain('COMPETITION');
+                      setBattleSubject('ALL');
+                      setBattleBook('ALL');
+                      setActiveSetupDrawer(null);
+                    }}
+                    className={`p-4 rounded-2xl border cursor-pointer transition flex items-start gap-3 ${
+                      battleDomain === 'COMPETITION'
+                        ? 'bg-amber-600/25 border-amber-400 text-white ring-1 ring-amber-500 shadow-lg'
+                        : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center text-xl shrink-0">
+                      🏆
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-black text-white">🏆 Competition Books</h4>
+                        {battleDomain === 'COMPETITION' && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500 text-slate-950 text-[10px] font-black">
+                            ✓ Selected
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-300 font-bold mt-0.5">
+                        {currentRoom.mcqType === 'REVISION_HUB' ? '⚡ Revision Hub: Only Lucent' : '🎯 Sabhi Competition Books'}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Lucent GK, Speedy Science, Speedy Social Science aur sabhi competitive exam sets.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. CLASS DRAWER CONTENT */}
+              {activeSetupDrawer === 'CLASS' && (
+                <div className="space-y-4">
+                  {/* Class Pills */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-2">Class Chunein:</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBattleClass('ALL');
+                          setBattleSubject('ALL');
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                          battleClass === 'ALL'
+                            ? 'bg-cyan-500 text-slate-950 shadow-md ring-2 ring-cyan-300'
+                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                        }`}
+                      >
+                        Sabhi Classes
+                      </button>
+                      {academicClasses.map((cls, cIdx) => (
+                        <button
+                          key={`drawer_cls_${cls || cIdx}`}
+                          type="button"
+                          onClick={() => {
+                            setBattleClass(cls);
+                            setBattleSubject('ALL');
+                          }}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                            battleClass === cls
+                              ? 'bg-cyan-500 text-slate-950 shadow-md ring-2 ring-cyan-300'
+                              : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                          }`}
+                        >
+                          Class {cls}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Subject Pills */}
+                  {(() => {
+                    const classLessons = allRealLessons.filter(
+                      (l) =>
+                        l.classLevel !== 'COMPETITION' &&
+                        (battleClass === 'ALL' || l.classLevel === battleClass)
+                    );
+                    const subjects = Array.from(new Set(classLessons.map((l) => l.subject))).filter(Boolean).sort();
+                    if (subjects.length === 0) return null;
+                    return (
+                      <div>
+                        <label className="text-xs font-bold text-slate-300 block mb-2">Subject Chunein:</label>
+                        <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pr-1">
+                          <button
+                            type="button"
+                            onClick={() => handleToggleBattleSubject('ALL')}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                              isBattleSubjectActive('ALL')
+                                ? 'bg-indigo-600 text-white font-black shadow'
+                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            }`}
+                          >
+                            Sabhi Subjects ({classLessons.length})
+                          </button>
+                          {subjects.map((sub, sIdx) => {
+                            const subCount = classLessons.filter((l) => l.subject === sub).length;
+                            return (
+                              <button
+                                key={`drawer_sub_${sub || sIdx}`}
+                                type="button"
+                                onClick={() => handleToggleBattleSubject(sub)}
+                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                                  isBattleSubjectActive(sub)
+                                    ? 'bg-indigo-600 text-white font-black shadow ring-1 ring-indigo-300'
+                                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                }`}
+                              >
+                                {sub} ({subCount})
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Category Pills (if Projector mode) */}
+                  {currentRoom.mcqType !== 'REVISION_HUB' && (
+                    <div>
+                      <label className="text-xs font-bold text-slate-300 block mb-2">Category:</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(['ALL', 'NOTES', 'HOMEWORK'] as const).map((cat) => (
+                          <button
+                            key={`drawer_cat_${cat}`}
+                            type="button"
+                            onClick={() => setBattleCategory(cat)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                              battleCategory === cat
+                                ? 'bg-cyan-500 text-slate-950 shadow-md'
+                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                            }`}
+                          >
+                            {cat === 'ALL' ? 'Sabhi' : cat === 'NOTES' ? '📖 Notes ke MCQs' : '📝 Homework'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Search Bar */}
+                  <div className="relative pt-1">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={battleSearch}
+                      onChange={(e) => setBattleSearch(e.target.value)}
+                      placeholder="🔍 Lesson ka naam ya chapter search karein..."
+                      className="w-full pl-9 pr-8 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                    />
+                    {battleSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setBattleSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. COMPETITION BOOK DRAWER CONTENT */}
+              {activeSetupDrawer === 'COMPETITION_BOOK' && (
+                <div className="space-y-4">
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={battleSearch}
+                      onChange={(e) => setBattleSearch(e.target.value)}
+                      placeholder="🔍 Book ya topic search karein..."
+                      className="w-full pl-9 pr-8 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                    />
+                    {battleSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setBattleSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Revision Hub: Only Lucent Topics */}
+                  {currentRoom.mcqType === 'REVISION_HUB' ? (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-amber-300">📖 Lucent Samanya Gyan Topics:</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleToggleBattleSubject('ALL');
+                            setActiveSetupDrawer(null);
+                          }}
+                          className={`p-2.5 rounded-xl border text-left text-xs font-black transition cursor-pointer ${
+                            isBattleSubjectActive('ALL')
+                              ? 'bg-amber-500 text-slate-950 shadow ring-2 ring-amber-300'
+                              : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                          }`}
+                        >
+                          Sabhi Lucent Topics
+                        </button>
+                        {lucentSubjectOptions.map((opt) => (
+                          <button
+                            key={`drawer_luc_${opt.id}`}
+                            type="button"
+                            onClick={() => {
+                              handleToggleBattleSubject(opt.name);
+                              setActiveSetupDrawer(null);
+                            }}
+                            className={`p-2.5 rounded-xl border text-left text-xs font-black transition cursor-pointer ${
+                              isBattleSubjectActive(opt.name)
+                                ? 'bg-amber-500 text-slate-950 shadow ring-2 ring-amber-300'
+                                : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            📖 {opt.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    /* All Competition Books */
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-amber-300">
+                        📚 Competition Books ({allCompetitionBooks.length} Books Uplabdh):
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
+                        {allCompetitionBooks.map((b) => (
+                          <button
+                            key={`drawer_b_${b.id}`}
+                            type="button"
+                            onClick={() => {
+                              setBattleBook(b.id);
+                              setActiveSetupDrawer(null);
+                            }}
+                            className={`p-3 rounded-xl border text-left transition cursor-pointer flex items-center gap-2.5 ${
+                              battleBook === b.id
+                                ? 'bg-amber-500 text-slate-950 font-black shadow-md ring-2 ring-amber-300'
+                                : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            <span className="text-2xl shrink-0">{b.emoji}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-black truncate">{b.name}</p>
+                              {b.tag && (
+                                <span className="text-[10px] opacity-75 block mt-0.5">{b.tag}</span>
+                              )}
+                            </div>
+                            {battleBook === b.id && (
+                              <CheckCircle2 size={16} className="text-slate-950 shrink-0" />
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 5. LESSONS DRAWER CONTENT */}
+              {activeSetupDrawer === 'LESSONS' && (
+                <div className="space-y-3">
+                  {/* Search Bar */}
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={battleSearch}
+                      onChange={(e) => setBattleSearch(e.target.value)}
+                      placeholder="🔍 Lesson ka naam ya topic search karein..."
+                      className="w-full pl-9 pr-8 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+                    />
+                    {battleSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setBattleSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Toolbar based on Assessment Mode: MCQ+ (Strictly 1 Lesson) vs MCQ (Multi-Lesson) */}
+                  {currentRoom.mcqType === 'REVISION_HUB' ? (
+                    <div className="flex items-center justify-between bg-purple-950/40 p-2.5 rounded-xl border border-purple-500/40 text-xs">
+                      <span className="font-bold text-purple-200 flex items-center gap-1.5">
+                        <span>⚡ MCQ+ Mode:</span>
+                        <span className="text-white font-black">Sirf 1 Lesson (Fixed 100 Qs)</span>
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-bold border border-purple-500/40">
+                        Revision Hub Benchmark
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-cyan-500/30 text-xs">
+                      <span className="font-bold text-slate-300 flex items-center gap-1.5">
+                        <span className="text-cyan-400 font-black">🎯 Multi-Lesson MCQ:</span>
+                        <span>{selectedCuratedSets.length} Lessons Chune Gaye</span>
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={handleSelectAllBattleLessons}
+                          className="px-2.5 py-1 rounded-lg bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 font-bold hover:bg-cyan-600/50 cursor-pointer text-[10px]"
+                        >
+                          ✓ Sabhi Select
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDeselectAllBattleLessons}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-400 hover:text-slate-200 cursor-pointer text-[10px]"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Available Lessons List */}
+                  {availableBattleSets.length > 0 ? (
+                    <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                      {availableBattleSets.map((set, sIdx) => {
+                        const isRevision = currentRoom.mcqType === 'REVISION_HUB';
+                        const isSelected = isRevision
+                          ? selectedCuratedSet === set.id
+                          : selectedCuratedSets.includes(set.id);
+                        return (
+                          <div
+                            key={set.id ? `${set.id}_${sIdx}` : `drawer_bset_${sIdx}`}
+                            onClick={() => handleToggleBattleLesson(set.id)}
+                            className={`flex items-center gap-2.5 p-2.5 rounded-xl border cursor-pointer transition text-left ${
+                              isSelected
+                                ? isRevision
+                                  ? 'bg-purple-600/25 border-purple-400 text-white ring-1 ring-purple-500/50 shadow-md'
+                                  : 'bg-cyan-600/25 border-cyan-400 text-white ring-1 ring-cyan-500/50 shadow-md'
+                                : 'bg-slate-950/90 border-slate-800 text-slate-300 hover:border-slate-700'
+                            }`}
+                          >
+                            {isRevision ? (
+                              <input
+                                type="radio"
+                                name="drawerMcqSet"
+                                checked={isSelected}
+                                onChange={() => {}}
+                                className="w-4 h-4 text-purple-500 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
+                              />
+                            ) : (
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {}}
+                                className="w-4 h-4 rounded text-cyan-500 focus:ring-cyan-400 bg-slate-900 border-slate-700 cursor-pointer shrink-0"
+                              />
+                            )}
+                            <span className="text-xl shrink-0">{set.emoji}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-xs font-black truncate">{set.name}</p>
+                                {set.tag && (
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold border shrink-0 ${
+                                      set.badgeColor || 'bg-slate-800 text-slate-300 border-slate-700'
+                                    }`}
+                                  >
+                                    {set.tag}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-slate-400 mt-0.5">
+                                {set.questions.length} Questions • {set.subject || 'General'}
+                              </p>
+                            </div>
+                            {isSelected && (
+                              <CheckCircle2
+                                size={16}
+                                className={`shrink-0 ${isRevision ? 'text-purple-400' : 'text-cyan-400'}`}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="py-6 text-center space-y-2 bg-slate-950/60 rounded-xl border border-slate-800 p-4">
+                      <p className="text-xs text-slate-400 font-semibold">
+                        Is filter me koi lesson nahi mila.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBattleSearch('');
+                          setBattleSubject('ALL');
+                          setBattleSubjects(['ALL']);
+                          setBattleClass('ALL');
+                          setBattleCategory('ALL');
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition cursor-pointer"
+                      >
+                        Filter Reset Karein
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 6. DURATION DRAWER CONTENT */}
+              {activeSetupDrawer === 'DURATION' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-white flex items-center gap-1.5">
+                        <Timer size={16} className="text-purple-400" /> Current Selected Duration:
+                      </span>
+                      <span className="text-xs font-black px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                        ⏱️ {totalTestMinutes} Minutes
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-relaxed">
+                      Test ka samay pura hone par test automatically submit ho jayega. Niche diye gaye presets me se chunein ya custom time dalein:
+                    </p>
+                  </div>
+
+                  {/* Preset Minute Buttons */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-2">Preset Time Chunein:</label>
+                    <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+                      {[5, 10, 15, 20, 30, 45, 60].map((min) => (
+                        <button
+                          key={`drawer_min_${min}`}
+                          type="button"
+                          onClick={() => setTotalTestMinutes(min)}
+                          className={`py-2 rounded-xl text-xs font-black transition cursor-pointer flex flex-col items-center justify-center gap-0.5 ${
+                            totalTestMinutes === min
+                              ? 'bg-purple-600 text-white shadow-lg ring-2 ring-purple-300 scale-[1.02]'
+                              : 'bg-slate-950/80 border border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white'
+                          }`}
+                        >
+                          <span className="text-sm font-black">{min}</span>
+                          <span className="text-[9px] uppercase tracking-wider opacity-75">min</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Custom Exam Time Input */}
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+                    <label className="text-xs font-bold text-slate-300 block">Custom Time (Aapki Pasand):</label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={240}
+                        value={totalTestMinutes}
+                        onChange={(e) => setTotalTestMinutes(Math.max(1, Math.min(240, Number(e.target.value) || 1)))}
+                        className="w-24 px-3 py-2 bg-slate-900 border border-purple-500/50 rounded-xl text-purple-300 font-mono text-sm font-black text-center focus:outline-none focus:ring-2 focus:ring-purple-400"
+                      />
+                      <span className="text-xs font-bold text-slate-300">Minutes (1 se 240 tak)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500">
+                      💡 Tip: Shorter tests (10-15 mins) live group battle ke liye best hote hain.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 7. QUESTION LIMITS & ORDER DRAWER CONTENT */}
+              {activeSetupDrawer === 'QUESTION_LIMITS' && (
+                <div className="space-y-4">
+                  {currentRoom.mcqType === 'REVISION_HUB' ? (
+                    <div className="p-4 rounded-2xl bg-purple-950/40 border border-purple-500/40 space-y-2.5 text-left">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">⚡</span>
+                        <div>
+                          <h4 className="text-sm font-black text-white">MCQ+ Mode: Fixed 100 Questions Benchmark</h4>
+                          <p className="text-[10px] text-purple-300">Revision Hub Assessment Standard</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-purple-200/90 leading-relaxed">
+                        MCQ+ Mode me hamesha <b>100 Questions (Fixed)</b> ka comprehensive test hota hai. Isse test ke baad Revision Hub jaisa topic-by-topic analysis milta hai ki <b>kon topic kamjor hai aur kon majboot hai</b>.
+                      </p>
+                      <div className="flex items-center gap-2 pt-1 text-[11px] text-purple-300">
+                        <span className="px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/40 font-black">
+                          ✓ 100 Questions Fixed
+                        </span>
+                        <span>Variable question limits ke liye Assessment Mode me standard MCQ chunein.</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Limit Mode Switcher */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                            <SlidersHorizontal size={14} className="text-amber-400" />
+                            <span>Question Limits Mode:</span>
+                          </label>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {[
+                            { id: 'ALL', label: 'Sabhi Questions', desc: 'Saare questions include karein' },
+                            { id: 'PER_LESSON', label: 'Per Lesson', desc: 'Har lesson se barabar' },
+                            { id: 'PER_SUBJECT', label: 'Per Subject', desc: 'Har subject se barabar' },
+                            { id: 'TOTAL', label: 'Total Limit', desc: 'Total fixed limit' },
+                          ].map((m) => (
+                            <button
+                              key={`drawer_limit_${m.id}`}
+                              type="button"
+                              onClick={() => setLimitMode(m.id as any)}
+                              className={`p-2.5 rounded-xl text-left transition cursor-pointer flex flex-col justify-between gap-1 ${
+                                limitMode === m.id
+                                  ? 'bg-amber-500 text-slate-950 font-black shadow-md ring-2 ring-amber-300'
+                                  : 'bg-slate-950 border border-slate-800 text-slate-300 hover:border-slate-700'
+                              }`}
+                            >
+                              <span className="text-xs font-black">{m.label}</span>
+                              <span className={`text-[10px] ${limitMode === m.id ? 'text-slate-900 opacity-90' : 'text-slate-500'}`}>
+                                {m.desc}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Numeric Selectors */}
+                      {limitMode === 'PER_LESSON' && (
+                        <div className="p-3 rounded-2xl bg-slate-950/80 border border-amber-500/30 space-y-2">
+                          <span className="text-xs text-amber-300 font-bold block">Har Lesson se Kitne Sawaal?</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[5, 10, 15, 20].map((num) => (
+                              <button
+                                key={`pl_drawer_${num}`}
+                                type="button"
+                                onClick={() => setQuestionsPerLessonLimit(num)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition ${
+                                  questionsPerLessonLimit === num
+                                    ? 'bg-amber-500 text-slate-950 shadow ring-2 ring-amber-300'
+                                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                }`}
+                              >
+                                {num} Sawaal
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {limitMode === 'PER_SUBJECT' && (
+                        <div className="p-3 rounded-2xl bg-slate-950/80 border border-amber-500/30 space-y-2">
+                          <span className="text-xs text-amber-300 font-bold block">Har Subject se Kitne Sawaal?</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[5, 10, 15, 20, 25, 30].map((num) => (
+                              <button
+                                key={`ps_drawer_${num}`}
+                                type="button"
+                                onClick={() => setQuestionsPerSubjectLimit(num)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition ${
+                                  questionsPerSubjectLimit === num
+                                    ? 'bg-amber-500 text-slate-950 shadow ring-2 ring-amber-300'
+                                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                }`}
+                              >
+                                {num} Sawaal
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {limitMode === 'TOTAL' && (
+                        <div className="p-3 rounded-2xl bg-slate-950/80 border border-amber-500/30 space-y-2">
+                          <span className="text-xs text-amber-300 font-bold block">Kul (Total) Questions Limit:</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[10, 15, 20, 30, 50, 100].map((num) => (
+                              <button
+                                key={`tot_drawer_${num}`}
+                                type="button"
+                                onClick={() => setTotalQuestionsLimit(num)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer transition ${
+                                  totalQuestionsLimit === num
+                                    ? 'bg-amber-500 text-slate-950 shadow ring-2 ring-amber-300'
+                                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                                }`}
+                              >
+                                {num} Sawaal
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Question Shuffling / Order */}
+                  <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
+                    <label className="text-xs font-bold text-slate-300 block">Sawaal Ka Sequence / Order:</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setQuestionOrderMode('RANDOM')}
+                        className={`p-3 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center gap-2 ${
+                          questionOrderMode === 'RANDOM'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500 shadow-md ring-1 ring-emerald-500'
+                            : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-base">🎲</span>
+                        <span>Shuffled (Random)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuestionOrderMode('SEQUENTIAL')}
+                        className={`p-3 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center gap-2 ${
+                          questionOrderMode === 'SEQUENTIAL'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500 shadow-md ring-1 ring-emerald-500'
+                            : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span className="text-base">📋</span>
+                        <span>Sequential</span>
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-500">
+                      🎲 Shuffled se sabhi participants ko alag alag kram me questions aate hain.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="pt-3 border-t border-slate-800 shrink-0 flex items-center justify-between gap-3">
+              <span className="text-[11px] text-slate-400 font-medium">
+                {activeSetupDrawer === 'LESSONS'
+                  ? isBasicUser
+                    ? `${selectedCuratedSets.length} Lessons Chune Gaye`
+                    : '1 Lesson Chuna Gaya'
+                  : activeSetupDrawer === 'DURATION'
+                  ? `⏱️ ${totalTestMinutes} Minutes Set`
+                  : activeSetupDrawer === 'QUESTION_LIMITS'
+                  ? `${limitMode === 'ALL' ? 'Sabhi Questions' : limitMode} • ${questionOrderMode}`
+                  : 'Selection Saved'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveSetupDrawer(null)}
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-black text-xs text-white shadow-md active:scale-95 transition cursor-pointer"
+              >
+                Theek Hai (Done)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── STUDENT-CONTROLLED IDEAL QUESTION PACE & VIBRATION ALERT MODAL ── */}
+      {showPaceSettingsModal && (
+        <div className="fixed inset-0 z-[12000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in zoom-in-95 duration-150">
+          <div className="w-full max-w-sm bg-slate-900 border border-purple-500/50 rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 text-slate-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300">
+                  <Smartphone size={16} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">Ideal Question Pace</h3>
+                  <p className="text-[10px] text-purple-300">Aapka Personal Pace & Alert</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPaceSettingsModal(false)}
+                className="w-7 h-7 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {/* 1. Time Select Karne Ka Option */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-300">Har Sawal Ka Ideal Time:</span>
+                  <span className="font-black text-purple-400">{userPaceSeconds} Sec</span>
+                </div>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {[15, 20, 30, 45, 60].map((sec) => (
+                    <button
+                      key={`modal_pace_${sec}`}
+                      type="button"
+                      onClick={() => {
+                        setUserPaceSeconds(sec);
+                        setPaceSecondsLeft(sec);
+                        setHasPaceAlertTriggered(false);
+                        try {
+                          localStorage.setItem('study_user_pace_seconds', String(sec));
+                        } catch {}
+                      }}
+                      className={`py-2 rounded-xl text-xs font-black transition cursor-pointer ${
+                        userPaceSeconds === sec
+                          ? 'bg-purple-600 text-white ring-2 ring-purple-300 shadow-md shadow-purple-600/30'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700'
+                      }`}
+                    >
+                      {sec}s
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom seconds input */}
+                <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                  <span className="text-[11px] font-bold text-slate-400">Custom Pace Time:</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={5}
+                      max={300}
+                      value={userPaceSeconds}
+                      onChange={(e) => {
+                        const val = Math.max(5, Math.min(300, Number(e.target.value) || 5));
+                        setUserPaceSeconds(val);
+                        setPaceSecondsLeft(val);
+                        setHasPaceAlertTriggered(false);
+                        try {
+                          localStorage.setItem('study_user_pace_seconds', String(val));
+                        } catch {}
+                      }}
+                      className="w-16 px-2 py-1 bg-slate-900 border border-purple-500/40 rounded-lg text-purple-300 font-mono text-xs font-black text-center focus:outline-none focus:ring-1 focus:ring-purple-400"
+                    />
+                    <span className="text-xs font-bold text-slate-400">Sec</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Vibration On / Off Toggle (User ke haath me) */}
+              <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                      <Smartphone size={13} className="text-purple-400" /> Phone Vibration Alert
+                    </span>
+                    <p className="text-[10px] text-slate-400">
+                      Ideal time khatam hone par mobile vibrate kare
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextVal = !userVibrateAlert;
+                      setUserVibrateAlert(nextVal);
+                      try {
+                        localStorage.setItem('study_user_vibrate_alert', String(nextVal));
+                        if (nextVal && typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+                          navigator.vibrate([150, 70, 150]);
+                        }
+                      } catch {}
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                      userVibrateAlert
+                        ? 'bg-purple-500 text-white shadow-md shadow-purple-600/30'
+                        : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    }`}
+                  >
+                    {userVibrateAlert ? '📳 Vibrate ON' : '🔕 Mute'}
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-2 rounded-xl bg-purple-950/30 border border-purple-500/30 text-[10px] text-purple-200 leading-relaxed">
+                Har sawal badalne par yeh timer dobara {userPaceSeconds}s se shuru hoga. Mobile vibration aapke hath me hai.
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowPaceSettingsModal(false)}
+                className="w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs transition cursor-pointer shadow-lg shadow-purple-600/30"
+              >
+                Theek Hai (Test Jari Rakhein)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── TEST SUBMIT CONFIRMATION MODAL (Total Test & Mix Mode) ── */}
       {showSubmitConfirmModal && currentRoom?.liveMcq && (
         <div className="fixed inset-0 z-[12000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in zoom-in-95 duration-150">
@@ -7965,6 +8850,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               <button
                 type="button"
                 onClick={() => setShowSubmitConfirmModal(false)}
+                disabled={isSubmittingBatch}
                 className="py-2.5 rounded-xl border border-slate-700 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-black transition cursor-pointer"
               >
                 Aur Hal Karein
@@ -7972,11 +8858,14 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               <button
                 type="button"
                 onClick={async () => {
-                  setShowSubmitConfirmModal(false);
-
-                  // 1. Immediately submit student score to RTDB
-                  if (currentRoom?.id && user?.id) {
-                    await submitFinalBatchScore(currentRoom.id, user.id, user.name || 'Student', {
+                  if (!currentRoom?.id || !user?.id) {
+                    setSubmitError('Submit nahi hua. Room ya student account ki jaankari nahi mili.');
+                    return;
+                  }
+                  setIsSubmittingBatch(true);
+                  setSubmitError(null);
+                  try {
+                    const didSubmit = await submitFinalBatchScore(currentRoom.id, user.id, user.name || 'Student', {
                       score: localBattleStats.score,
                       correctCount: localBattleStats.correctCount,
                       wrongCount: localBattleStats.wrongCount,
@@ -7986,7 +8875,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       streakBonusXp: localBattleStats.streakBonusXp,
                       userPhotoURL: user.photoURL || '',
                       answers: localBattleStats.answers,
-                    }).catch(console.warn);
+                    });
+                    if (!didSubmit) {
+                      setSubmitError('Submit save nahi ho paya. Internet connection check karke dobara try karein.');
+                      return;
+                    }
 
                     if (localBattleStats.userXp > 0) {
                       const currentXp = user.xp || user.totalScore || 0;
@@ -8005,22 +8898,78 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       saveUserToLive(updatedUser, { immediate: true }).catch(() => {});
                       onUserUpdate?.(updatedUser);
                     }
-                  }
 
-                  // 2. Mark this student as submitted
-                  setHasStudentSubmittedEarly(true);
-                  setHasBatchSubmitted(true);
+                    setShowSubmitConfirmModal(false);
+                    setHasStudentSubmittedEarly(true);
+                    setHasBatchSubmitted(true);
+                    setCurrentRoom((prev) => {
+                      if (!prev?.liveMcq) return prev;
+                      const submittedAt = Date.now();
+                      const score = {
+                        name: user.name || 'Student',
+                        score: localBattleStats.score,
+                        correctCount: localBattleStats.correctCount,
+                        wrongCount: localBattleStats.wrongCount,
+                        totalAnswered: localBattleStats.totalAnswered,
+                        maxStreak: localBattleStats.maxStreak,
+                        userXp: localBattleStats.userXp,
+                        streakBonusXp: localBattleStats.streakBonusXp,
+                        userPhotoURL: user.photoURL || '',
+                        submittedAt,
+                      };
+                      const questionAnswers = { ...(prev.liveMcq.questionAnswers || {}) };
+                      Object.entries(localBattleStats.answers).forEach(([questionIndex, answer]) => {
+                        const index = Number(questionIndex);
+                        questionAnswers[index] = {
+                          ...(questionAnswers[index] || {}),
+                          [user.id]: {
+                            userId: user.id,
+                            userName: user.name || 'Student',
+                            userPhotoURL: user.photoURL || '',
+                            selectedOption: answer.selectedOption,
+                            isCorrect: answer.isCorrect,
+                            timeTakenSec: answer.timeTakenSec,
+                            timestamp: submittedAt,
+                          },
+                        };
+                      });
+                      const updated = {
+                        ...prev,
+                        liveMcq: {
+                          ...prev.liveMcq,
+                          scores: {
+                            ...(prev.liveMcq.scores || {}),
+                            [user.id]: score,
+                          },
+                          questionAnswers,
+                        },
+                      };
+                      saveCachedRoom(updated);
+                      return updated;
+                    });
 
-                  // 3. If host or if timer is up, end battle for all
-                  if (isHost || totalTestSecondsLeft <= 0) {
-                    await endLiveMcqBattle(currentRoom.id).catch(console.warn);
+                    // If the host submits, or the test timer has expired, end the battle.
+                    if (isHost || totalTestSecondsLeft <= 0) {
+                      await endLiveMcqBattle(currentRoom.id).catch(console.warn);
+                    }
+                  } catch (error) {
+                    console.warn('[GroupStudy] Manual test submit failed:', error);
+                    setSubmitError('Submit save nahi ho paya. Internet connection check karke dobara try karein.');
+                  } finally {
+                    setIsSubmittingBatch(false);
                   }
                 }}
+                disabled={isSubmittingBatch}
                 className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black transition cursor-pointer shadow-lg"
               >
-                Haan, Submit Karein
+                {isSubmittingBatch ? 'Submit ho raha hai…' : 'Haan, Submit Karein'}
               </button>
             </div>
+            {submitError && (
+              <p role="alert" className="text-xs font-bold text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-xl px-3 py-2">
+                {submitError}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -8069,6 +9018,60 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
           </div>
         </div>
       )}
+
+      {/* ── DETAILED REVISION HUB MARKSHEET MODAL ── */}
+      {showDetailedMarksheet && (() => {
+        const fallbackResult: MCQResult = currentExamResult || {
+          id: `study_room_${currentRoom?.id || 'exam'}_${Date.now()}`,
+          userId: user?.id || 'student',
+          chapterId: currentRoom?.id || 'room_test',
+          chapterTitle: currentRoom?.preloadedTitle || currentRoom?.name || 'Study Room MCQ Battle',
+          subjectId: currentRoom?.subject || 'GROUP_STUDY',
+          subjectName: currentRoom?.subject || 'Group Study',
+          topic: currentRoom?.name || 'MCQ Practice',
+          date: new Date().toISOString(),
+          score: myScore?.correctCount || 0,
+          totalQuestions: totalQ,
+          correctCount: myScore?.correctCount || 0,
+          wrongCount: myScore?.wrongCount || 0,
+          totalTimeSeconds: Math.round(totalQ * (selectedTimerDuration || 20)),
+          averageTimePerQuestion: selectedTimerDuration || 20,
+          performanceTag: myAccuracy >= 80 ? 'EXCELLENT' : myAccuracy >= 50 ? 'GOOD' : 'BAD',
+          userAnswers: (user?.id ? allAnswersMap : {}) as any,
+          wrongQuestions: [],
+          topicAnalysis: {},
+          omrData: [],
+          questions: (questions || []).map((q, qIndex) => ({
+            id: q.id || `q_${qIndex}`,
+            question: q.question,
+            statements: q.statements,
+            options: q.options,
+            correctAnswer: q.correctIndex,
+            explanation: q.explanation || '',
+            topic: (q as any).topic || currentRoom?.subject || 'General',
+          })),
+        };
+
+        return (
+          <div className="fixed inset-0 z-[12000] bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+            <div className="w-full max-w-4xl relative my-auto">
+              <button
+                type="button"
+                onClick={() => setShowDetailedMarksheet(false)}
+                className="absolute -top-3 -right-3 z-50 w-9 h-9 rounded-full bg-slate-800 border-2 border-slate-600 text-white flex items-center justify-center hover:bg-slate-700 shadow-xl cursor-pointer"
+              >
+                ✕
+              </button>
+              <MarksheetCard
+                result={fallbackResult}
+                user={user}
+                questions={fallbackResult.questions as any}
+                onClose={() => setShowDetailedMarksheet(false)}
+              />
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

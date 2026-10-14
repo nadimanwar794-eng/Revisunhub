@@ -22,6 +22,7 @@ interface Props {
   isPremium?: boolean;
   listCardBg?: string;
   listCardBorder?: string;
+  onOpenPracticeSets?: () => void;
 }
 
 const SubjectIcon: React.FC<{ icon: string; className?: string }> = ({ icon, className }) => {
@@ -171,7 +172,7 @@ const LessonProgressBar: React.FC<{ stats: SubjectLessonStats; primary: string }
 export const SubjectSelection: React.FC<Props> = ({
   classLevel, stream, board, onSelect, onBack, hideBack = false, settings,
   contentIndex = {}, lucentNotes = [], subscriptionLevel, isPremium,
-  listCardBg, listCardBorder,
+  listCardBg, listCardBorder, onOpenPracticeSets,
 }) => {
   const appTheme = useAppTheme();
   const subjects = useMemo(() => {
@@ -256,6 +257,36 @@ export const SubjectSelection: React.FC<Props> = ({
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {isCompetition && onOpenPracticeSets && (
+          <button
+            type="button"
+            onClick={onOpenPracticeSets}
+            className="w-full text-left p-4 rounded-xl border border-indigo-500/40 bg-gradient-to-br from-indigo-900/30 via-slate-800 to-slate-900 text-white shadow-md hover:border-indigo-400 transition-all flex flex-col justify-between group active:scale-[0.99] cursor-pointer"
+          >
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  🎯 Mock Sets
+                </span>
+                <span className="text-xs font-bold text-indigo-300 group-hover:translate-x-0.5 transition-transform">
+                  प्रैक्टिस सेट →
+                </span>
+              </div>
+              <h3 className="text-base font-black text-white flex items-center gap-1.5">
+                <span>📝</span>
+                <span>प्रैक्टिस सेट (Practice Sets)</span>
+              </h3>
+              <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                बिहार पुलिस (100 Qs · 60 Min) एवं BSSC / SSC (150 Qs · 120 Min) के पूर्ण मॉडल टेस्ट।
+              </p>
+            </div>
+            <div className="flex items-center gap-2 mt-3 pt-2 border-t border-indigo-500/20 text-[11px] font-bold text-indigo-300">
+              <span className="bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">👮 Basic Set</span>
+              <span className="bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">🏛️ Ultra Set</span>
+              <span className="ml-auto text-amber-300">VIP Unlocked</span>
+            </div>
+          </button>
+        )}
         {subjects.map((subject) => {
           const stats = getSubjectStats(subject, classLevel, currentBoard, contentIndex, lucentNotes, settings);
           const totalContent = stats.notes + stats.pdf + stats.video + stats.audio + stats.mcq + stats.lucentNotes;

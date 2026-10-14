@@ -845,6 +845,56 @@ export interface PedroSystemConfig {
   pages?: Record<string, PedroPageConfig>;
 }
 
+export interface SubjectMcqPoolEntry {
+  id: string;
+  subject: string; // e.g. 'MATH', 'SCIENCE', 'SOCIAL_SCIENCE', 'GK_CA', 'HINDI', 'ENGLISH', 'REASONING', 'BSEB_SPECIAL'
+  subjectLabel: string; // e.g. 'गणित (Math)', 'सामान्य विज्ञान', etc.
+  setName: string; // e.g. 'Math Set 1', 'विज्ञान - Set 1'
+  targetExam?: string; // 'Bihar Police', 'BSSC', 'BSEB', etc.
+  questions: MCQItem[];
+  createdAt: string;
+  updatedAt?: string;
+  notes?: string;
+}
+
+export interface CustomPracticeSetEntry {
+  id: string;
+  title: string;
+  subtitle?: string;
+  description?: string;
+  type: 'BASIC' | 'ULTRA';
+  targetExam?: string;
+  durationMinutes: number; // 60 for Basic, 120 for Ultra
+  negativeMarking: boolean; // false for Basic, true for Ultra
+  negativePenalty?: number; // 0 for Basic, 0.25 for Ultra
+  marksPerQuestion?: number; // 1
+  questions: MCQItem[];
+  createdAt: string;
+  isPublished?: boolean;
+  category?: 'FULL_MOCK' | 'SUBJECT_SET'; // Full test vs Subject-specific set
+  subject?: string;
+}
+
+export interface SetLeaderboardEntry {
+  id: string;
+  setId: string;
+  userId: string;
+  userName: string;
+  userPhoto?: string;
+  classLevel?: string;
+  targetExam?: string;
+  marksObtained: number;
+  maxMarks: number;
+  percentage: number;
+  correct: number;
+  wrong: number;
+  unattempted: number;
+  timeSpentSeconds: number;
+  submittedAt: string;
+  weekKey: string; // e.g. '2026-W42'
+  rank?: number;
+}
+
 export type AppSettings = SystemSettings;
 
 export interface SystemSettings {
@@ -894,6 +944,9 @@ export interface SystemSettings {
   globalNotesFakeMin?: number;
   globalChallengeMcq?: MCQItem[]; // NEW: Global Challenge MCQ
   competitionMcqs?: MCQItem[]; // Admin-created MCQs visible on Competition page
+  customPracticeSets?: CustomPracticeSetEntry[]; // Admin-created Custom Practice Sets
+  subjectMcqPools?: SubjectMcqPoolEntry[]; // Admin-managed Subject-wise Question Banks
+  practiceSetLeaderboards?: Record<string, SetLeaderboardEntry[]>; // Per-set Leaderboard records
   googleAuthOnly?: boolean;
     teacherCodes?: TeacherCode[];
   appName: string; // Long Name

@@ -1,7 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Volume2, Square, BookOpen, Star, Palette, Check, Type, RotateCcw, Search, Monitor, X, LayoutGrid, MoreVertical, ChevronRight, WifiOff, Flame, Lightbulb, Pencil, Presentation, Copy, Users } from 'lucide-react';
+import { Volume2, Square, BookOpen, Bookmark, Star, Palette, Check, Type, RotateCcw, Search, Monitor, X, LayoutGrid, MoreVertical, ChevronRight, WifiOff, Flame, Lightbulb, Pencil, Presentation, Copy, Users } from 'lucide-react';
 import { AdminWhiteBoard } from './AdminWhiteBoard';
 import { rotateScreen, isDesktopModeOn, setDesktopMode, exitFullscreenSafe } from '../utils/displayPrefs';
 import { resolveTelegramUrl } from '../services/telegramStorageService';
@@ -658,6 +658,9 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   const manualTapTimestampsRef = useRef<number[]>([]);
   const ttsSuggestShownRef = useRef(false);
 
+  // Toast state for double-tap Save/Unsave feedback
+  const [doubleTapToast, setDoubleTapToast] = useState<{ visible: boolean; message: string; isSaved: boolean } | null>(null);
+
   // Tracks whether current TTS session was started via "Read All" / Smart Reading popup (AUTO)
   // or via a manual topic tap (MANUAL). Only AUTO sessions earn READ_TTS_HIGHLIGHT rewards.
   const ttsIsAutoRef = useRef(false);
@@ -771,9 +774,19 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
   const showOnlyImportantRef = useRef(false);
   useEffect(() => { showOnlyImportantRef.current = showOnlyImportant; }, [showOnlyImportant]);
   // Helper: is a given topic "important" (starred / mark2 / admin-important)?
-  const isTopicImportant = useCallback((text: string) =>
-    (isStarred && isStarred(text)) || (isMarked2 && isMarked2(text)) || (isAdminImportant && isAdminImportant(text)),
-    [isStarred, isMarked2, isAdminImportant]);
+  const isTopicImportant = useCallback((text: string) => {
+    if (isStarred) return isStarred(text);
+    if (isMarked2 && isMarked2(text)) return true;
+    if (isAdminImportant && isAdminImportant(text)) return true;
+    try {
+      const raw = localStorage.getItem('nst_starred_notes_v1');
+      if (raw) {
+        const list = JSON.parse(raw);
+        return list.some((n: any) => n.topicText === text);
+      }
+    } catch {}
+    return false;
+  }, [isStarred, isMarked2, isAdminImportant]);
 
   // Star lock: Free-tier users are locked at Level 1–4; unlocks at Level 5.
   // Basic/Ultra/Admin users always have star access.
@@ -1823,7 +1836,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <button type="button"
                   onClick={() => { setShowOnlyImportant(s => !s); setShowControls(false); }}
                   style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '6px 4px', background: showOnlyImportant ? '#fef3c7' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
-                  <Star size={12} style={{ color: showOnlyImportant ? '#d97706' : '#64748b', fill: showOnlyImportant ? '#d97706' : 'none' }} />
+                  <Bookmark size={12} style={{ color: showOnlyImportant ? '#d97706' : '#64748b', fill: showOnlyImportant ? '#d97706' : 'none' }} />
                   <span style={{ fontSize: 8, fontWeight: 700, textTransform: 'uppercase', color: showOnlyImportant ? '#d97706' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Imp</span>
                 </button>
               ) : <div style={{ flex: 1, borderRight: '1px solid #e2e8f0' }} />}
@@ -2024,7 +2037,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                 <button type="button"
                   onClick={() => { setShowOnlyImportant(s => !s); setShowControls(false); }}
                   style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: '10px 4px', background: showOnlyImportant ? '#fef3c7' : 'transparent', cursor: 'pointer', border: 'none', borderRight: '1px solid #e2e8f0' }}>
-                  <Star size={14} style={{ color: showOnlyImportant ? '#d97706' : '#64748b', fill: showOnlyImportant ? '#d97706' : 'none' }} />
+                  <Bookmark size={14} style={{ color: showOnlyImportant ? '#d97706' : '#64748b', fill: showOnlyImportant ? '#d97706' : 'none' }} />
                   <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: showOnlyImportant ? '#d97706' : '#94a3b8', letterSpacing: '0.05em', lineHeight: 1 }}>Imp</span>
                 </button>
               ) : <div style={{ flex: 1, borderRight: '1px solid #e2e8f0' }} />}
@@ -2218,7 +2231,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
             borderRadius: 10, padding: '7px 12px', marginBottom: 8,
           }}
         >
-          <Star size={13} style={{ color: '#d97706', fill: '#d97706', flexShrink: 0 }} />
+          <Bookmark size={13} style={{ color: '#d97706', fill: '#d97706', flexShrink: 0 }} />
           <span style={{ fontSize: 11, fontWeight: 900, color: '#92400e', flex: 1 }}>
             Sirf important points dikh rahe hain
           </span>
@@ -2242,9 +2255,9 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
         if (hasAny) return null;
         return (
           <div style={{ textAlign: 'center', padding: '32px 16px' }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>⭐</div>
+            <div style={{ fontSize: 32, marginBottom: 8 }}>📌</div>
             <p style={{ fontSize: 13, fontWeight: 700, color: '#92400e', marginBottom: 4 }}>Koi important point nahi mila</p>
-            <p style={{ fontSize: 11, color: '#b45309' }}>Pehle kisi topic ko star karo ya admin se mark karwao</p>
+            <p style={{ fontSize: 11, color: '#b45309' }}>Kisi bhi point par double-tap (2 baar tap) karke Important mark karein</p>
             <button
               type="button"
               onClick={() => setShowOnlyImportant(false)}
@@ -2345,17 +2358,17 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
             <div
               key={`tp-${idx}`}
               ref={(el) => { itemRefs.current[idx] = el as any; }}
-              className={`group relative w-full rounded-lg transition-colors ${
+              className={`group relative w-full rounded-xl transition-all ${
                 isActive
                   ? 'bg-yellow-50 ring-2 ring-yellow-300'
                   : (marked2 && starred)
-                    ? 'bg-purple-50 ring-1 ring-purple-300'
+                    ? 'bg-purple-50 ring-1 ring-purple-300 border-l-4 border-l-purple-500'
                     : marked2
-                      ? 'bg-orange-50 ring-1 ring-orange-200'
+                      ? 'bg-orange-50 ring-1 ring-orange-200 border-l-4 border-l-orange-500'
                       : adminImportant
-                        ? 'bg-amber-50 ring-1 ring-amber-300'
+                        ? 'bg-amber-50 ring-1 ring-amber-300 border-l-4 border-l-amber-500'
                         : starred
-                          ? 'bg-amber-50'
+                          ? 'bg-amber-50/90 dark:bg-amber-950/25 ring-1 ring-amber-200 dark:ring-amber-800/40 border-l-4 border-l-amber-500 shadow-xs'
                           : 'hover:bg-slate-50'
               }`}
             >
@@ -2368,7 +2381,7 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
               )}
               {adminImportant && (
                 <span
-                  className="absolute right-1 top-1 text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-300 rounded px-1 py-0 leading-4 pointer-events-none select-none z-10"
+                  className="absolute right-1 top-1 text-[9px] font-black text-amber-500 bg-amber-50 border border-amber-300 rounded px-1.5 py-0 leading-4 pointer-events-none select-none z-10"
                   title="Admin ne important mark kiya hai"
                 >
                   ★ IMP
@@ -2384,6 +2397,15 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   }
                   longPressTimerRef.current = setTimeout(() => {
                     wasLongPressRef.current = true;
+                    const willBeStarred = !starred;
+                    setDoubleTapToast({
+                      visible: true,
+                      message: willBeStarred ? '★ Important Notes में सेव हो गया!' : 'Important से हटा दिया गया',
+                      isSaved: willBeStarred
+                    });
+                    setTimeout(() => {
+                      setDoubleTapToast(prev => (prev?.visible ? { ...prev, visible: false } : null));
+                    }, 1800);
                     executeStarToggle(topic.text);
                   }, 420);
                 }}
@@ -2420,6 +2442,15 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   wasLongPressRef.current = false;
                   longPressTimerRef.current = setTimeout(() => {
                     wasLongPressRef.current = true;
+                    const willBeStarred = !starred;
+                    setDoubleTapToast({
+                      visible: true,
+                      message: willBeStarred ? '★ Important Notes में सेव हो गया!' : 'Important से हटा दिया गया',
+                      isSaved: willBeStarred
+                    });
+                    setTimeout(() => {
+                      setDoubleTapToast(prev => (prev?.visible ? { ...prev, visible: false } : null));
+                    }, 1800);
                     executeStarToggle(topic.text);
                   }, 450);
                 }}
@@ -2436,6 +2467,25 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   }
                 }}
                 onContextMenu={(e) => e.preventDefault()}
+                onDoubleClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (doubleTapTopicRef.current?.timer) {
+                    clearTimeout(doubleTapTopicRef.current.timer);
+                  }
+                  doubleTapTopicRef.current = null;
+                  try { if (navigator.vibrate) navigator.vibrate([35, 45, 60]); } catch {}
+                  const willBeStarred = !starred;
+                  setDoubleTapToast({
+                    visible: true,
+                    message: willBeStarred ? '★ Important Notes में सेव हो गया!' : 'Important से हटा दिया गया',
+                    isSaved: willBeStarred
+                  });
+                  setTimeout(() => {
+                    setDoubleTapToast(prev => (prev?.visible ? { ...prev, visible: false } : null));
+                  }, 1800);
+                  executeStarToggle(topic.text);
+                }}
                 onClick={(e) => {
                   if (longPressTimerRef.current) {
                     clearTimeout(longPressTimerRef.current);
@@ -2449,11 +2499,12 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   }
 
                   const now = Date.now();
-                  // User requirement: Point par 2 baar tap (double-tap) pe Save hoga aur 2 baar tap pe wapis Unsave hoga
+                  // User requirement: Point par 2 baar tap (double-tap) pe Important Save/Unsave hoga
                   if (
                     doubleTapTopicRef.current &&
                     doubleTapTopicRef.current.text === topic.text &&
-                    (now - doubleTapTopicRef.current.time) < 380
+                    (now - doubleTapTopicRef.current.time) < 400 &&
+                    (now - doubleTapTopicRef.current.time) > 40
                   ) {
                     if (doubleTapTopicRef.current.timer) {
                       clearTimeout(doubleTapTopicRef.current.timer);
@@ -2461,14 +2512,30 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                     doubleTapTopicRef.current = null;
                     e.preventDefault();
                     e.stopPropagation();
-                    try { if (navigator.vibrate) navigator.vibrate([30, 40, 50]); } catch {}
+                    try { if (navigator.vibrate) navigator.vibrate([35, 45, 60]); } catch {}
+                    const willBeStarred = !starred;
+                    setDoubleTapToast({
+                      visible: true,
+                      message: willBeStarred ? '★ Important Notes में सेव हो गया!' : 'Important से हटा दिया गया',
+                      isSaved: willBeStarred
+                    });
+                    setTimeout(() => {
+                      setDoubleTapToast(prev => (prev?.visible ? { ...prev, visible: false } : null));
+                    }, 1800);
                     executeStarToggle(topic.text);
                     return;
                   }
 
-                  // Single-tap: 220ms debounce before executing TTS start/stop to allow double-tap
+                  // Clear any previous single-tap timer
+                  if (doubleTapTopicRef.current?.timer) {
+                    clearTimeout(doubleTapTopicRef.current.timer);
+                  }
+
+                  // Single-tap: 280ms debounce before executing TTS start/stop to allow natural double-tap
                   const singleTapTimer = setTimeout(() => {
-                    doubleTapTopicRef.current = null;
+                    if (doubleTapTopicRef.current?.timer === singleTapTimer) {
+                      doubleTapTopicRef.current.timer = undefined;
+                    }
                     try { if (navigator.vibrate) navigator.vibrate(isActive ? 30 : 50); } catch {}
                     if (isActive) {
                       stopAll();
@@ -2482,18 +2549,24 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                       }
                       startFromIndex(idx);
                     }
-                  }, 220);
+                  }, 280);
 
                   doubleTapTopicRef.current = {
                     text: topic.text,
                     time: now,
                     timer: singleTapTimer,
                   };
+
+                  setTimeout(() => {
+                    if (doubleTapTopicRef.current && (Date.now() - doubleTapTopicRef.current.time) >= 400) {
+                      doubleTapTopicRef.current = null;
+                    }
+                  }, 420);
                 }}
                 aria-label={isActive ? 'Stop reading this line' : 'Double tap: Save/Unsave Important ⭐ | Single tap: Read'}
-                title={isActive ? 'Tap to stop' : '2 Taps: Save/Unsave ⭐ | 1 Tap: Read'}
-                className="w-full text-left pl-4 pr-10 py-2 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 select-none"
-                style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', touchAction: 'pan-y' }}
+                title={isActive ? 'Tap to stop' : 'डबल टैप (Double-tap): Important में Save / Unsave करें ⭐ | 1 Tap: Read'}
+                className={`w-full text-left pl-4 ${starred ? 'pr-24' : 'pr-4'} py-2.5 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 select-none`}
+                style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none', touchAction: 'manipulation' }}
               >
                 <p
                   className={`leading-relaxed ${isActive ? 'text-yellow-900' : ''}`}
@@ -2505,37 +2578,20 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
                   }}
                 >
                   {!/!\[.*?\]\(.*?\)/.test(topic.text) && !/<(?:img|figure)\b/i.test(topic.text) && (
-                    <span className={`font-bold mr-1.5 ${starred ? 'text-amber-400' : 'text-indigo-400'}`}>•</span>
+                    <span className={`font-bold mr-1.5 ${starred ? 'text-amber-500' : 'text-indigo-400'}`}>•</span>
                   )}
                   <span dangerouslySetInnerHTML={{ __html: renderMathInHtml(inlineMd(topic.text)) }} />
                 </p>
-                {/* Save count badge intentionally hidden here — yeh ab sirf
-                    "Important / Starred Notes" ke Global tab page par dikhega taa ki
-                    reading view clean rahe. */}
               </button>
 
-              {/* ⭐ Visible Star / Save Note button — always easily tappable */}
-              {!isActive && !showSuggestionPanel && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    executeStarToggle(topic.text);
-                  }}
-                  onPointerDown={(e) => { e.stopPropagation(); }}
-                  onTouchStart={(e) => { e.stopPropagation(); }}
-                  onMouseDown={(e) => { e.stopPropagation(); }}
-                  style={{ width: '28px', height: '28px', padding: 0 }}
-                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full inline-flex items-center justify-center transition-all z-20 cursor-pointer ${
-                    starred
-                      ? 'bg-amber-100 text-amber-500 border border-amber-300 shadow-sm opacity-100 scale-105'
-                      : 'text-slate-400 hover:text-amber-500 hover:bg-amber-50 border border-slate-200/60 hover:border-amber-300 opacity-60 sm:opacity-40 group-hover:opacity-100'
-                  }`}
-                  title={starred ? 'Important Notes me saved hai (Tap to remove)' : 'Important Notes me save karein ⭐ (Tap karein ya Hold karein)'}
+              {/* ⭐ Important Marked Badge on Double-Tap (Star button removed as requested) */}
+              {starred && !isActive && (
+                <span
+                  className="absolute right-2 top-2 text-[10px] font-black text-amber-600 bg-amber-100/90 dark:bg-amber-950/70 dark:text-amber-400 border border-amber-300 dark:border-amber-700/60 rounded-full px-2 py-0.5 pointer-events-none select-none flex items-center gap-1 shadow-xs z-10"
+                  title="Double-tap किया हुआ: Important Notes में सेव है"
                 >
-                  <Star size={13} className={starred ? 'fill-amber-400 text-amber-500' : 'text-slate-400 hover:text-amber-500'} />
-                </button>
+                  ★ Important
+                </span>
               )}
 
               {/* TTS active indicator */}
@@ -2744,6 +2800,21 @@ export const ChunkedNotesReader: React.FC<Props> = ({ content, className, langua
         })}
       </div>
     </div>
+    {/* Floating toast notification when user double-taps to save/unsave note */}
+    {doubleTapToast?.visible && typeof document !== 'undefined' && createPortal(
+      <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[9999999] pointer-events-none animate-in fade-in zoom-in-95 duration-150">
+        <div className={`px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 text-xs font-black backdrop-blur-md border ${
+          doubleTapToast.isSaved
+            ? 'bg-amber-950/95 text-amber-200 border-amber-500/50 shadow-amber-500/10'
+            : 'bg-slate-900/95 text-slate-200 border-slate-700/80 shadow-slate-900/40'
+        }`}>
+          <span className="text-sm">{doubleTapToast.isSaved ? '★' : '✓'}</span>
+          <span>{doubleTapToast.message}</span>
+        </div>
+      </div>,
+      document.body
+    )}
+
     {/* Admin WhiteBoard overlay */}
     {isAdmin && showAdminBoard && (
       <AdminWhiteBoard onClose={() => setShowAdminBoard(false)} />

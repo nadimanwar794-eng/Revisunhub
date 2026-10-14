@@ -143,6 +143,7 @@ import pLimit from "p-limit";
 import { RedeemSection } from "./RedeemSection";
 import { Store } from "./Store";
 import { McqHub } from "./McqHub";
+import { CompetitionPracticeSetLauncher } from "./CompetitionPracticeSetLauncher";
 import { DraggableNstaLogoFab } from "./DraggableNstaLogoFab";
 import { LevelUpCelebrationModal } from "./LevelUpCelebrationModal";
 import { getFeaturesUnlockedAtLevel } from "../constants/levelRoadmapData";
@@ -1657,24 +1658,39 @@ export const StudentDashboard: React.FC<Props> = ({
         ? localStorage.getItem(`nst_session_class_${user.id}`)
         : null;
       if (isValidClass(savedForUser)) return savedForUser;
-      const legacySaved =
-        localStorage.getItem('nst_session_class') ||
-        localStorage.getItem('nst_user_class');
-      if (isValidClass(legacySaved)) return legacySaved;
+      // Shared legacy keys can belong to another account on this device.
+      // Only use them when there is no signed-in user to scope the choice to.
+      if (!user?.id) {
+        const legacySaved =
+          localStorage.getItem('nst_session_class') ||
+          localStorage.getItem('nst_user_class');
+        if (isValidClass(legacySaved)) return legacySaved;
+      }
     } catch {}
     return (user as any)?.classLevel || null;
   });
   const sessionClassOwnerRef = useRef(user?.id || '');
+  const persistSessionClassChoice = (classLevel: string) => {
+    if (!user?.id) return;
+    try {
+      localStorage.setItem(`nst_session_class_${user.id}`, classLevel);
+      // Keep the legacy entries in sync for older screens; signed-in sessions
+      // always read the user-scoped key above.
+      localStorage.setItem('nst_session_class', classLevel);
+      localStorage.setItem('nst_user_class', classLevel);
+    } catch {}
+  };
+  const chooseSessionClass = (classLevel: string) => {
+    setActiveSessionClass(classLevel);
+    persistSessionClassChoice(classLevel);
+  };
   useEffect(() => {
     if (!user?.id) return;
     if (sessionClassOwnerRef.current !== user.id) {
       sessionClassOwnerRef.current = user.id;
       let savedClass: string | null = null;
       try {
-        savedClass =
-          localStorage.getItem(`nst_session_class_${user.id}`) ||
-          localStorage.getItem('nst_session_class') ||
-          localStorage.getItem('nst_user_class');
+        savedClass = localStorage.getItem(`nst_session_class_${user.id}`);
       } catch {}
       if (
         savedClass === 'COMPETITION' ||
@@ -2877,6 +2893,19 @@ export const StudentDashboard: React.FC<Props> = ({
     user.id,
   ]);
 
+  // Deep-link handler: Opens Study Room when notification or link with ?open=study-room is clicked
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('open') === 'study-room') {
+        setShowGroupStudyModal(true);
+        const cleanPath = window.location.pathname;
+        window.history.replaceState({}, '', cleanPath);
+      }
+    } catch {}
+  }, []);
+
   const handleNavigateFromGroupStudy = useCallback((target: {
     tab?: string;
     board?: string;
@@ -3994,18 +4023,26 @@ export const StudentDashboard: React.FC<Props> = ({
     };
   }, []);
 
+  // These state values are used in the dependency list of the effect below.
+  // Keep them initialized first; otherwise the render can hit a TDZ in the
+  // minified production bundle before the dashboard has rendered.
+  const [hwActiveHwId, setHwActiveHwId] = useState<string | null>(null);
+  const [hwViewMode, setHwViewMode] = useState<'notes' | 'mcq' | 'audio' | 'video' | 'choose' | 'qa' | 'flashcard' | 'pdf'>('notes');
+  const isCompetitionHomeworkOpen =
+    Boolean(hwActiveHwId) &&
+    (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION');
+
   useEffect(() => {
-    // Competition mode keeps the dashboard chrome available while notes open.
-    // Other chapter players retain their edge-to-edge behavior.
+    // Notes update the shared hidden state; the global header render also pins
+    // the Competition homework header off in every mode.
     const inPlayer =
       contentViewStep === 'PLAYER' &&
       (activeTab === 'PDF' || activeTab === 'MCQ' || activeTab === 'VIDEO' || (activeTab as any) === 'AUDIO');
-    const competitionHomeworkOpen =
-      syllabusMode === 'COMPETITION' && Boolean(hwActiveHwId);
-    const shouldAutoHideChrome = inPlayer && syllabusMode !== 'COMPETITION';
-    setIsTopBarHidden(shouldAutoHideChrome);
-    if (competitionHomeworkOpen || (syllabusMode === 'COMPETITION' && inPlayer)) {
-      setIsLandscapeUiHidden(false);
+    const competitionNotesOpen = isCompetitionHomeworkOpen && hwViewMode === 'notes';
+    const shouldAutoHideChrome =
+      inPlayer && syllabusMode !== 'COMPETITION' && !isCompetitionHomeworkOpen;
+    setIsTopBarHidden(competitionNotesOpen || shouldAutoHideChrome);
+    if (isCompetitionHomeworkOpen || (syllabusMode === 'COMPETITION' && inPlayer)) {
       setIsPedroHidden(false);
       try {
         localStorage.removeItem('nst_pedro_hidden');
@@ -4021,7 +4058,7 @@ export const StudentDashboard: React.FC<Props> = ({
     if (!inPlayer && syllabusMode !== 'COMPETITION') {
       setIsLandscapeUiHidden(false);
     }
-  }, [activeTab, contentViewStep, syllabusMode, hwActiveHwId]);
+  }, [activeTab, contentViewStep, syllabusMode, activeSessionClass, hwActiveHwId, hwViewMode, isCompetitionHomeworkOpen]);
 
   useEffect(() => {
     setFullScreen(true); // Always true to hide global header
@@ -4717,15 +4754,6 @@ export const StudentDashboard: React.FC<Props> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lucentNoteViewer]);
 
-  // ── IMPORTANT: hwActiveHwId + hwViewMode declared HERE (before the useEffects
-  // at L2883–2887 that list them in dep arrays) to avoid production TDZ crash.
-  // In Vite/esbuild minified bundles, dep arrays are evaluated synchronously at
-  // render time; if the const is declared after the hook, JS throws
-  // "Cannot access 'X' before initialization".  Keep these two declarations
-  // ABOVE the hwActivityTypeRef useEffect block.
-  const [hwActiveHwId, setHwActiveHwId] = useState<string | null>(null);
-  const [hwViewMode, setHwViewMode] = useState<'notes' | 'mcq' | 'audio' | 'video' | 'choose' | 'qa' | 'flashcard' | 'pdf'>('notes');
-
   // ── HomeStatsToast — HW viewer (competition / coaching mode) tracking ─────
   // Fire iic-mcq-session when hwActiveHwId opens/closes so HomeStatsToast shows
   // the pts + credits earned during PDF, Video, QA, Notes sessions here too.
@@ -4815,6 +4843,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
   // ---- COMPETITION CUSTOM MCQ HUB (admin + student created practice MCQs) ----
   const [showCompMcqHub, setShowCompMcqHub] = useState(false);
+  const [showPracticeSetsModal, setShowPracticeSetsModal] = useState(false);
   const [compMcqTab, setCompMcqTab] = useState<'PRACTICE' | 'CREATE'>('PRACTICE');
   const [compMcqDraft, setCompMcqDraft] = useState<{ question: string; options: string[]; correctAnswer: number }>({
     question: '',
@@ -5351,24 +5380,35 @@ export const StudentDashboard: React.FC<Props> = ({
   const nstaFabIsLongPressRef = useRef<boolean>(false);
 
   // ── Screen Long-Press Gestures (NSTA Button Replacement) ──
-  // 1. Home page: 1.5 seconds screen hold opens NSTA Wheel (top bar & bottom nav stay visible)
-  // 2. Other pages: 1 second screen hold toggles BOTH top bar and bottom nav.
+  // 1. Home cards: 1.5 seconds opens NSTA Wheel (top bar & bottom nav stay visible)
+  // 2. Study surfaces: 1 second toggles BOTH top bar and bottom navigation.
   useEffect(() => {
     let holdTimer: any = null;
     let startX = 0;
     let startY = 0;
+    const MOVE_CANCEL_TOLERANCE_PX = 14;
+    let activePointerId: number | null = null;
+    let pointerMovedSinceDown = false;
+    let suppressClickAfterMove = false;
     let isLongPressFired = false;
 
-    const handlePointerDown = (e: PointerEvent) => {
-      // Ignore typing controls and media players
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('input, textarea, select, audio, video, [data-no-longpress="true"]')) {
-        return;
+    const cancelHold = () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
       }
+    };
 
-      startX = e.clientX;
-      startY = e.clientY;
+    const handlePointerDown = (e: PointerEvent) => {
+      // Controls/cards keep their normal behavior. The Home NSTA logo is also
+      // a valid wheel target because it is the familiar place users hold.
+      const target = e.target as HTMLElement | null;
+      if (!target || !e.isPrimary || (e.pointerType === 'mouse' && e.button !== 0)) return;
+
+      cancelHold();
+      activePointerId = null;
+      pointerMovedSinceDown = false;
+      suppressClickAfterMove = false;
       isLongPressFired = false;
 
       const isCurrentHome =
@@ -5381,7 +5421,43 @@ export const StudentDashboard: React.FC<Props> = ({
         !showDailyEventPage &&
         !showProgressDashboard &&
         !showWhatsAppChatModal &&
+        !showGroupStudyModal &&
+        !hwActiveHwId &&
+        !mathViewerEntry &&
+        !lucentNoteViewer &&
+        !compMcqSession &&
+        !flashcardMcqs &&
         contentViewStep !== 'PLAYER';
+      const isHomeCardTarget =
+        isCurrentHome && Boolean(target.closest('.nst-card-animated, [data-home-card="true"]'));
+      const isHomeNstaWheelTarget =
+        isCurrentHome && Boolean(target.closest('#nsta-header-brand-btn'));
+      const isStudyModeSurface = Boolean(
+        contentViewStep === 'PLAYER' ||
+        hwActiveHwId ||
+        mathViewerEntry ||
+        lucentNoteViewer ||
+        compMcqSession ||
+        flashcardMcqs ||
+        showGroupStudyModal
+      );
+      const protectedTarget = target.closest(
+        'input, textarea, select, audio, video, [data-no-longpress="true"]',
+      );
+      const interactiveTarget = target.closest('button, a, [role="button"]');
+      if (protectedTarget) return;
+      if (
+        interactiveTarget &&
+        !isHomeNstaWheelTarget &&
+        !isHomeCardTarget &&
+        !isStudyModeSurface
+      ) {
+        return;
+      }
+
+      activePointerId = e.pointerId;
+      startX = e.clientX;
+      startY = e.clientY;
 
       // User requirement:
       // Home page: 1.5s hold opens NSTA Quick Wheel; other pages toggle chrome at 1s.
@@ -5397,60 +5473,73 @@ export const StudentDashboard: React.FC<Props> = ({
           toggleImmersiveStudyMode();
         }
 
-        // Restore Pedro if currently hidden
-        if (isPedroHidden) {
-          setIsPedroHidden(false);
-          try {
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('nst_pedro_hidden');
-              window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
-              window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
-            }
-          } catch (_) {}
-        }
+        // Keep the Pedro control available after either long-press action.
+        setIsPedroHidden(false);
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('nst_pedro_hidden');
+            window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
+            window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
+          }
+        } catch (_) {}
       }, holdDuration);
     };
 
     const handlePointerMove = (e: PointerEvent) => {
-      // If user moved more than 16px (scrolling), cancel the hold timer
+      if (activePointerId !== e.pointerId) return;
       const dx = Math.abs(e.clientX - startX);
       const dy = Math.abs(e.clientY - startY);
-      if (dx > 16 || dy > 16) {
-        if (holdTimer) {
-          clearTimeout(holdTimer);
-          holdTimer = null;
-        }
+      if (dx > MOVE_CANCEL_TOLERANCE_PX || dy > MOVE_CANCEL_TOLERANCE_PX) {
+        pointerMovedSinceDown = true;
+        cancelHold();
       }
     };
 
-    const handlePointerUp = () => {
-      if (holdTimer) {
-        clearTimeout(holdTimer);
-        holdTimer = null;
+    const handlePointerUp = (e: PointerEvent) => {
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      cancelHold();
+      suppressClickAfterMove = pointerMovedSinceDown;
+      activePointerId = null;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (activePointerId === null) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+      const dx = Math.abs(touch.clientX - startX);
+      const dy = Math.abs(touch.clientY - startY);
+      // Finger jitter is normal during a hold. Cancel only for a real drag or
+      // scroll; otherwise touchmove events were cancelling the timer instantly.
+      if (dx > MOVE_CANCEL_TOLERANCE_PX || dy > MOVE_CANCEL_TOLERANCE_PX) {
+        pointerMovedSinceDown = true;
+        cancelHold();
       }
     };
 
-    // Prevent click actions on cards/buttons if a 2s/3s hold just triggered
+    // Prevent accidental taps caused by a scroll/drag, or by a long-press.
     const handleClickCapture = (e: MouseEvent) => {
-      if (isLongPressFired) {
+      if (isLongPressFired || (suppressClickAfterMove && e.detail > 0)) {
         e.preventDefault();
         e.stopPropagation();
         isLongPressFired = false;
+        suppressClickAfterMove = false;
       }
     };
 
-    window.addEventListener('pointerdown', handlePointerDown, { passive: true });
-    window.addEventListener('pointermove', handlePointerMove, { passive: true });
-    window.addEventListener('pointerup', handlePointerUp, { passive: true });
-    window.addEventListener('pointercancel', handlePointerUp, { passive: true });
+    window.addEventListener('pointerdown', handlePointerDown, { capture: true, passive: true });
+    window.addEventListener('pointermove', handlePointerMove, { capture: true, passive: true });
+    window.addEventListener('pointerup', handlePointerUp, { capture: true, passive: true });
+    window.addEventListener('pointercancel', handlePointerUp, { capture: true, passive: true });
+    window.addEventListener('touchmove', handleTouchMove, { capture: true, passive: true });
     window.addEventListener('click', handleClickCapture, true);
 
     return () => {
-      if (holdTimer) clearTimeout(holdTimer);
-      window.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
+      cancelHold();
+      window.removeEventListener('pointerdown', handlePointerDown, true);
+      window.removeEventListener('pointermove', handlePointerMove, true);
+      window.removeEventListener('pointerup', handlePointerUp, true);
+      window.removeEventListener('pointercancel', handlePointerUp, true);
+      window.removeEventListener('touchmove', handleTouchMove, true);
       window.removeEventListener('click', handleClickCapture, true);
     };
   }, [
@@ -5463,9 +5552,14 @@ export const StudentDashboard: React.FC<Props> = ({
     showDailyEventPage,
     showProgressDashboard,
     showWhatsAppChatModal,
+    showGroupStudyModal,
+    hwActiveHwId,
+    mathViewerEntry,
+    lucentNoteViewer,
+    compMcqSession,
+    flashcardMcqs,
     contentViewStep,
     toggleImmersiveStudyMode,
-    isPedroHidden,
   ]);
 
   // XP badge useEffect — yahan rakhna zaroori hai (showRevisionHubScreen/showMyRoutine/showChat ke baad)
@@ -6058,6 +6152,17 @@ export const StudentDashboard: React.FC<Props> = ({
   const [hwOptionsOpen, setHwOptionsOpen] = useState(false);
   const [lucentFabOpen, setLucentFabOpen] = useState(false);
   const [lucentImmersive, setLucentImmersive] = useState(false);
+  const setStudyFocusMode = useCallback((next: boolean) => {
+    setHwImmersive(next);
+    setMathImmersive(next);
+    setLucentImmersive(next);
+    toggleImmersiveStudyMode(next);
+  }, [toggleImmersiveStudyMode]);
+  useEffect(() => {
+    setHwImmersive(isLandscapeUiHidden);
+    setMathImmersive(isLandscapeUiHidden);
+    setLucentImmersive(isLandscapeUiHidden);
+  }, [isLandscapeUiHidden]);
   const [lucentPdfRotated, setLucentPdfRotated] = useState(false);
   const [lucentPdfNight, setLucentPdfNight] = useState<'normal' | 'night' | 'sepia'>('normal');
   // Reset both tabs + view mode when page or note changes
@@ -8084,6 +8189,8 @@ export const StudentDashboard: React.FC<Props> = ({
   const [activeChallenges20, setActiveChallenges20] = useState<Challenge20[]>(
     [],
   );
+  const [dailyChallengeStarting, setDailyChallengeStarting] = useState(false);
+  const dailyChallengeLaunchRef = useRef(false);
   const [routineSelectionVersion, setRoutineSelectionVersion] = useState(0);
   const [homeBannerIndex, setHomeBannerIndex] = useState(0);
 
@@ -9579,6 +9686,80 @@ export const StudentDashboard: React.FC<Props> = ({
     showAlert("🎉 Daily Challenge 2.0: +100 XP claim ho gaya!", "SUCCESS");
   };
 
+  const handleStartDailyChallenge = async (challenge?: Challenge20) => {
+    if (!onStartWeeklyTest) {
+      showAlert('Daily Challenge test abhi available nahi hai. Thodi der baad dobara try karein.', 'ERROR');
+      return;
+    }
+    if (dailyChallengeLaunchRef.current) return;
+    dailyChallengeLaunchRef.current = true;
+    setDailyChallengeStarting(true);
+    try {
+      let daily = challenge;
+      if (!daily?.questions?.length) {
+        const classLevel = (activeSessionClass || user.classLevel || '10') as any;
+        const board = (user.board || 'NCERT_EN') as any;
+        const generated = await generateDailyChallengeQuestions(
+          classLevel,
+          board,
+          (user.stream || 'Science') as any,
+          (settings || {}) as any,
+          user.id,
+          'DAILY',
+        );
+        if (!generated.questions.length) {
+          showAlert('Is class ke liye abhi questions nahi mile. Questions load hone ke baad dobara try karein.', 'ERROR');
+          return;
+        }
+        daily = {
+          id: generated.id,
+          title: generated.name,
+          description: `Aaj ka Class ${classLevel} Daily Challenge`,
+          questions: generated.questions,
+          createdAt: new Date().toISOString(),
+          expiryDate: generated.expiryDate,
+          type: 'DAILY_CHALLENGE',
+          classLevel,
+          isAutoGenerated: true,
+          isActive: true,
+          durationMinutes: generated.durationMinutes,
+          board,
+          periodKey: getChallengeDateKey(),
+          routineClassLevel: classLevel,
+        };
+        setActiveChallenges20((previous) => [
+          ...previous.filter((item) => item.id !== daily!.id),
+          daily!,
+        ]);
+        try {
+          await saveChallenge20(daily);
+        } catch (error) {
+          console.warn('Unable to cache the generated daily challenge:', error);
+        }
+      }
+
+      onStartWeeklyTest({
+        id: daily.id,
+        name: daily.title,
+        description: daily.description || 'Aaj ka Daily Challenge 2.0',
+        date: new Date().toISOString(),
+        durationMinutes: Math.min(daily.durationMinutes || 60, 60),
+        isCompleted: false,
+        score: 0,
+        totalQuestions: daily.questions.length,
+        questions: daily.questions,
+        classLevel: daily.classLevel,
+        challengeType: 'DAILY_CHALLENGE',
+      } as any);
+    } catch (error) {
+      console.error('Could not start the Daily Challenge:', error);
+      showAlert('Daily Challenge load nahi ho paya. Internet check karke dobara try karein.', 'ERROR');
+    } finally {
+      dailyChallengeLaunchRef.current = false;
+      setDailyChallengeStarting(false);
+    }
+  };
+
   // Countdown ticker — updates every 30s when inbox is open
   useEffect(() => {
     if (!showInbox) return;
@@ -11010,7 +11191,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
             {/* ── COMPETITION STICKY MODE TAB BAR — Lucent jaisa ── */}
             {/* Access: Free=Reading+Writing+MCQ | Basic+=Q&A+PDF | Ultra+=Video+Audio+Flashcard | Admin=+Projector */}
-            {!hwImmersive && !isLandscapeUiHidden && effectiveMode !== 'flashcard' && (() => {
+            {(() => {
                const _hwTabCls = (active: boolean, _activeBg: string, _activeText: string) =>
                  `flex items-center justify-center px-2 py-2 shrink-0 transition-all text-center font-bold text-[11px] leading-tight border-r border-white/10 last:border-r-0 relative` +
                  ` ${active ? 'bg-[#17183a] text-white after:content-[\'\'] after:absolute after:bottom-0 after:left-1/2 after:-translate-x-1/2 after:h-[3px] after:w-[calc(100%-16px)] after:rounded-full after:bg-[#d8d2ff] after:shadow-[0_0_9px_2px_rgba(190,172,255,0.9)]' : 'bg-[#17183a] text-slate-300 hover:bg-[#24234b] active:bg-[#2d2a58]'}`;
@@ -12182,21 +12363,23 @@ export const StudentDashboard: React.FC<Props> = ({
             </div>
             )}
 
-            {/* Floating FAB — tap directly to toggle Focus Mode (hidden in video and all MCQ/QA/flashcard modes, and hidden on notification page) */}
-            {effectiveMode !== 'video' && effectiveMode !== 'mcq' && effectiveMode !== 'qa' && effectiveMode !== 'flashcard' && !showNotifPage && (
-              <DraggableNstaLogoFab
-                isActive={hwImmersive}
-                onToggle={() => setHwImmersive(v => !v)}
+            {/* Floating focus control stays available across homework modes. */}
+            <DraggableNstaLogoFab
+                isActive={hwImmersive || isLandscapeUiHidden}
+                onToggle={() => {
+                  const nextActive = !(hwImmersive || isLandscapeUiHidden);
+                  setHwImmersive(nextActive);
+                  toggleImmersiveStudyMode(nextActive);
+                }}
                 appLogo={settings?.appLogo}
                 appName={settings?.appShortName || settings?.appName || 'NSTA'}
-                title={hwImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
+                title={hwImmersive || isLandscapeUiHidden ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
                 defaultPosition={{
-                  bottom: !hwImmersive && effectiveMode !== 'choose' && !isLandscape ? 92 : 20,
+                  bottom: !(hwImmersive || isLandscapeUiHidden) && effectiveMode !== 'choose' && !isLandscape ? 92 : 20,
                   right: 16,
                 }}
                 zIndex={99999}
-              />
-            )}
+            />
 
 
           </div>
@@ -13471,11 +13654,16 @@ export const StudentDashboard: React.FC<Props> = ({
                 background: tierTheme.cardBg || '#ffffff',
                 border: `1px solid ${tierTheme.primary}18`,
               };
-              const resumeBtn = (
-                <span className="shrink-0 text-[9px] font-black text-white px-2 py-1 rounded-lg flex items-center gap-0.5"
-                  style={{ background: `linear-gradient(135deg,${tierTheme.btnStart || tierTheme.primary},${tierTheme.btnEnd || tierTheme.primary})` }}>
+              const resumeBtn = (onResume: () => void) => (
+                <button
+                  type="button"
+                  aria-label="Resume reading"
+                  onClick={(e) => { e.stopPropagation(); onResume(); }}
+                  className="shrink-0 text-[9px] font-black text-white px-2 py-1 rounded-lg flex items-center gap-0.5"
+                  style={{ background: `linear-gradient(135deg,${tierTheme.btnStart || tierTheme.primary},${tierTheme.btnEnd || tierTheme.primary})` }}
+                >
                   Resume <ChevronRight size={7} />
-                </span>
+                </button>
               );
 
               if (item.kind === 'chapter') {
@@ -13487,13 +13675,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     className="rounded-xl overflow-hidden"
                     style={cardStyle}
                   >
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openRecentChapter(entry)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRecentChapter(entry); } }}
-                      className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0 cursor-pointer"
-                    >
+                    <div className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 uppercase tracking-wide"
@@ -13507,7 +13689,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className="text-[9px] font-semibold text-slate-400">{entry.scrollPct}%</span>
-                        {resumeBtn}
+                        {resumeBtn(() => openRecentChapter(entry))}
                         <button onClick={(e) => { e.stopPropagation(); dismissRecentChapter(entry.id); }}
                           className="w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:text-slate-500 active:scale-90 transition-all">
                           <X size={10} />
@@ -13530,20 +13712,14 @@ export const StudentDashboard: React.FC<Props> = ({
                     className="rounded-xl overflow-hidden"
                     style={cardStyle}
                   >
-                    <div
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => openRecentLucent(entry)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRecentLucent(entry); } }}
-                      className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0 cursor-pointer"
-                    >
+                    <div className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0">
                       <div className="flex-1 min-w-0 flex items-center gap-1.5">
                         <span className="text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 bg-teal-50 text-teal-700">📗 Lucent{entry.pageNo ? ` · P.${entry.pageNo}` : ''}</span>
                         <p className="text-[12px] font-black truncate leading-none flex-1" style={{ color: tierTheme.textColor || '#0f172a' }}>{entry.lessonTitle}</p>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <span className="text-[9px] font-semibold text-slate-400">{entry.scrollPct}%</span>
-                        {resumeBtn}
+                        {resumeBtn(() => openRecentLucent(entry))}
                         <button onClick={(e) => { e.stopPropagation(); removeRecentLucent(entry.id); setRecentLucent(getRecentLucent()); }}
                           className="w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:text-slate-500 active:scale-90 transition-all">
                           <X size={10} />
@@ -13567,13 +13743,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   className="rounded-xl overflow-hidden"
                   style={cardStyle}
                 >
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openRecentHw(entry)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRecentHw(entry); } }}
-                    className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0 cursor-pointer"
-                  >
+                  <div className="w-full text-left px-3 pt-2.5 pb-1 flex items-center gap-2 min-w-0">
                     <div className="flex-1 min-w-0 flex items-center gap-1.5">
                       <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md shrink-0 ${meta.chipBg} ${meta.chipText}`}>
                         {meta.label}{entry.hw?.pageNo ? ` · P.${entry.hw.pageNo}` : ''}
@@ -13582,9 +13752,14 @@ export const StudentDashboard: React.FC<Props> = ({
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <span className="text-[9px] font-semibold text-slate-400">{entry.scrollPct}%</span>
-                      <span className={`text-[9px] font-black text-white ${meta.btnBg} px-2 py-1 rounded-lg flex items-center gap-0.5`}>
+                      <button
+                        type="button"
+                        aria-label="Resume homework"
+                        onClick={(e) => { e.stopPropagation(); openRecentHw(entry); }}
+                        className={`text-[9px] font-black text-white ${meta.btnBg} px-2 py-1 rounded-lg flex items-center gap-0.5`}
+                      >
                         Resume <ChevronRight size={7} />
-                      </span>
+                      </button>
                       <button onClick={(e) => { e.stopPropagation(); dismissRecentHw(entry.id); }}
                         className="w-5 h-5 flex items-center justify-center rounded-full text-slate-300 hover:text-slate-500 active:scale-90 transition-all">
                         <X size={10} />
@@ -13702,7 +13877,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 hapticStrong();
                 if (c === 'COMPETITION') {
                   setSyllabusMode('COMPETITION');
-                  setActiveSessionClass('COMPETITION');
+                  chooseSessionClass('COMPETITION');
                   setActiveSessionBoard(_board);
                   setContentViewStep('SUBJECTS');
                   setInitialParentSubject(null);
@@ -13713,7 +13888,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   return;
                 }
                 setSyllabusMode('SCHOOL');
-                setActiveSessionClass(c as any);
+                chooseSessionClass(c);
                 setActiveSessionBoard(_board);
                 setContentViewStep('SUBJECTS');
                 setInitialParentSubject(null);
@@ -13938,7 +14113,7 @@ export const StudentDashboard: React.FC<Props> = ({
                           <button
                             type="button"
                             onClick={() => goToClassHome(isCompetitionSelected ? 'COMPETITION' : currentSelectedClass)}
-                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all hover:opacity-95 active:scale-[0.99]"
+                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all hover:opacity-95 active:scale-[0.99] cursor-pointer"
                             style={{
                               background: themeBtnGrad,
                               color: '#ffffff',
@@ -14012,12 +14187,8 @@ export const StudentDashboard: React.FC<Props> = ({
                                   type="button"
                                   onClick={() => {
                                     hapticMedium();
-                                    setActiveSessionClass(c as any);
+                                    chooseSessionClass(c);
                                     setSyllabusMode('SCHOOL');
-                                    try {
-                                      localStorage.setItem('nst_user_class', c);
-                                      localStorage.setItem('nst_session_class', c);
-                                    } catch {}
                                     setShowClassPickerDrawer(false);
                                   }}
                                   className={`flex items-center justify-between px-2.5 py-2 rounded-xl text-left border transition-all cursor-pointer active:scale-95 ${
@@ -14060,12 +14231,8 @@ export const StudentDashboard: React.FC<Props> = ({
                             type="button"
                             onClick={() => {
                               hapticMedium();
-                              setActiveSessionClass('COMPETITION');
+                              chooseSessionClass('COMPETITION');
                               setSyllabusMode('COMPETITION');
-                              try {
-                                localStorage.setItem('nst_user_class', 'COMPETITION');
-                                localStorage.setItem('nst_session_class', 'COMPETITION');
-                              } catch {}
                               setShowClassPickerDrawer(false);
                             }}
                             className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left border transition-all cursor-pointer active:scale-95 ${
@@ -14136,7 +14303,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       <div className="p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0 pr-1">
-                            <div className="flex items-center gap-1.5 mb-1.5">
+                            <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
                               <span
                                 className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0"
                                 style={{
@@ -14145,28 +14312,52 @@ export const StudentDashboard: React.FC<Props> = ({
                                   border: `1px solid ${themePrimary}35`,
                                 }}
                               >
-                                Interactive Drill · Live MCQs
+                                {isCompetitionSelected ? 'Mock Drill · Bihar Police & BSSC' : 'Interactive Drill · Live MCQs'}
                               </span>
                               <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-emerald-500 text-white shadow-xs">
                                 ⚡ High Yield
                               </span>
+                              {isCompetitionSelected && (
+                                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                  🎯 बिहार पुलिस & BSSC
+                                </span>
+                              )}
                             </div>
-                            <h3 className="text-[22px] sm:text-[24px] font-black leading-tight mb-1.5" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
-                              Practice Set
+                            <h3 className="text-[20px] sm:text-[23px] font-black leading-tight mb-1.5" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
+                              {isCompetitionSelected ? 'प्रैक्टिस सेट (बिहार पुलिस & BSSC)' : 'Practice Set'}
                             </h3>
                             <div className="flex items-center flex-wrap gap-1.5">
-                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                🧠 {compMcqPracticeLessons.length > 0 ? `${compMcqPracticeLessons.length} Practice Sets` : '10+ Practice Sets'}
-                              </span>
-                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                🎯 Topic-wise & Mixed
-                              </span>
-                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                ⚡ Speed & Accuracy
-                              </span>
-                              <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                🏆 Leaderboard & Review
-                              </span>
+                              {isCompetitionSelected ? (
+                                <>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    👮 Basic Set (60 Min · No Neg)
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    🏛️ Ultra Set (120 Min · -0.25 Neg)
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    🧠 100/150 Questions
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    🏆 Real Exam Scorecard
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    🧠 {compMcqPracticeLessons.length > 0 ? `${compMcqPracticeLessons.length} Practice Sets` : '10+ Practice Sets'}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    🎯 Topic-wise & Mixed
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    ⚡ Speed & Accuracy
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
+                                    🏆 Leaderboard & Review
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </div>
                           <div className="text-[44px] sm:text-[50px] leading-none shrink-0 select-none group-hover:scale-105 transition-transform pt-0.5">
@@ -14180,24 +14371,35 @@ export const StudentDashboard: React.FC<Props> = ({
                             type="button"
                             onClick={() => {
                               hapticStrong();
-                              setSyllabusMode('COMPETITION');
-                              setActiveSessionClass('COMPETITION');
-                              setSelectedSubject({ id: 'mcq', name: 'Practice Set' } as any);
-                              setHomeworkSubjectView('mcq');
-                              setHwSubjectOpenedFrom('HOME');
-                              setContentViewStep('SUBJECTS');
-                              onTabChange('COURSES');
+                              setShowPracticeSetsModal(true);
                             }}
-                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all hover:opacity-95 active:scale-[0.99]"
-                            style={{
+                            className={`w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all hover:opacity-95 active:scale-[0.99] cursor-pointer ${
+                              isCompetitionSelected
+                                ? (_isBasicUser || _isUltraUser || _isAdminUser
+                                    ? 'bg-gradient-to-r from-amber-500 via-indigo-600 to-indigo-700 text-white shadow-indigo-900/30'
+                                    : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-indigo-900/30')
+                                : ''
+                            }`}
+                            style={!isCompetitionSelected ? {
                               background: themeBtnGrad,
                               color: '#ffffff',
                               boxShadow: `0 4px 14px ${themePrimary}35`
-                            }}
+                            } : undefined}
                           >
-                            <Sparkles size={14} />
-                            <span>Start Practice Set</span>
-                            <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                            <Sparkles size={14} className="shrink-0" />
+                            <span>{isCompetitionSelected ? '🎯 Start Practice Set (बिहार पुलिस & BSSC)' : '🎯 Practice Sets & Leaderboard (10वीं/12वीं & All)'}</span>
+                            {isCompetitionSelected && (
+                              !_isBasicUser && !_isUltraUser && !_isAdminUser ? (
+                                <span className="px-1.5 py-0.2 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-black border border-amber-500/30 shrink-0">
+                                  🔒 VIP Sets
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.2 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-black border border-emerald-500/30 shrink-0">
+                                  ⭐ Open
+                                </span>
+                              )
+                            )}
+                            <span className="group-hover:translate-x-0.5 transition-transform ml-auto">→</span>
                           </button>
                         </div>
                       </div>
@@ -14319,36 +14521,23 @@ export const StudentDashboard: React.FC<Props> = ({
                                   ) : (
                                     <button
                                       type="button"
+                                      disabled={dailyChallengeStarting}
                                       onClick={() => {
                                         hapticStrong();
-                                        if (activeDaily && onStartWeeklyTest) {
-                                          onStartWeeklyTest({
-                                            id: activeDaily.id,
-                                            name: activeDaily.title,
-                                            description: activeDaily.description || "Aaj ka Daily Challenge 2.0",
-                                            date: new Date().toISOString(),
-                                            durationMinutes: Math.min(activeDaily.durationMinutes || 60, 60),
-                                            isCompleted: false,
-                                            score: 0,
-                                            totalQuestions: activeDaily.questions.length,
-                                            questions: activeDaily.questions,
-                                            classLevel: activeDaily.classLevel,
-                                            challengeType: isDailyChallenge20(activeDaily) ? 'DAILY_CHALLENGE' : 'WEEKLY_TEST',
-                                          } as any);
-                                        } else {
-                                          setShowDailyEventPage(true);
-                                        }
+                                        void handleStartDailyChallenge(activeDaily);
                                       }}
-                                      className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98"
+                                      className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 cursor-pointer transition-all active:scale-98 disabled:opacity-70 disabled:cursor-wait"
                                       style={{
                                         background: themeBtnGrad,
                                         color: '#ffffff',
                                         boxShadow: `0 4px 14px ${themePrimary}35`
                                       }}
                                     >
-                                      <Rocket size={14} />
-                                      <span>Start Daily Challenge</span>
-                                      <span className="group-hover:translate-x-0.5 transition-transform">→</span>
+                                      {dailyChallengeStarting ? (
+                                        <><span className="animate-spin">⏳</span><span>Challenge load ho raha hai…</span></>
+                                      ) : (
+                                        <><Rocket size={14} /><span>Start Daily Challenge</span><span className="group-hover:translate-x-0.5 transition-transform">→</span></>
+                                      )}
                                     </button>
                                   )}
                                 </div>
@@ -14440,13 +14629,10 @@ export const StudentDashboard: React.FC<Props> = ({
                         {isHomeSectionVisible('home_revision_hub', settings) && (() => {
                           return (
                             <div id="home-revision-card" className="w-full home-revhub-card-anim flex flex-col">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  hapticStrong();
-                                  openRevisionHubSafely({ isFromRoutine: false });
-                                }}
-                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                              <div
+                                role="group"
+                                aria-label="Revision Hub"
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
                                 style={getHomeCardStyle(
                                   settings?.homeRevisionHubCard3D !== undefined ? settings?.homeRevisionHubCard3D : settings?.homeRevisionCard3D,
                                   settings?.homeRevisionHubCardBg || settings?.homeRevisionCardBg,
@@ -14500,8 +14686,13 @@ export const StudentDashboard: React.FC<Props> = ({
                                   className="mt-3.5 pt-2.5 border-t w-full"
                                   style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
                                 >
-                                  <div
-                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      hapticStrong();
+                                      openRevisionHubSafely({ isFromRoutine: false });
+                                    }}
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all hover:opacity-95 active:scale-[0.985]"
                                     style={{
                                       background: themeBtnGrad,
                                       color: '#ffffff',
@@ -14510,10 +14701,10 @@ export const StudentDashboard: React.FC<Props> = ({
                                   >
                                     <Brain size={14} />
                                     <span>Open Revision Hub</span>
-                                    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                                  </div>
+                                    <span>→</span>
+                                  </button>
                                 </div>
-                              </button>
+                              </div>
                             </div>
                           );
                         })()}
@@ -14522,13 +14713,10 @@ export const StudentDashboard: React.FC<Props> = ({
                         {(() => {
                           return (
                             <div id="home-mistakes-card" className="w-full home-revhub-card-anim flex flex-col">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  hapticStrong();
-                                  onTabChange('MY_MISTAKES_PAGE' as any);
-                                }}
-                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left active:scale-[0.985] transition-all cursor-pointer flex flex-col justify-between group flex-1"
+                              <div
+                                role="group"
+                                aria-label="My Mistakes"
+                                className="nst-card-animated w-full relative overflow-hidden rounded-2xl p-4 text-left transition-all flex flex-col justify-between group flex-1"
                                 style={getHomeCardStyle(
                                   settings?.homeMistakesCard3D,
                                   settings?.homeMistakesCardBg,
@@ -14582,8 +14770,13 @@ export const StudentDashboard: React.FC<Props> = ({
                                   className="mt-3.5 pt-2.5 border-t w-full"
                                   style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
                                 >
-                                  <div
-                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all group-hover:opacity-95"
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      hapticStrong();
+                                      onTabChange('MY_MISTAKES_PAGE' as any);
+                                    }}
+                                    className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-1.5 transition-all hover:opacity-95 active:scale-[0.985]"
                                     style={{
                                       background: themeBtnGrad,
                                       color: '#ffffff',
@@ -14592,10 +14785,10 @@ export const StudentDashboard: React.FC<Props> = ({
                                   >
                                     <RotateCcw size={14} />
                                     <span>Review Mistakes ({mistakeCount})</span>
-                                    <span className="group-hover:translate-x-0.5 transition-transform">→</span>
-                                  </div>
+                                    <span>→</span>
+                                  </button>
                                 </div>
-                              </button>
+                              </div>
                             </div>
                           );
                         })()}
@@ -14835,6 +15028,7 @@ export const StudentDashboard: React.FC<Props> = ({
               isPremium={user.isPremium}
               listCardBg={settings?.contentListCardBg}
               listCardBorder={settings?.contentListCardBorder}
+              onOpenPracticeSets={() => setShowPracticeSetsModal(true)}
               onSelect={(subject) => {
                 setSelectedSubject(subject);
                 setHomeworkSubjectView(null);
@@ -17574,8 +17768,17 @@ export const StudentDashboard: React.FC<Props> = ({
   };
 
   const renderBottomNav = (inProjectorOverlay: boolean = false) => {
-    // Hide bottom navigation if user toggled Focus / Study mode (via 2s long press)
-    if (!forceShowBottomNav || isLandscapeUiHidden || isTopBarHidden) {
+    // Competition notes hide the dashboard top bar automatically but leave the
+    // bottom navigation available. Focus mode still hides both bars together.
+    const competitionNotesOpen =
+      Boolean(hwActiveHwId) &&
+      hwViewMode === 'notes' &&
+      (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION');
+    if (
+      !forceShowBottomNav ||
+      isLandscapeUiHidden ||
+      (isTopBarHidden && !competitionNotesOpen)
+    ) {
       return null;
     }
 
@@ -18207,35 +18410,10 @@ export const StudentDashboard: React.FC<Props> = ({
           onTabChange('STORE');
         }}
       />
-      {/* ADMIN SWITCH BUTTON — only visible inside content (Notes/MCQ player or HW notes) */}
-      {(user.role === "ADMIN" ||
-        user.role === "SUB_ADMIN" ||
-        isImpersonating) &&
-        (contentViewStep === "PLAYER" || !!hwActiveHwId) && (
-        <div className="fixed bottom-36 right-4 z-50 flex flex-col gap-3 items-end">
-          <button
-            onClick={() => setIsLayoutEditing(!isLayoutEditing)}
-            className={`p-4 rounded-full shadow-2xl border-2 hover:scale-110 transition-transform flex items-center gap-2 ${isLayoutEditing ? "bg-yellow-400 text-black border-yellow-500" : "bg-white text-slate-800 border-slate-200"}`}
-          >
-            <Edit size={20} />
-            {isLayoutEditing && (
-              <span className="font-bold text-xs">Editing Layout</span>
-            )}
-          </button>
-          <button
-            onClick={handleSwitchToAdmin}
-            className="bg-slate-900 text-white p-4 rounded-full shadow-2xl border-2 border-slate-700 hover:scale-110 transition-transform flex items-center gap-2 animate-bounce-slow"
-          >
-            <LayoutGrid size={20} className="text-yellow-400" />
-            <span className="font-bold text-xs">Admin Panel</span>
-          </button>
-        </div>
-      )}
-
       {/* NEW GLOBAL TOP BAR */}
       <div
         id="top-banner-container"
-        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
+        className={`sticky top-0 z-[100] w-full flex flex-col relative transition-all duration-150 ease-in-out overflow-hidden ${isFullscreenMode || Boolean(mathViewerEntry) ? "!hidden !h-0 overflow-hidden pointer-events-none" : ""} ${(isTopBarHidden || isLandscapeUiHidden || isCompetitionHomeworkOpen || showWhatsAppChatModal || showNstaQuickWheel || activeTab === 'STORE' || activeTab === 'CUSTOM_PAGE' || activeTab === 'PROFILE' || activeTab === 'UNIVERSAL_VIDEO') ? "-translate-y-full !h-0 overflow-hidden opacity-0 pointer-events-none" : "translate-y-0 opacity-100"}`}
         style={{ background: activeTopBarGrad }}
       >
         <TopBarEffectsLayer effects={activeTopBarEffects} />
@@ -21494,6 +21672,48 @@ export const StudentDashboard: React.FC<Props> = ({
           </div>
         );
       })()}
+
+      {/* COMPETITION PRACTICE SETS MODAL (Bihar Police 60m & BSSC 120m) */}
+      {showPracticeSetsModal && (
+        <div className="fixed inset-0 z-[999998] flex flex-col bg-slate-900 text-slate-100 overflow-y-auto animate-in fade-in duration-150">
+          <div className="sticky top-0 z-30 flex items-center justify-between px-4 py-3 bg-slate-800/95 border-b border-slate-700 backdrop-blur-md">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPracticeSetsModal(false)}
+                className="p-1.5 rounded-xl hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+              >
+                <ArrowLeft size={18} />
+              </button>
+              <div>
+                <h2 className="text-sm font-black text-white">प्रैक्टिस सेट व साप्ताहिक रैंकिंग</h2>
+                <p className="text-[10px] text-slate-400">कक्षा 10वीं व 12वीं बोर्ड · बिहार पुलिस · BSSC / SSC</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPracticeSetsModal(false)}
+              className="p-1.5 rounded-xl hover:bg-slate-700 text-slate-400 hover:text-white cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="flex-1 p-3 sm:p-5 max-w-4xl w-full mx-auto pb-24">
+            <CompetitionPracticeSetLauncher
+              user={user}
+              settings={settings}
+              compMcqPracticeLessons={compMcqPracticeLessons}
+              isDarkMode={isDarkMode}
+              onOpenStore={() => {
+                setShowPracticeSetsModal(false);
+                onTabChange('STORE' as any);
+              }}
+              onClose={() => setShowPracticeSetsModal(false)}
+            />
+          </div>
+        </div>
+      )}
 
       {/* COMPETITION CUSTOM MCQ HUB (Practice + Create) */}
       {showCompMcqHub && (() => {
@@ -25227,7 +25447,7 @@ export const StudentDashboard: React.FC<Props> = ({
               appLogo={settings?.appLogo}
               appName={settings?.appShortName || settings?.appName || 'NSTA'}
               isImmersive={mathImmersive}
-              onToggleImmersive={() => setMathImmersive(v => !v)}
+              onToggleImmersive={() => setStudyFocusMode(!mathImmersive)}
               onBack={() => {
                 setMathViewerEntry(null);
                 setMathImmersive(false);
@@ -25240,7 +25460,7 @@ export const StudentDashboard: React.FC<Props> = ({
           {mathViewerMode !== 'MCQ' && !showNotifPage && (
             <DraggableNstaLogoFab
               isActive={mathImmersive}
-              onToggle={() => setMathImmersive(v => !v)}
+              onToggle={() => setStudyFocusMode(!mathImmersive)}
               appLogo={settings?.appLogo}
               appName={settings?.appShortName || settings?.appName || 'NSTA'}
               title={mathImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
@@ -26061,7 +26281,7 @@ export const StudentDashboard: React.FC<Props> = ({
                             {lucentPdfNight === 'night' ? '🌙' : lucentPdfNight === 'sepia' ? '📜' : '☀️'}
                           </button>
                           <button
-                            onClick={() => setLucentImmersive(v => !v)}
+                            onClick={() => setStudyFocusMode(!lucentImmersive)}
                             className={`w-8 h-8 flex items-center justify-center rounded-xl border transition-all active:scale-90 shrink-0 ${lucentImmersive ? 'bg-indigo-500/30 border-indigo-400/50 text-indigo-300' : 'bg-white/15 border-white/25 text-white'}`}
                             title={lucentImmersive ? 'Exit Focus Mode' : 'Focus Mode'}
                           >
@@ -26503,7 +26723,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     <>
                       <button onClick={async () => { const r = await rotateScreen(); if (r !== null) { setLucentPdfRotated(r === 'landscape'); } else { alert('📱 Phone ko sideways karein'); } }} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentPdfRotated ? 'bg-emerald-50 border-emerald-300 text-emerald-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Rotate"><RotateCcw size={12} /></button>
                       <button onClick={() => setLucentPdfNight(m => m === 'normal' ? 'night' : m === 'night' ? 'sepia' : 'normal')} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 text-sm ${lucentPdfNight !== 'normal' ? 'bg-indigo-50 border-indigo-300' : 'bg-slate-100 border-slate-200'}`} title="Night/Sepia">{lucentPdfNight === 'night' ? '🌙' : lucentPdfNight === 'sepia' ? '📜' : '☀️'}</button>
-                      <button onClick={() => setLucentImmersive(v => !v)} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentImmersive ? 'bg-indigo-50 border-indigo-300 text-indigo-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Focus">{lucentImmersive ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
+                      <button onClick={() => setStudyFocusMode(!lucentImmersive)} className={`w-7 h-7 flex items-center justify-center rounded-lg border active:scale-90 transition shrink-0 ${lucentImmersive ? 'bg-indigo-50 border-indigo-300 text-indigo-600' : 'bg-slate-100 border-slate-200 text-slate-500'}`} title="Focus">{lucentImmersive ? <Minimize2 size={12} /> : <Maximize2 size={12} />}</button>
                     </>
                   )}
 
@@ -27717,7 +27937,7 @@ RULES:
           {lucentActiveTab !== 'VIDEO' && lucentActiveTab !== 'MCQ' && lucentActiveTab !== 'MCQS' && lucentActiveTab !== 'QA' && lucentActiveTab !== 'FLASHCARD' && !showNotifPage && (
             <DraggableNstaLogoFab
               isActive={lucentImmersive}
-              onToggle={() => setLucentImmersive(v => !v)}
+              onToggle={() => setStudyFocusMode(!lucentImmersive)}
               appLogo={settings?.appLogo}
               appName={settings?.appShortName || settings?.appName || 'NSTA'}
               title={lucentImmersive ? 'बॉटम व टॉप बार दिखाएं • Screen pe move kar sakte hain' : 'बॉटम व टॉप बार छुपाएं • Screen pe move kar sakte hain'}
@@ -31313,7 +31533,14 @@ RULES:
               currentPageTitle={pedroPageMeta.title}
               currentPageIcon={pedroPageMeta.icon}
               customRobotName={settings?.pedroConfig?.robotName}
-              hidden={isPedroHidden || !!mathViewerEntry || (!!lucentNoteViewer && lucentImmersive)}
+              hidden={
+                (isPedroHidden && !(
+                  Boolean(hwActiveHwId) &&
+                  (syllabusMode === 'COMPETITION' || activeSessionClass === 'COMPETITION')
+                )) ||
+                !!mathViewerEntry ||
+                (!!lucentNoteViewer && lucentImmersive)
+              }
               guidePowerEnabled={settings?.pedroConfig?.guidePowerEnabled !== false && settings?.pedroConfig?.enabled !== false}
               userName={user?.name || (user as any)?.displayName || 'Student'}
               user={user}

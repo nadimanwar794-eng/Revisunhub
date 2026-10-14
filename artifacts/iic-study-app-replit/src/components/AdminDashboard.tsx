@@ -17773,6 +17773,7 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
           <ErrorBoundary fallbackLabel="Competition MCQ Practice Manager" compact>
             <AdminCompetitionMcqManager
               settings={localSettings}
+              onSaveSettings={handleSaveSettings}
               onBack={() => setActiveTab('DASHBOARD')}
             />
           </ErrorBoundary>

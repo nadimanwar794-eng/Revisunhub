@@ -42,6 +42,8 @@ export interface GroupStudyMcqQuestion {
   correctIndex: number;
   explanation?: string;
   subject?: string;
+  topic?: string;
+  chapterTitle?: string;
 }
 
 export interface GroupStudyHostSync {
@@ -181,6 +183,7 @@ export interface GroupStudyRoom {
       maxStreak?: number;
       userXp?: number;
       streakBonusXp?: number;
+      submittedAt?: number;
     }>;
     questionAnswers?: Record<
       number,
@@ -1021,6 +1024,34 @@ export const leaveGroupRoom = async (roomId: string, userId: string, userName: s
 };
 
 /**
+ * Updates a member's display name inside the study room in RTDB and local cache.
+ * Supports the optional name feature for room entries.
+ */
+export const updateMemberDisplayName = async (
+  roomId: string,
+  userId: string,
+  newName: string
+): Promise<boolean> => {
+  if (!roomId || !userId || !newName.trim()) return false;
+  const trimmed = newName.trim();
+  const effectiveUserId = auth.currentUser?.uid || userId;
+  try {
+    const memberNameRef = ref(rtdb, `group_study_rooms/${roomId}/members/${effectiveUserId}/name`);
+    await set(memberNameRef, trimmed);
+
+    const cached = getCachedRooms()[roomId];
+    if (cached && cached.members && cached.members[effectiveUserId]) {
+      cached.members[effectiveUserId].name = trimmed;
+      saveCachedRoom(cached);
+    }
+    return true;
+  } catch (e) {
+    console.warn('[GroupStudy] updateMemberDisplayName error:', e);
+    return false;
+  }
+};
+
+/**
  * Elects and promotes the highest Level & XP member to host if the current host went offline or disconnected.
  * Ensures room never closes when host drops out.
  */
@@ -1240,7 +1271,7 @@ export const startLiveMcqBattle = async (
   questions: GroupStudyMcqQuestion[],
   durationPerQuestion: number = 20,
   autoAdvance: boolean = true,
-  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'PER_QUESTION',
+  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'MIX',
   totalTestDurationMinutes: number = 15,
   targetPaceSeconds: number = 20,
   vibrateOnPaceAlert: boolean = true
@@ -1295,6 +1326,10 @@ export const startLiveMcqBattle = async (
     const cached = getCachedRooms()[roomId];
     if (cached) {
       cached.mode = 'LIVE_MCQ';
+      cached.isScheduled = false;
+      delete cached.scheduledStartTime;
+      delete cached.preloadedTitle;
+      delete cached.preloadedQuestions;
       cached.liveMcq = {
         ...liveMcqData,
         scores: {},
@@ -1311,6 +1346,10 @@ export const startLiveMcqBattle = async (
   try {
     const payload = cleanRtdbPayload({
       mode: 'LIVE_MCQ',
+      isScheduled: false,
+      scheduledStartTime: null,
+      preloadedTitle: null,
+      preloadedQuestions: null,
       liveMcq: liveMcqData,
       lastActive: now,
     });
@@ -1341,7 +1380,7 @@ export const scheduleRoomWithQuestions = async (
   quizTitle: string,
   durationPerQuestion: number = 20,
   autoAdvance: boolean = true,
-  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'PER_QUESTION',
+  timerMode: 'PER_QUESTION' | 'TOTAL_TEST' | 'MIX' = 'MIX',
   totalTestDurationMinutes: number = 15,
   targetPaceSeconds: number = 20,
   vibrateOnPaceAlert: boolean = true,
@@ -1713,10 +1752,10 @@ export const submitFinalBatchScore = async (
     userPhotoURL?: string;
     answers?: Record<number, { selectedOption: number; isCorrect: boolean; timeTakenSec: number }>;
   }
-): Promise<void> => {
+): Promise<boolean> => {
   try {
-    const userScoreRef = ref(rtdb, `group_study_rooms/${roomId}/liveMcq/scores/${userId}`);
-    await set(userScoreRef, {
+    const submittedAt = Date.now();
+    const userScore = {
       name: userName,
       score: scoreData.score || 0,
       correctCount: scoreData.correctCount || 0,
@@ -1726,29 +1765,61 @@ export const submitFinalBatchScore = async (
       userXp: scoreData.userXp || 0,
       streakBonusXp: scoreData.streakBonusXp || 0,
       userPhotoURL: scoreData.userPhotoURL || '',
-      submittedAt: Date.now(),
+      submittedAt,
+    };
+    const roomUpdates: Record<string, unknown> = {};
+    Object.entries(scoreData.answers || {}).forEach(([questionIndex, answer]) => {
+      roomUpdates[`questionAnswers/${questionIndex}/${userId}`] = {
+        userId,
+        userName,
+        selectedOption: answer.selectedOption,
+        isCorrect: answer.isCorrect,
+        timeTakenSec: answer.timeTakenSec,
+        timestamp: submittedAt,
+      };
     });
+    await set(ref(rtdb, `group_study_rooms/${roomId}/liveMcq/scores/${userId}`), userScore);
+    if (Object.keys(roomUpdates).length > 0) {
+      try {
+        await update(ref(rtdb, `group_study_rooms/${roomId}/liveMcq`), roomUpdates);
+      } catch (answerError) {
+        // Keep the confirmed score submission successful even if legacy room
+        // rules only allow writes to the scores branch.
+        console.warn('[GroupStudy] Answer detail sync notice:', answerError);
+      }
+    }
 
     // Also update local cached room
     const cached = getCachedRooms()[roomId];
-    if (cached && cached.liveMcq) {
-      if (!cached.liveMcq.scores) cached.liveMcq.scores = {};
-      cached.liveMcq.scores[userId] = {
-        name: userName,
-        score: scoreData.score || 0,
-        correctCount: scoreData.correctCount || 0,
-        wrongCount: scoreData.wrongCount || 0,
-        totalAnswered: scoreData.totalAnswered || 0,
-        maxStreak: scoreData.maxStreak || 0,
-        userXp: scoreData.userXp || 0,
-        streakBonusXp: scoreData.streakBonusXp || 0,
+    const cachedLiveMcq = cached?.liveMcq;
+    if (cached && cachedLiveMcq) {
+      if (!cachedLiveMcq.scores) cachedLiveMcq.scores = {};
+      cachedLiveMcq.scores[userId] = {
+        ...userScore,
       };
+      if (!cachedLiveMcq.questionAnswers) cachedLiveMcq.questionAnswers = {};
+      Object.entries(scoreData.answers || {}).forEach(([questionIndex, answer]) => {
+        const numericIndex = Number(questionIndex);
+        if (!Number.isFinite(numericIndex)) return;
+        if (!cachedLiveMcq.questionAnswers![numericIndex]) {
+          cachedLiveMcq.questionAnswers![numericIndex] = {};
+        }
+        cachedLiveMcq.questionAnswers![numericIndex][userId] = {
+          userId,
+          userName,
+          selectedOption: answer.selectedOption,
+          isCorrect: answer.isCorrect,
+          timeTakenSec: answer.timeTakenSec,
+          timestamp: submittedAt,
+        };
+      });
       saveCachedRoom(cached);
     }
+    return true;
   } catch (err: any) {
     const msg = String(err?.message || err || '');
-    if (msg.includes('PERMISSION_DENIED') || msg.includes('Permission denied')) return;
     console.warn('[GroupStudy] submitFinalBatchScore notice:', err);
+    return false;
   }
 };
 
@@ -1812,25 +1883,52 @@ export const endLiveMcqBattle = async (roomId: string): Promise<void> => {
   }
 };
 
-export const resetLiveMcqToWaiting = async (roomId: string): Promise<void> => {
+export const resetLiveMcqToWaiting = async (roomId: string, durationMinutes?: number): Promise<void> => {
   try {
     const now = Date.now();
     const cached = getCachedRooms()[roomId];
+    const roomDurationMinutes = Math.max(1, durationMinutes || cached?.durationMinutes || 30);
+    const expiresAt = now + roomDurationMinutes * 60 * 1000;
     if (cached && cached.liveMcq) {
       cached.liveMcq.isActive = false;
       cached.liveMcq.status = 'WAITING';
       cached.liveMcq.scores = {};
       cached.liveMcq.questionAnswers = {};
+      cached.isExpired = false;
+      cached.expiresAt = expiresAt;
+      cached.isScheduled = false;
+      delete cached.scheduledStartTime;
+      delete cached.preloadedTitle;
+      delete cached.preloadedQuestions;
+      if (cached.timer) {
+        cached.timer = {
+          ...cached.timer,
+          durationMinutes: roomDurationMinutes,
+          startTime: now,
+          isPaused: false,
+          remainingSeconds: roomDurationMinutes * 60,
+        };
+      }
       cached.lastActive = now;
       saveCachedRoom(cached);
     }
 
     await update(ref(rtdb, `group_study_rooms/${roomId}`), {
       mode: 'LIVE_MCQ',
+      isExpired: false,
+      expiresAt,
+      isScheduled: false,
+      scheduledStartTime: null,
+      preloadedTitle: null,
+      preloadedQuestions: null,
       'liveMcq/isActive': false,
       'liveMcq/status': 'WAITING',
       'liveMcq/scores': {},
       'liveMcq/questionAnswers': {},
+      'timer/durationMinutes': roomDurationMinutes,
+      'timer/startTime': now,
+      'timer/isPaused': false,
+      'timer/remainingSeconds': roomDurationMinutes * 60,
       lastActive: now,
     });
   } catch (err: any) {
