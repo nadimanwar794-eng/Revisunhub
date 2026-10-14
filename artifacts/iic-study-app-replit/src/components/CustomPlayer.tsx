@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Youtube, ArrowLeft, RotateCcw } from 'lucide-react';
 import { getOptimizedVideoUrl } from '../services/cloudinaryService';
-import { PlayerWatermark } from './PlayerWatermark';
+
 
 interface BadgePos {
     portrait?:  { bottom: number; right: number };
@@ -127,11 +127,45 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
         };
     }, []);
 
+    const [isUiHidden, setIsUiHidden] = useState(false);
+
+    // Sync external changes to UI visibility
+    useEffect(() => {
+        const handleUiChange = (e: any) => {
+            const isHidden = e.detail?.isTopBarHidden;
+            if (typeof isHidden === 'boolean') {
+                setIsUiHidden(isHidden);
+            }
+        };
+        window.addEventListener('nsta-video-topbar-change', handleUiChange);
+        return () => window.removeEventListener('nsta-video-topbar-change', handleUiChange);
+    }, []);
+
     const showTopBar = useCallback(() => {
         setTopBarVisible(true);
         if (topBarTimer.current) clearTimeout(topBarTimer.current);
         topBarTimer.current = setTimeout(() => setTopBarVisible(false), 3000);
     }, []);
+
+    const handleBadgeClick = useCallback(() => {
+        setIsUiHidden(prev => {
+            const next = !prev;
+            try {
+                window.dispatchEvent(
+                    new CustomEvent('nsta-video-topbar-change', {
+                        detail: { isTopBarHidden: next }
+                    })
+                );
+            } catch (_) {}
+            if (onBrandingClick) {
+                try { onBrandingClick(); } catch (_) {}
+            }
+            if (!next) {
+                showTopBar();
+            }
+            return next;
+        });
+    }, [onBrandingClick, showTopBar]);
 
     const blockMenu = useCallback((e: React.MouseEvent | React.TouchEvent) => {
         e.preventDefault();
@@ -226,8 +260,6 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
             style={outerStyle}
             onContextMenu={blockMenu}
         >
-            {/* ── Official Corner App Logo Watermark ── */}
-            <PlayerWatermark position="bottom-right" />
 
             {/* ── iframe or direct video ── */}
             <div style={iframeWrapStyle} onClick={isDirectVideo ? showTopBar : undefined}>
@@ -286,48 +318,64 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
                 </>)}
             </div>
 
-            {/* ── IIC×NSTA Badge ── */}
-            {isYouTube && (
-                <div
-                    onPointerDown={e => {
-                        if (editMode) {
-                            e.stopPropagation();
-                            isDragging.current = true;
-                            dragRef.current = { startX: e.clientX, startY: e.clientY, initBottom: badgeBottom, initRight: badgeRight };
-                            (e.target as HTMLElement).setPointerCapture(e.pointerId);
-                        } else {
-                            e.stopPropagation();
-                        }
-                    }}
-                    onTouchStart={e => e.stopPropagation()}
-                    onTouchEnd={e => { e.stopPropagation(); e.preventDefault(); if (!editMode) { onBrandingClick ? onBrandingClick() : showTopBar(); } }}
-                    onClick={e => { e.stopPropagation(); if (!editMode) { onBrandingClick ? onBrandingClick() : showTopBar(); } }}
-                    onContextMenu={e => e.preventDefault()}
-                    style={{
-                        position: 'absolute',
-                        bottom: `${badgeBottom}%`,
-                        right:  `${badgeRight}%`,
-                        zIndex: 60,
-                        pointerEvents: 'all',
-                        cursor: editMode ? 'move' : 'pointer',
-                        background: editMode ? 'rgba(99,102,241,0.9)' : 'rgba(8,8,18,0.95)',
-                        border: editMode ? '2px dashed #a5b4fc' : '1.5px solid rgba(99,102,241,0.6)',
-                        borderRadius: 7,
-                        padding: '6px 12px',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        backdropFilter: 'blur(8px)',
-                        WebkitBackdropFilter: 'blur(8px)',
-                        userSelect: 'none',
-                        minWidth: 90,
-                        boxShadow: editMode ? '0 0 16px rgba(99,102,241,0.7)' : '0 2px 10px rgba(0,0,0,0.5)',
-                        touchAction: 'none',
-                    }}
-                >
-                    <span style={{ fontSize: badgeFontSize, fontWeight: 900, letterSpacing: '0.06em', color: '#a5b4fc', fontFamily: 'sans-serif', lineHeight: 1, whiteSpace: 'nowrap' }}>
-                        {badgeText}
-                    </span>
-                </div>
-            )}
+            {/* ── IIC×NSTA Badge (Hides/Unhides Top Bar & Bottom Navigation) ── */}
+            <div
+                onPointerDown={e => {
+                    if (editMode) {
+                        e.stopPropagation();
+                        isDragging.current = true;
+                        dragRef.current = { startX: e.clientX, startY: e.clientY, initBottom: badgeBottom, initRight: badgeRight };
+                        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+                    } else {
+                        e.stopPropagation();
+                    }
+                }}
+                onTouchStart={e => e.stopPropagation()}
+                onTouchEnd={e => { e.stopPropagation(); e.preventDefault(); if (!editMode) { handleBadgeClick(); } }}
+                onClick={e => { e.stopPropagation(); if (!editMode) { handleBadgeClick(); } }}
+                onContextMenu={e => e.preventDefault()}
+                title={isUiHidden ? "Top Bar aur Bottom Navigation Dikhayein (Tap to show)" : "Top Bar aur Bottom Navigation Chhupayein (Tap to hide)"}
+                aria-label="Toggle Top Bar and Bottom Navigation"
+                style={{
+                    position: 'absolute',
+                    bottom: `${badgeBottom}%`,
+                    right:  `${badgeRight}%`,
+                    zIndex: 60,
+                    pointerEvents: 'all',
+                    cursor: editMode ? 'move' : 'pointer',
+                    background: editMode
+                        ? 'rgba(99,102,241,0.9)'
+                        : isUiHidden
+                        ? 'rgba(30,27,75,0.95)'
+                        : 'rgba(8,8,18,0.95)',
+                    border: editMode
+                        ? '2px dashed #a5b4fc'
+                        : isUiHidden
+                        ? '1.5px solid rgba(165,180,252,0.9)'
+                        : '1.5px solid rgba(99,102,241,0.6)',
+                    borderRadius: 7,
+                    padding: '6px 12px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    backdropFilter: 'blur(8px)',
+                    WebkitBackdropFilter: 'blur(8px)',
+                    userSelect: 'none',
+                    minWidth: 90,
+                    boxShadow: editMode
+                        ? '0 0 16px rgba(99,102,241,0.7)'
+                        : isUiHidden
+                        ? '0 0 14px rgba(129,140,248,0.6)'
+                        : '0 2px 10px rgba(0,0,0,0.5)',
+                    touchAction: 'none',
+                    transition: 'all 0.2s ease',
+                }}
+            >
+                <span style={{ fontSize: badgeFontSize, fontWeight: 900, letterSpacing: '0.06em', color: isUiHidden ? '#c7d2fe' : '#a5b4fc', fontFamily: 'sans-serif', lineHeight: 1, whiteSpace: 'nowrap' }}>
+                    {badgeText}
+                </span>
+                <span style={{ fontSize: 10, color: isUiHidden ? '#818cf8' : '#64748b', fontWeight: 'bold' }}>
+                    {isUiHidden ? '👁️' : '⛶'}
+                </span>
+            </div>
 
             {/* ── Top bar overlay (shown on badge tap) ── */}
             {isYouTube && (

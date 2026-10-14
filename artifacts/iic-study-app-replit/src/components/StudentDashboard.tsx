@@ -11572,7 +11572,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
             {/* VIDEO PAGE */}
             {effectiveMode === 'video' && hasVideo && (
-              <div className={`flex-1 flex flex-col ${isLandscape ? 'p-0' : 'p-2 sm:p-4'} overflow-y-auto bg-black ${!isLandscape ? 'pb-[72px]' : ''}`}>
+              <div className={`flex-1 flex flex-col ${isLandscape ? 'p-0' : 'p-2 sm:p-4'} overflow-y-auto bg-black ${(!hwImmersive && !isLandscapeUiHidden && !isLandscape) ? 'pb-[72px]' : ''}`}>
                 {activeHw.videoUrl && (activeHw.videoUrl.includes('youtube.com') || activeHw.videoUrl.includes('youtu.be')) ? (
                   <div className="flex-1 relative w-full h-full min-h-[320px]">
                     <CustomPlayer
@@ -11587,6 +11587,12 @@ export const StudentDashboard: React.FC<Props> = ({
                       isAdmin={_isAdminUser}
                       onBadgePosChange={handleBadgePosChange}
                       hideYtLogoBlocker={settings?.hideYtLogoBlocker}
+                      onBrandingClick={() => {
+                        const next = !(hwImmersive || isLandscapeUiHidden);
+                        setHwImmersive(next);
+                        setIsLandscapeUiHidden(next);
+                        setIsTopBarHidden(next);
+                      }}
                     />
                   </div>
                 ) : (
@@ -27875,6 +27881,11 @@ RULES:
                           fsButtonLabel={settings?.playerFsButtonLabel}
                           isAdmin={_isAdminUser}
                           hideYtLogoBlocker={settings?.hideYtLogoBlocker}
+                          onBrandingClick={() => {
+                            setStudyFocusMode(!lucentImmersive);
+                            setIsLandscapeUiHidden(prev => !prev);
+                            setIsTopBarHidden(prev => !prev);
+                          }}
                         />
                       </div>
                     ) : (
