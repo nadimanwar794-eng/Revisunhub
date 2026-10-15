@@ -108,6 +108,7 @@ const MCQBuilder: React.FC<{
         questionNumber: q.questionNumber,
         question: (q.question || "").replace(/<br\/?>/g, "\n").trim(),
         statements: q.statements?.length ? q.statements : undefined,
+        matchColumns: q.matchColumns || undefined,
         options: (q.options || ["", "", "", ""]).slice(0, 4).map(o =>
           o.replace(/<br\/?>/g, " ").trim()
         ),

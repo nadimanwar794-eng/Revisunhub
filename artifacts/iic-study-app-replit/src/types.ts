@@ -1814,6 +1814,30 @@ export interface Chapter {
   pageNo?: string;
 }
 
+// ── Competition Exam Objective Question Types (8 Standard Types) ──
+export type MCQQuestionType =
+  | 'DIRECT_MCQ'          // 1. Direct Single Choice MCQs (सीधे बहुविकल्पीय प्रश्न)
+  | 'MULTI_STATEMENT'     // 2. Multi-Statement Based MCQs (कथन आधारित प्रश्न)
+  | 'ASSERTION_REASON'    // 3. Assertion and Reason (अभिकथन और कारण)
+  | 'MATCH_COLUMN'        // 4. Match the Column (सुमेलित कीजिए / सही जोड़ी मिलाइए)
+  | 'CHRONOLOGICAL'       // 5. Chronological Order / Sequencing (कालानुक्रम / सही क्रम)
+  | 'DATA_SUFFICIENCY'    // 6. Data Sufficiency (आंकड़ों की पर्याप्तता)
+  | 'CASE_STUDY'          // 7. Reading Comprehension / Case Study Based MCQs (गद्यांश आधारित प्रश्न)
+  | 'NEGATIVE_NOT';       // 8. Negative / "NOT" Type Questions (निषेधात्मक प्रश्न)
+
+export interface MatchColumnRow {
+  leftKey?: string;   // e.g. "a", "A", "1"
+  leftText: string;   // e.g. "विटामिन A"
+  rightKey?: string;  // e.g. "1", "I", "i"
+  rightText: string;  // e.g. "रतौंधी"
+}
+
+export interface MatchColumnData {
+  list1Title?: string; // e.g. "सूची-I (विटामिन)"
+  list2Title?: string; // e.g. "सूची-II (कमी से होने वाला रोग)"
+  rows: MatchColumnRow[];
+}
+
 export interface MCQItem {
   question: string;
   subject?: string;
@@ -1839,6 +1863,16 @@ export interface MCQItem {
   imageAlign?: 'left' | 'center' | 'right';
   /** Custom placement of picture: above question, below question (default), or after options */
   imagePosition?: 'above_question' | 'below_question' | 'after_options';
+
+  // ── Competition Exam Objective Question Types Fields ──
+  questionType?: MCQQuestionType;
+  assertion?: string; // Assertion text (अभिकथन - A)
+  reason?: string;    // Reason text (कारण - R)
+  matchColumns?: MatchColumnData; // Match the column data (सुमेलित कीजिए)
+  passage?: string;   // Reading comprehension / case study passage (गद्यांश)
+  sequenceItems?: string[]; // Chronological steps (कालानुक्रम)
+  dataSufficiencyStatements?: string[]; // Statements I, II for Data Sufficiency (आंकड़ों की पर्याप्तता)
+  negativeHighlight?: string; // Negative trigger keyword (नहीं है / NOT)
 }
 
 // NEW: Performance Analytics

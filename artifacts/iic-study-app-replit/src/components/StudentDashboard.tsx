@@ -4193,16 +4193,18 @@ export const StudentDashboard: React.FC<Props> = ({
   const toggleTopAndBottomBars = useCallback(() => {
     setIsTopBarHidden(prev => {
       const next = !prev;
-      setIsLandscapeUiHidden(next);
-      setHwImmersive(next);
-      setLucentImmersive(next);
-      try {
-        window.dispatchEvent(
-          new CustomEvent('nsta-video-topbar-change', {
-            detail: { isTopBarHidden: next }
-          })
-        );
-      } catch (_) {}
+      setTimeout(() => {
+        setIsLandscapeUiHidden(next);
+        setHwImmersive(next);
+        setLucentImmersive(next);
+        try {
+          window.dispatchEvent(
+            new CustomEvent('nsta-video-topbar-change', {
+              detail: { isTopBarHidden: next }
+            })
+          );
+        } catch (_) {}
+      }, 0);
       return next;
     });
   }, []);
@@ -5365,16 +5367,18 @@ export const StudentDashboard: React.FC<Props> = ({
     try { hapticMedium(); } catch (_) {}
     setIsLandscapeUiHidden(prev => {
       const nextHidden = typeof explicit === 'boolean' ? explicit : !prev;
-      setIsTopBarHidden(nextHidden);
-      setForceShowBottomNav(!nextHidden);
-      try {
-        fireCreditNotify({
-          type: 'FREE_LIMIT',
-          message: nextHidden
-            ? 'टॉप व बॉटम बार छिप गए • Focus / Study Mode'
-            : 'टॉप व बॉटम बार वापस आ गए • Normal View',
-        });
-      } catch (_) {}
+      setTimeout(() => {
+        setIsTopBarHidden(nextHidden);
+        setForceShowBottomNav(!nextHidden);
+        try {
+          fireCreditNotify({
+            type: 'FREE_LIMIT',
+            message: nextHidden
+              ? 'टॉप व बॉटम बार छिप गए • Focus / Study Mode'
+              : 'टॉप व बॉटम बार वापस आ गए • Normal View',
+          });
+        } catch (_) {}
+      }, 0);
       return nextHidden;
     });
   }, []);
@@ -11657,6 +11661,7 @@ export const StudentDashboard: React.FC<Props> = ({
                       onNext={effectiveNextHw ? () => goToHw(effectiveNextHw) : undefined}
                       nextTitle={effectiveNextHw?.title}
                       videoTitle={activeHw.title || 'Homework Video'}
+                      hideHeader={true}
                       badgePos={settings?.iicNstaBadgePos}
                       badgeLabel={settings?.playerBadgeLabel}
                       fsButtonLabel={settings?.playerFsButtonLabel}
@@ -11732,7 +11737,7 @@ export const StudentDashboard: React.FC<Props> = ({
             {effectiveMode !== 'choose' && effectiveMode !== 'video' && effectiveMode !== 'audio' && effectiveMode !== 'pdf' && (
             <div
               ref={hwScrollContainerRef}
-          className={`flex-1 min-h-0 overflow-y-auto ${!hwImmersive && !isLandscape ? 'pb-[72px]' : ''}`}
+              className={`flex-1 min-h-0 flex flex-col ${effectiveMode === 'mcq' ? '' : 'overflow-y-auto'} ${!hwImmersive && !isLandscape && effectiveMode !== 'mcq' ? 'pb-[72px]' : ''}`}
 
               onScroll={(e) => {
                 const t = e.currentTarget;
@@ -12159,7 +12164,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
               {/* MCQ MODE — Native Full-Screen Integration */}
               {effectiveMode === 'mcq' && hasMcq && (
-                <div className="flex-1 min-h-0 flex flex-col w-full bg-slate-50 overflow-hidden">
+                <div className="flex-1 min-h-0 flex flex-col w-full bg-slate-50">
                   {hwMcqMistakeFilter[hwKey] && hwMcqMistakeFilter[hwKey].length > 0 && (
                     <div className="bg-rose-50 border-b border-rose-200 px-3 py-1.5 flex items-center justify-between shrink-0">
                       <span className="text-[11px] font-black text-rose-700 flex items-center gap-1.5">
@@ -12324,19 +12329,20 @@ export const StudentDashboard: React.FC<Props> = ({
                       };
 
                       const handleHwSubmit = (res: any) => {
+                        const userAns = res?.userAnswers || res?.answers || {};
                         const answersForSubmit = { ...hwAnswers };
                         mcqs.forEach((_m: any, i: number) => {
                           const rIdx = _mistakeFilter && _mistakeFilter.length > 0 ? _mistakeFilter[i] : i;
-                          if (res.userAnswers[i] !== undefined) {
-                            answersForSubmit[`${hwKey}_${rIdx}`] = res.userAnswers[i];
+                          if (userAns[i] !== undefined) {
+                            answersForSubmit[`${hwKey}_${rIdx}`] = userAns[i];
                           }
                         });
                         setHwAnswers(answersForSubmit);
 
-                        const _hwRight = res.score;
-                        const _hwTotal = res.total;
-                        const _hwAttempted = res.attempted;
-                        const _hwWrong = _hwAttempted - _hwRight;
+                        const _hwRight = res?.score ?? res?.correct ?? 0;
+                        const _hwTotal = res?.total ?? mcqs.length;
+                        const _hwAttempted = res?.attempted !== undefined ? res.attempted : Object.keys(userAns).length;
+                        const _hwWrong = Math.max(0, _hwAttempted - _hwRight);
                         const _hwNetScore = (_hwRight * 5) - (_hwWrong * 2);
                         const freshU = userRef.current;
                         if (freshU) {
@@ -12494,7 +12500,7 @@ export const StudentDashboard: React.FC<Props> = ({
                 </div>
               )}
 
-              {!effectiveNextHw && (
+              {effectiveMode === 'notes' && !effectiveNextHw && (
                 <p className="text-center text-xs text-slate-400 font-bold py-6">🎉 All notes complete!</p>
               )}
             </div>
@@ -17949,8 +17955,8 @@ export const StudentDashboard: React.FC<Props> = ({
         showWhatsAppChatModal ||
         isInternalImmersive ||
         showNstaQuickWheel ||
-        (hwActiveHwId ? hwImmersive : false) ||
-        (lucentNoteViewer ? lucentImmersive : false) ||
+        (hwActiveHwId ? (hwImmersive || hwViewMode === 'mcq') : false) ||
+        (lucentNoteViewer ? (lucentImmersive || lucentActiveTab === 'MCQS') : false) ||
         (mathViewerEntry ? mathImmersive : false) ||
         coachingNotesReaderOpen);
 
@@ -18548,18 +18554,6 @@ export const StudentDashboard: React.FC<Props> = ({
           onTabChange('STORE');
         }}
       />
-      {/* Floating pill indicator to unhide Top Bar & Bottom Nav */}
-      {(isTopBarHidden || isLandscapeUiHidden) && !isFullscreenMode && !Boolean(mathViewerEntry) && (
-        <div
-          onClick={toggleTopAndBottomBars}
-          className="fixed top-2 left-1/2 -translate-x-1/2 z-[250] px-3.5 py-1.5 bg-slate-950/95 hover:bg-slate-900 border border-indigo-500/70 rounded-full flex items-center justify-center gap-2 cursor-pointer shadow-[0_0_20px_rgba(99,102,241,0.5)] backdrop-blur-md select-none active:scale-95 transition-all text-xs text-indigo-200 font-black animate-in fade-in"
-          title="Top Bar aur Bottom Navigation wapas dikhayein"
-        >
-          <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
-          <span>IIC×NSTA • Top Bar Dikhayein</span>
-          <span className="text-sm text-indigo-300">▾</span>
-        </div>
-      )}
 
       {/* NEW GLOBAL TOP BAR */}
       <div
@@ -24254,8 +24248,8 @@ export const StudentDashboard: React.FC<Props> = ({
                   </h2>
                   {hw.parsedMcqs.map((mcq, qi) => (
                     <div key={qi} style={{ border: '1px solid #e2e8f0', borderRadius: '12px', padding: '14px', marginBottom: '12px', background: '#f8fafc' }}>
-                      <div style={{ fontSize: '14px', fontWeight: 700, marginBottom: '8px', whiteSpace: 'pre-wrap' }}>
-                        {qi + 1}. {mcq.question}
+                      <div className="mb-2">
+                        <McqQuestionDisplay q={{ ...mcq, questionNumber: qi + 1 } as any} showQuestionNumber questionClassName="text-sm font-bold text-slate-800 leading-snug" />
                       </div>
                       {mcq.options.map((opt, oi) => (
                         <div
@@ -26229,7 +26223,7 @@ export const StudentDashboard: React.FC<Props> = ({
 
         return (
           <>
-          <div className={`fixed inset-0 z-[200] flex flex-col animate-in fade-in ${!lucentImmersive ? 'pb-[64px]' : ''}`} style={{ background: lucentActiveTab === 'VIDEO' ? '#000000' : '#ffffff' }}>
+          <div className={`fixed inset-0 z-[200] flex flex-col animate-in fade-in ${(!lucentImmersive && lucentActiveTab !== 'MCQS') ? 'pb-[64px]' : ''}`} style={{ background: lucentActiveTab === 'VIDEO' ? '#000000' : '#ffffff' }}>
             {/* Reading progress bar — same gradient style as Sar Sangrah / Speedy */}
             <div className="absolute top-0 left-0 right-0 h-1 bg-slate-200/60 z-[60] pointer-events-none">
               <div
@@ -27418,7 +27412,7 @@ RULES:
               };
 
               return (
-                <div className="flex-1 min-h-0 flex flex-col w-full bg-slate-50 overflow-hidden">
+                <div className="flex-1 min-h-0 flex flex-col w-full bg-slate-50">
                   {lucentMcqHurriedFilter[pageKey] && (
                     <div className="bg-rose-50 border-b border-rose-200 px-3 py-1.5 flex items-center justify-between shrink-0">
                       <span className="text-[10px] font-black px-2.5 py-1 rounded-full bg-rose-100 text-rose-700">
@@ -28068,6 +28062,7 @@ RULES:
                           onBack={closeLucentViewer}
                           onRotate={handleRotate}
                           videoTitle={vTitle}
+                          hideHeader={true}
                           badgePos={settings?.iicNstaBadgePos}
                           badgeLabel={settings?.playerBadgeLabel}
                           fsButtonLabel={settings?.playerFsButtonLabel}

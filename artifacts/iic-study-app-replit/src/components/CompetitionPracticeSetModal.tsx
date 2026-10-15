@@ -30,9 +30,9 @@ import {
   calculatePracticeSetResult
 } from '../utils/competitionPracticeSets';
 import { saveSetLeaderboardScore } from '../utils/setLeaderboard';
-import { SetLeaderboardModal } from './SetLeaderboardModal';
 import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
 import { playSoundClick, playSoundCorrect, playSoundWrong, playSoundVictory } from '../utils/soundEffects';
+import McqQuestionDisplay from './McqQuestionDisplay';
 
 interface Props {
   meta: PracticeSetMeta;
@@ -349,19 +349,14 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Question Text Card */}
+            {/* Question Text Card with Full 8-Type Support */}
             <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/80 border border-slate-700/80 shadow-lg">
-              <p className="text-sm sm:text-base font-semibold leading-relaxed text-slate-100 whitespace-pre-wrap">
-                {currentQ.question}
-              </p>
-
-              {Array.isArray(currentQ.statements) && currentQ.statements.length > 0 && (
-                <div className="mt-3 space-y-1.5 pl-3 border-l-2 border-indigo-500/40 text-xs sm:text-sm text-slate-300">
-                  {currentQ.statements.map((st, i) => (
-                    <div key={i}>{st}</div>
-                  ))}
-                </div>
-              )}
+              <McqQuestionDisplay
+                q={currentQ}
+                variant="dark"
+                showTypeBadge={true}
+                questionClassName="text-sm sm:text-base font-semibold leading-relaxed text-slate-100"
+              />
             </div>
 
             {/* Options List */}

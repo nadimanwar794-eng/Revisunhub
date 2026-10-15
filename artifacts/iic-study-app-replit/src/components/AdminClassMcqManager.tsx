@@ -310,6 +310,8 @@ export const AdminClassMcqManager: React.FC<Props> = ({ settings, onSave }) => {
           options: (q.options || ['', '', '', '']).slice(0, 4),
           correctAnswer: q.correctAnswer ?? 0,
           statements: (q.statements && q.statements.length > 0) ? q.statements : undefined,
+          matchColumns: q.matchColumns || undefined,
+          questionType: q.questionType || (q.matchColumns ? 'MATCH_COLUMN' : undefined),
           topic: (q.topic || '').trim() || undefined,
           explanation: (q.explanation || '').trim() || undefined,
           concept: (q.concept || '').trim() || undefined,
@@ -932,7 +934,26 @@ function LessonCard({ lesson, onEdit, onDelete, onDeleteMcq, onMove, onCopy }: {
                 <p className="text-[10px] text-slate-700 font-medium leading-relaxed line-clamp-2">
                   {stem || (q.question || '').replace(/<br\/?>/g, ' ')}
                 </p>
-                {stmts.length > 0 && (
+                {q.matchColumns && q.matchColumns.rows && q.matchColumns.rows.length > 0 ? (
+                  <div className="mt-1 grid grid-cols-2 gap-1 text-[9px]">
+                    <div className="p-1.5 rounded-lg bg-indigo-50 border border-indigo-200">
+                      <span className="font-bold text-indigo-700 block mb-0.5">{q.matchColumns.list1Title || "खण्ड 'अ' (सूची-I)"}</span>
+                      {q.matchColumns.rows.map((r: any, ri: number) => (
+                        <div key={ri} className="truncate text-slate-700">
+                          <b className="text-indigo-600">{r.leftKey || String.fromCharCode(97 + ri)}.</b> {r.leftText}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="p-1.5 rounded-lg bg-emerald-50 border border-emerald-200">
+                      <span className="font-bold text-emerald-700 block mb-0.5">{q.matchColumns.list2Title || "खण्ड 'ब' (सूची-II)"}</span>
+                      {q.matchColumns.rows.map((r: any, ri: number) => (
+                        <div key={ri} className="truncate text-slate-700">
+                          <b className="text-emerald-600">{r.rightKey || String(ri + 1)}.</b> {r.rightText}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : stmts.length > 0 ? (
                   <div className="mt-1 flex flex-col gap-0.5">
                     {stmts.map((s: string, si: number) => (
                       <div key={si} className="text-[9px] text-indigo-700 bg-indigo-50 border-l-2 border-indigo-300 px-1.5 py-0.5 rounded-r font-medium">
@@ -943,7 +964,7 @@ function LessonCard({ lesson, onEdit, onDelete, onDeleteMcq, onMove, onCopy }: {
                       <p className="text-[9px] text-slate-600 font-medium mt-0.5">{suffix}</p>
                     )}
                   </div>
-                )}
+                ) : null}
                 <p className="text-[9px] text-emerald-700 font-bold mt-0.5">
                   ✓ {String.fromCharCode(65 + q.correctAnswer)}. {q.options?.[q.correctAnswer] || ''}
                 </p>

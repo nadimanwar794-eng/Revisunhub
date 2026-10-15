@@ -33,6 +33,7 @@ interface CustomPlayerProps {
     videoTitle?:        string;
     onRotate?:          () => void;
     hideYtLogoBlocker?: boolean;
+    hideHeader?:        boolean;
 }
 
 const DEFAULT_BADGE = { bottom: 5.6, right: 5.0 };
@@ -48,7 +49,7 @@ const autoFontSize = (text: string, base = 11, min = 7, max = 13): number => {
 export const CustomPlayer: React.FC<CustomPlayerProps> = ({
     videoUrl, brandingLogo, onBrandingClick, onBack, onNext, nextTitle,
     badgePos, isAdmin, onBadgePosChange, badgeLabel,
-    forceRotate, videoTitle, onRotate, hideYtLogoBlocker, onEnded,
+    forceRotate, videoTitle, onRotate, hideYtLogoBlocker, onEnded, hideHeader,
 }) => {
     const containerRef  = useRef<HTMLDivElement>(null);
     const hideTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -378,7 +379,7 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
             </div>
 
             {/* ── Top bar overlay (shown on badge tap) ── */}
-            {isYouTube && (
+            {isYouTube && !hideHeader && (
                 <div style={{
                     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 55,
                     background: 'linear-gradient(to bottom, rgba(0,0,0,0.90) 0%, rgba(0,0,0,0) 100%)',
@@ -544,23 +545,6 @@ export const CustomPlayer: React.FC<CustomPlayerProps> = ({
                             ✅ Saved!{'\n'}
                             <span style={{ color: '#fde68a', fontFamily: 'monospace', fontSize: 10 }}>{saveMsg}</span>
                         </div>
-                    )}
-
-                    {onRotate && (
-                        <button
-                            onPointerDown={e => e.stopPropagation()}
-                            onClick={e => { e.stopPropagation(); onRotate(); }}
-                            style={{
-                                background: 'rgba(0,0,0,0.65)', border: '1.5px solid rgba(255,255,255,0.25)',
-                                borderRadius: 8, color: '#fff',
-                                padding: '6px 12px', fontSize: 12, fontWeight: 800,
-                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-                                backdropFilter: 'blur(6px)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
-                                whiteSpace: 'nowrap',
-                            }}
-                        >
-                            <RotateCcw size={13} /> 🔄 Rotate
-                        </button>
                     )}
                 </div>
             )}

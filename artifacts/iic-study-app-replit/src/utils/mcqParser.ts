@@ -1,4 +1,5 @@
 import { MCQItem } from '../types';
+import { detectQuestionType, extractMatchColumns, buildMatchStatements, cleanMatchQuestionStem } from './questionTypeDetector';
 
 /**
  * Normalize the markdown-heavy paste format used by coaching books before
@@ -26,7 +27,8 @@ export function normalizeMcqPaste(raw: string): string {
         /^\s*\[(?:[⚡🔥💡🎯⭐✨🏆⚠️🌟][^\]]*?|[^\]]{1,10})\]\s*/gm,
         '',
     );
-    text = text.replace(/^\*\*\s*कूट\s*:?\s*\*?\*?\s*$/gm, '');
+    // Normalize koot (codes) line for match questions so it acts as clear delimiter
+    text = text.replace(/^\s*\*{0,2}\s*(?:कूट|Codes?)\s*[:：/]?\s*(?:Codes?)?\s*\*?\*?\s*$/gim, '\nकूट:');
 
     // Convert the common bold question variants to the canonical simple
     // format. Using one boundary format is important when a paste mixes
@@ -239,10 +241,24 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
     //   • Closing question (उपर्युक्त में से कौन-सा/से …?)
     // All of them belong to the question body — collect them here.
     // A line is treated as an MCQ option only when its content is ≤100 chars.
-    // Statement labels (A. Statement one full sentence…) are longer and must NOT
-    // stop the question-body collection early.
-    const isOptionLine = (l: string) =>
-        /^\s*\*?\s*(?:\([A-D]\)|[A-D])\s*(?:[\).:\-])?\s*(.+)/i.test(l);
+    // Detect if this question is a Match Column (सूची / सुमेलित) question
+    const kootIdx = lines.findIndex(l => /^(?:\*{0,2}\s*)?(?:कूट\b|Codes?\b|दिए\s*गए\s*कूट|उपर्युक्त\s*कूट|सही\s*कूट)/i.test(l));
+    const isMatchQuestion = kootIdx !== -1 || /(?:सूची[- ]?[I1]|List[- ]?[I1]|खण्ड\s*['"‘]?[अAab]|Khand\s*['"‘]?[अAab]|सुमेलित|सुमेल\s+करें|सही\s+जोड़ी|मिलान|Match\s+the\s+column|Match\s+the\s+following)/i.test(block);
+
+    const isOptionLine = (l: string, idx: number) => {
+        // If there's an explicit koot marker, lines before or on it are NOT MCQ options
+        if (kootIdx !== -1 && idx <= kootIdx) return false;
+        // Two columns separated by pipe, dash, tabs or multiple spaces are match rows, NOT options
+        if (/(?:\||—|\t| {2,})\s*(?:(?:\(?([1-4a-dA-DIVXivx]+)\)?[\.\:\-]?\s*)?[^|—\t]{2,})$/.test(l)) return false;
+        // In a match question without koot, lines under list 1 before list 2 are NOT options
+        if (isMatchQuestion && kootIdx === -1) {
+            const laterLines = lines.slice(idx + 1);
+            if (laterLines.some(ll => /(?:सूची[- ]?[II2]|List[- ]?[II2]|खण्ड\s*['"‘]?[बB]|Khand\s*['"‘]?[बB]|^\s*[1-4][\.\:\)])/i.test(ll))) {
+                return false;
+            }
+        }
+        return /^\s*\*?\s*(?:\([A-D]\)|[A-D])\s*(?:[\).:\-])?\s*(.+)/i.test(l);
+    };
     // Also handles **सही उत्तर: (bold markdown prefix used in some paste formats)
     const isAnswerLine = (l: string) =>
       /^(?:\*{1,2}\s*)?(?:(?:Correct\s+)?Answer|Ans|सही\s*उत्तर|उत्तर)\s*[:：=\-]/i.test(l)
@@ -252,7 +268,7 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
     let bodyStart = 1; // index of first option/answer/explanation line
     const extraBodyLines: string[] = [];
     for (let i = 1; i < lines.length; i++) {
-        if (isOptionLine(lines[i]) || isAnswerLine(lines[i]) || isExplainLine(lines[i])) {
+        if (isOptionLine(lines[i], i) || isAnswerLine(lines[i]) || isExplainLine(lines[i])) {
             bodyStart = i;
             break;
         }
@@ -432,12 +448,43 @@ export function parseMCQText(text: string): { questions: MCQItem[], notes: {titl
             parsed.statements = statementData.statements;
             parsed.question = statementData.cleanedQuestion;
           }
+
+          // 8 Competition Question Types Detection & Enrichment
+          const detected = detectQuestionType(parsed);
+          parsed.questionType = detected.type;
+          if (detected.assertionReason) {
+            parsed.assertion = detected.assertionReason.assertion;
+            parsed.reason = detected.assertionReason.reason;
+            if (detected.assertionReason.cleanedQuestion) {
+              parsed.question = detected.assertionReason.cleanedQuestion;
+            }
+          }
+          if (detected.matchColumns) {
+            parsed.matchColumns = detected.matchColumns;
+            parsed.questionType = 'MATCH_COLUMN';
+            parsed.statements = buildMatchStatements(detected.matchColumns);
+            const cleanStem = cleanMatchQuestionStem(parsed.question);
+            if (cleanStem) {
+              parsed.question = cleanStem;
+            }
+          }
+          if (detected.caseStudy?.passage) {
+            parsed.passage = detected.caseStudy.passage;
+            if (detected.caseStudy.cleanedQuestion) {
+              parsed.question = detected.caseStudy.cleanedQuestion;
+            }
+          }
+          if (detected.isNegative) {
+            parsed.negativeHighlight = 'NOT';
+          }
+
           questions.push(parsed as MCQItem);
         }
       }
     }
 
-    return { questions, notes };
+    const hybrid = Object.assign([...questions], { questions, notes });
+    return hybrid as any;
   }
 
   // ── STRUCTURED/EMOJI FORMAT PARSER (original logic) ─────────────────────
@@ -605,6 +652,35 @@ export function parseMCQText(text: string): { questions: MCQItem[], notes: {titl
     }
 
     if (q.question && q.options && q.options.length > 0 && q.correctAnswer !== undefined) {
+      // 8 Competition Question Types Detection & Enrichment
+      const detected = detectQuestionType(q);
+      q.questionType = detected.type;
+      if (detected.assertionReason) {
+        q.assertion = detected.assertionReason.assertion;
+        q.reason = detected.assertionReason.reason;
+        if (detected.assertionReason.cleanedQuestion) {
+          q.question = detected.assertionReason.cleanedQuestion;
+        }
+      }
+      if (detected.matchColumns) {
+        q.matchColumns = detected.matchColumns;
+        q.questionType = 'MATCH_COLUMN';
+        q.statements = buildMatchStatements(detected.matchColumns);
+        const cleanStem = cleanMatchQuestionStem(q.question);
+        if (cleanStem) {
+          q.question = cleanStem;
+        }
+      }
+      if (detected.caseStudy?.passage) {
+        q.passage = detected.caseStudy.passage;
+        if (detected.caseStudy.cleanedQuestion) {
+          q.question = detected.caseStudy.cleanedQuestion;
+        }
+      }
+      if (detected.isNegative) {
+        q.negativeHighlight = 'NOT';
+      }
+
       questions.push(q as MCQItem);
 
       const lastMatch = difficultyMatch || memoryTrickMatch || commonMistakeMatch || examTipMatch || explanationMatch || conceptMatch || answerMatch;
@@ -648,5 +724,6 @@ export function parseMCQText(text: string): { questions: MCQItem[], notes: {titl
     }
   });
 
-  return { questions, notes };
+  const hybrid = Object.assign([...questions], { questions, notes });
+  return hybrid as any;
 }

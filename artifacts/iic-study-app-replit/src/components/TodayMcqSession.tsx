@@ -79,6 +79,10 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
     const [sessionSummary, setSessionSummary] = useState<TopicSessionResult[] | null>(null);
     const pendingCompleteRef = useRef<{ results: MCQResult[]; questions: any[] } | null>(null);
 
+    // Touch swipe navigation for questions
+    const sessionTouchStartX = useRef<number | null>(null);
+    const sessionTouchStartY = useRef<number | null>(null);
+
     // ── MCQ Score Popup ────────────────────────────────────────────────────────
     const [mcqScorePopup, setMcqScorePopup] = useState<number | null>(null);
     const [mcqScoreCredits, setMcqScoreCredits] = useState<number | null>(null);

@@ -3,7 +3,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { 
   Clock, AlertTriangle, CheckCircle, Trophy, ArrowLeft, ChevronLeft, 
   ChevronRight, Star, LayoutGrid, X, RotateCcw, 
-  AlertCircle, CheckCircle2, Plus, RefreshCw, Award, BookOpen, Sparkles, FastForward
+  AlertCircle, CheckCircle2, Plus, RefreshCw, Award, BookOpen, Sparkles, FastForward,
+  ScrollText, Rows3, ArrowUp, ArrowDown, Check
 } from 'lucide-react';
 import { renderMathInHtml } from '../utils/mathUtils';
 import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
@@ -30,6 +31,9 @@ export interface UnifiedMcqPracticeProps {
     score: number;
     total: number;
     answers: Record<number, number>;
+    userAnswers?: Record<number, number>;
+    attempted?: number;
+    correct?: number;
     bookmarked: number[];
     timeElapsedSeconds: number;
   }) => void;
@@ -68,7 +72,29 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
   const [skipped, setSkipped] = useState<Set<number>>(new Set());
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [fontSize, setFontSize] = useState<'sm' | 'base' | 'lg'>('base');
-  
+
+  // ── View Mode: 'card' (single question card with swipe navigation) vs 'scroll' (continuous vertical scroll list) ──
+  const [viewMode, setViewMode] = useState<'card' | 'scroll'>(() => {
+    try {
+      return (localStorage.getItem('nst_mcq_view_mode') as 'card' | 'scroll') || 'card';
+    } catch {
+      return 'card';
+    }
+  });
+
+  // Auto-scroll to next question upon answering in scroll mode
+  const [autoScrollOnAnswer, setAutoScrollOnAnswer] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('nst_mcq_auto_scroll') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const scrollContainerRef = useRef<HTMLElement>(null);
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
   // ── Auto-Skip Ladder & 2nd/3rd Chance Re-attempt State ──
   const [skipEntries, setSkipEntries] = useState<Record<number, SkipEntry>>({});
   const [isReattemptPhase, setIsReattemptPhase] = useState<boolean>(false);
@@ -166,14 +192,15 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
   const [timeElapsed, setTimeElapsed] = useState<number>(0);
   const quickStripRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<any>(null);
+  const timeElapsedRef = useRef<number>(0);
 
   const safeQuestions = Array.isArray(questions) ? questions : [];
   const totalQuestions = safeQuestions.length;
 
   // Sync initialAnswers if they change externally
   useEffect(() => {
-    if (Object.keys(initialAnswers).length > 0 && Object.keys(answers).length === 0) {
-      setAnswers(initialAnswers);
+    if (initialAnswers && Object.keys(initialAnswers).length > 0) {
+      setAnswers(prev => Object.keys(prev).length === 0 ? initialAnswers : prev);
     }
   }, [initialAnswers]);
 
@@ -184,22 +211,23 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
       return;
     }
     timerRef.current = setInterval(() => {
-      setTimeElapsed(prev => {
-        const next = prev + 1;
-        if (onTimeUpdate) onTimeUpdate(next);
-        // Active in MCQ Practice: 30 XP per active minute (0 credit) per user mandate
-        if (next > 0 && next % 60 === 0 && user?.id) {
-          try {
-            tryEarnScore(user.id, 30, user.subscriptionLevel, user.isPremium, 0, 'MCQ_ACTIVE_TIME', undefined, undefined, 'MCQ Practice Active Minute');
-          } catch (_) {}
-        }
-        return next;
-      });
+      timeElapsedRef.current += 1;
+      const next = timeElapsedRef.current;
+      setTimeElapsed(next);
+      if (onTimeUpdate) {
+        try { onTimeUpdate(next); } catch (_) {}
+      }
+      // Active in MCQ Practice: 30 XP per active minute (0 credit) per user mandate
+      if (next > 0 && next % 60 === 0 && user?.id) {
+        try {
+          tryEarnScore(user.id, 30, user.subscriptionLevel, user.isPremium, 0, 'MCQ_ACTIVE_TIME', undefined, undefined, 'MCQ Practice Active Minute');
+        } catch (_) {}
+      }
     }, 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isFinished, onTimeUpdate]);
+  }, [isFinished, onTimeUpdate, user?.id, user?.subscriptionLevel, user?.isPremium]);
 
   // Format time mm:ss
   const formatTime = (seconds: number) => {
@@ -310,8 +338,10 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
       setQSecondsLeft((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          // Auto-skip triggered on timer expiration!
-          handleAutoSkip(currentIndex, false);
+          // Auto-skip triggered on timer expiration — defer out of setState updater!
+          setTimeout(() => {
+            handleAutoSkip(currentIndex, false);
+          }, 0);
           return 0;
         }
         return prev - 1;
@@ -461,50 +491,207 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
     }
   };
 
-  // Handle select option
-  const handleSelectOption = (optIdx: number) => {
+  // ── Scroll, View Mode & Swipe Handlers ──
+  const handleToggleViewMode = (mode: 'card' | 'scroll') => {
     hapticLight();
-    setAnswers(prev => ({ ...prev, [currentIndex]: optIdx }));
+    setViewMode(mode);
+    try {
+      localStorage.setItem('nst_mcq_view_mode', mode);
+    } catch {}
+    if (mode === 'scroll') {
+      setTimeout(() => {
+        const el = document.getElementById(`mcq-card-${currentIndex}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 60);
+    }
+  };
+
+  const handleToggleAutoScroll = () => {
+    hapticLight();
+    setAutoScrollOnAnswer(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('nst_mcq_auto_scroll', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const scrollToQuestion = useCallback((idx: number) => {
+    setCurrentIndex(idx);
+    const el = document.getElementById(`mcq-card-${idx}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, []);
+
+  const scrollToNextUnanswered = useCallback(() => {
+    hapticLight();
+    const nextIdx = safeQuestions.findIndex((_, i) => i > currentIndex && answers[i] === undefined);
+    if (nextIdx !== -1) {
+      if (viewMode === 'scroll') {
+        scrollToQuestion(nextIdx);
+      } else {
+        setCurrentIndex(nextIdx);
+      }
+      return;
+    }
+    const anyUnanswered = safeQuestions.findIndex((_, i) => answers[i] === undefined);
+    if (anyUnanswered !== -1) {
+      if (viewMode === 'scroll') {
+        scrollToQuestion(anyUnanswered);
+      } else {
+        setCurrentIndex(anyUnanswered);
+      }
+    }
+  }, [currentIndex, answers, safeQuestions, viewMode, scrollToQuestion]);
+
+  const scrollToTop = () => {
+    hapticLight();
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const scrollToBottom = () => {
+    hapticLight();
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' });
+    } else {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+  };
+
+  // Touch swipe gesture handlers for Card Mode
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (viewMode === 'scroll') return;
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (viewMode === 'scroll' || touchStartX.current === null || touchStartY.current === null) return;
+    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
+    const deltaY = e.changedTouches[0].clientY - touchStartY.current;
+    touchStartX.current = null;
+    touchStartY.current = null;
+
+    // Minimum swipe threshold: 45px horizontal and predominantly horizontal
+    if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.3) {
+      if (deltaX < 0) {
+        // Swiped left -> Next Question
+        handleNext();
+      } else {
+        // Swiped right -> Previous Question
+        handlePrev();
+      }
+    }
+  };
+
+  // Sync currentIndex as student scrolls in Continuous Scroll Mode
+  useEffect(() => {
+    if (viewMode !== 'scroll' || !scrollContainerRef.current) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const qIdx = Number(entry.target.getAttribute('data-scroll-qindex'));
+            if (!isNaN(qIdx)) {
+              setCurrentIndex(qIdx);
+            }
+          }
+        });
+      },
+      {
+        root: scrollContainerRef.current,
+        rootMargin: '-20% 0px -40% 0px',
+        threshold: 0.1,
+      }
+    );
+
+    const cards = scrollContainerRef.current.querySelectorAll('[data-scroll-qindex]');
+    cards.forEach((card) => observer.observe(card));
+
+    return () => observer.disconnect();
+  }, [viewMode, totalQuestions]);
+
+  // Scroll to top when question changes in Card Mode so options are always visible from top
+  useEffect(() => {
+    if (viewMode === 'card' && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }, [currentIndex, viewMode]);
+
+  // Handle select option for a question (works in Card and Continuous Scroll modes)
+  const handleSelectOptionGeneric = (qIdx: number, optIdx: number) => {
+    hapticLight();
+    setAnswers(prev => ({ ...prev, [qIdx]: optIdx }));
     setSkipped(prev => {
       const next = new Set(prev);
-      next.delete(currentIndex);
+      next.delete(qIdx);
       return next;
     });
 
-    const correctIdx = getCorrectAnswerIndex(currentQ);
+    const targetQ = safeQuestions[qIdx] || currentQ;
+    const correctIdx = getCorrectAnswerIndex(targetQ);
     const isCorrect = optIdx === correctIdx;
 
     if (onAnswer) {
-      onAnswer(currentIndex, optIdx, isCorrect);
+      onAnswer(qIdx, optIdx, isCorrect);
+    }
+
+    // Auto-scroll to next unanswered question in Scroll Mode
+    if (viewMode === 'scroll' && autoScrollOnAnswer) {
+      setTimeout(() => {
+        const nextUnanswered = safeQuestions.findIndex((_, idx) => idx > qIdx && answers[idx] === undefined && idx !== qIdx);
+        if (nextUnanswered !== -1) {
+          scrollToQuestion(nextUnanswered);
+        }
+      }, 350);
     }
   };
 
-  // Clear current response
-  const handleClearResponse = () => {
+  const handleSelectOption = (optIdx: number) => {
+    handleSelectOptionGeneric(currentIndex, optIdx);
+  };
+
+  // Clear response for a question
+  const handleClearResponseGeneric = (qIdx: number) => {
     hapticLight();
     setAnswers(prev => {
       const next = { ...prev };
-      delete next[currentIndex];
+      delete next[qIdx];
       return next;
     });
     if (onAnswer) {
-      onAnswer(currentIndex, null, false);
+      onAnswer(qIdx, null, false);
     }
   };
 
+  const handleClearResponse = () => {
+    handleClearResponseGeneric(currentIndex);
+  };
+
   // Toggle bookmark / mark for review
-  const toggleMarkCurrent = () => {
+  const toggleMarkQuestion = (qIdx: number) => {
     hapticLight();
     setBookmarked(prev => {
       const next = new Set(prev);
-      if (next.has(currentIndex)) {
-        next.delete(currentIndex);
+      if (next.has(qIdx)) {
+        next.delete(qIdx);
       } else {
-        next.add(currentIndex);
+        next.add(qIdx);
       }
       return next;
     });
   };
+
+  const toggleMarkCurrent = () => {
+    toggleMarkQuestion(currentIndex);
+  };
+
 
   // Navigation handlers
   const handleNext = () => {
@@ -668,11 +855,17 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
       }
     });
 
+    const userAnswers = { ...answers };
+    const attemptedCount = Object.keys(answers).length;
+
     if (onSubmit) {
       onSubmit({
         score: correctCount,
+        correct: correctCount,
         total: totalQuestions,
-        answers,
+        answers: userAnswers,
+        userAnswers,
+        attempted: attemptedCount,
         bookmarked: Array.from(bookmarked),
         timeElapsedSeconds: timeElapsed,
       });
@@ -894,6 +1087,21 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
               <span>{formatTime(timeElapsed)}</span>
             </div>
 
+            {/* View Mode Toggle (Card vs Scroll) */}
+            <button
+              type="button"
+              onClick={() => handleToggleViewMode(viewMode === 'card' ? 'scroll' : 'card')}
+              className={`h-[calc(5vh-6px)] min-h-[22px] px-2 rounded-lg border flex items-center gap-1 font-bold text-[11px] active:scale-95 transition ${
+                viewMode === 'scroll' 
+                  ? 'bg-indigo-600 border-indigo-600 text-white shadow-2xs' 
+                  : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700'
+              }`}
+              title={viewMode === 'card' ? 'Switch to Continuous Scroll Mode' : 'Switch to Card Mode'}
+            >
+              {viewMode === 'card' ? <ScrollText size={12} /> : <Rows3 size={12} />}
+              <span className="hidden sm:inline">{viewMode === 'card' ? 'Scroll' : 'Card'}</span>
+            </button>
+
             {/* Screen Rotate Button */}
             <button
               type="button"
@@ -1054,7 +1262,11 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
                     data-qindex={idx}
                     onClick={() => {
                       hapticLight();
-                      setCurrentIndex(idx);
+                      if (viewMode === 'scroll') {
+                        scrollToQuestion(idx);
+                      } else {
+                        setCurrentIndex(idx);
+                      }
                     }}
                     className={`relative shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg text-xs flex items-center justify-center border transition-all active:scale-95 cursor-pointer ${pillStyle} ${
                       isCur 
@@ -1074,8 +1286,42 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
               })}
             </div>
 
-            {/* Right side controls: Question count, Font size, Bookmark, Community */}
+            {/* Right side controls: View Mode (Card / Scroll), Question count, Font size, Bookmark, Community */}
             <div className="flex items-center gap-1 shrink-0 pl-1 border-l border-slate-200">
+              {/* View Mode Toggle: Card vs Scroll */}
+              <div 
+                className="flex items-center bg-slate-100 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold text-slate-700 shrink-0 shadow-2xs"
+                role="group"
+                aria-label="MCQ View Mode"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleToggleViewMode('card')}
+                  className={`flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded cursor-pointer transition ${
+                    viewMode === 'card' 
+                      ? 'bg-indigo-600 text-white font-black shadow-xs' 
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Single Card Mode (Ek prashna ek baar me)"
+                >
+                  <Rows3 size={11} />
+                  <span className="hidden xs:inline">Card</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleViewMode('scroll')}
+                  className={`flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded cursor-pointer transition ${
+                    viewMode === 'scroll' 
+                      ? 'bg-indigo-600 text-white font-black shadow-xs' 
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Continuous Scroll Mode (Sabhi questions scroll karke solve karein)"
+                >
+                  <ScrollText size={11} />
+                  <span className="hidden xs:inline">Scroll</span>
+                </button>
+              </div>
+
               <span 
                 className="text-[10px] font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-1 rounded-md border border-slate-200 shrink-0" 
                 title="Answered / Total Questions"
@@ -1143,8 +1389,11 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
 
       {/* ── MAIN QUESTION BODY: 18/20 (90vh in rotated landscape, flex-1 in portrait) ── */}
       <main
-        className={`overflow-y-auto w-full flex flex-col ${
-          isRotatedOrLandscape ? 'p-1 sm:p-2' : 'flex-1 p-0 sm:px-4 sm:py-4'
+        ref={scrollContainerRef}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        className={`overflow-y-auto w-full flex flex-col touch-pan-y overscroll-contain ${
+          isRotatedOrLandscape ? 'p-1 sm:p-2' : 'flex-1 p-2 sm:px-4 sm:py-4 pb-24 sm:pb-28'
         }`}
         style={isRotatedOrLandscape ? { height: '90vh', flex: '0 0 90vh' } : undefined}
       >
@@ -1154,11 +1403,205 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
             <h3 className="text-base font-bold text-slate-700">No questions available</h3>
             <p className="text-xs text-slate-500 mt-1">Is practice me filhal koi question load nahi hua.</p>
           </div>
+        ) : viewMode === 'scroll' ? (
+          /* ═══════════════════════════════════════════════════════════════
+             CONTINUOUS SCROLL MODE: All questions rendered vertically in a smooth scroll list
+             ═══════════════════════════════════════════════════════════════ */
+          <div className="w-full max-w-3xl mx-auto flex flex-col gap-4 pb-28 px-2 sm:px-0">
+            {/* Scroll Helper Bar */}
+            <div className="bg-indigo-50/90 border border-indigo-200/90 rounded-2xl p-3 flex items-center justify-between gap-2.5 flex-wrap text-xs shadow-2xs">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                  <ScrollText size={15} />
+                </div>
+                <div>
+                  <div className="font-black text-indigo-950 flex items-center gap-1.5">
+                    <span>Continuous Scroll Mode</span>
+                    <span className="text-[10px] bg-indigo-200/80 text-indigo-800 px-1.5 py-0.2 rounded-full font-bold">
+                      {attemptedCount}/{totalQuestions} Solved
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-indigo-800/80 font-medium">
+                    Sabhi {totalQuestions} questions niche scroll karke direct solve karein
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 ml-auto flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleToggleAutoScroll}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border flex items-center gap-1.5 transition active:scale-95 cursor-pointer ${
+                    autoScrollOnAnswer
+                      ? 'bg-indigo-600 text-white border-indigo-700 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                  title="Answer chunne par agle unsolved question par auto-scroll karein"
+                >
+                  <Sparkles size={11} className={autoScrollOnAnswer ? 'text-amber-300' : 'text-slate-400'} />
+                  <span>Auto-Advance Scroll: {autoScrollOnAnswer ? 'ON' : 'OFF'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={scrollToNextUnanswered}
+                  className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-amber-500 hover:bg-amber-600 active:scale-95 text-white shadow-xs flex items-center gap-1 cursor-pointer transition"
+                >
+                  <FastForward size={12} />
+                  <span>Next Unanswered</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Questions List */}
+            {safeQuestions.map((q, idx) => {
+              const isAns = answers[idx] !== undefined;
+              const isMark = bookmarked.has(idx);
+              const isCur = idx === currentIndex;
+
+              return (
+                <div
+                  key={idx}
+                  id={`mcq-card-${idx}`}
+                  data-scroll-qindex={idx}
+                  className={`w-full bg-white rounded-2xl border transition-all overflow-hidden ${
+                    isCur
+                      ? 'ring-2 ring-indigo-500/70 shadow-md border-indigo-300'
+                      : 'border-slate-200/90 shadow-2xs hover:border-slate-300'
+                  }`}
+                >
+                  {/* Card Header */}
+                  <div className="p-3.5 sm:p-4 border-b border-slate-100 flex items-center justify-between gap-2 bg-slate-50/50">
+                    <div className="flex items-center gap-2 flex-wrap min-w-0">
+                      <span className={`px-2.5 py-0.5 rounded-lg text-xs font-black shrink-0 ${
+                        isAns 
+                          ? 'bg-emerald-600 text-white' 
+                          : 'bg-indigo-600 text-white'
+                      }`}>
+                        Question {idx + 1}
+                      </span>
+                      {q.topic && (
+                        <span className="text-[11px] font-bold text-slate-500 truncate max-w-[200px]">
+                          {q.topic}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {isAns ? (
+                        <span className="flex items-center gap-1 text-[11px] font-black px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-300">
+                          <CheckCircle2 size={12} className="text-emerald-600" />
+                          <span>Answered</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
+                          Unanswered
+                        </span>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => toggleMarkQuestion(idx)}
+                        className={`w-7 h-7 flex items-center justify-center rounded-lg border transition cursor-pointer ${
+                          isMark
+                            ? 'bg-amber-100 border-amber-400 text-amber-800'
+                            : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-400 hover:text-slate-600'
+                        }`}
+                        title={isMark ? 'Remove Mark' : 'Mark for Review'}
+                      >
+                        <Star size={13} className={isMark ? 'fill-amber-500 text-amber-500' : ''} />
+                      </button>
+
+                      {onSendToMcqCommunity && (
+                        <button
+                          type="button"
+                          onClick={() => onSendToMcqCommunity(q)}
+                          className="w-7 h-7 flex items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition cursor-pointer"
+                          title="Share to MCQ Community"
+                        >
+                          <Plus size={13} strokeWidth={2.5} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Question Content */}
+                  <div className="p-4 sm:p-5">
+                    <div className={`text-slate-900 leading-relaxed font-semibold mb-4 ${
+                      fontSize === 'sm' ? 'text-sm' : fontSize === 'lg' ? 'text-lg' : 'text-base'
+                    }`}>
+                      <McqQuestionDisplay 
+                        q={q} 
+                        questionClassName="leading-relaxed" 
+                      />
+                    </div>
+
+                    {/* Options List */}
+                    <div className="flex flex-col gap-2.5">
+                      {(q.options || []).map((opt: string, oIdx: number) => {
+                        const isSelected = answers[idx] === oIdx;
+                        const letter = String.fromCharCode(65 + oIdx);
+
+                        return (
+                          <button
+                            key={oIdx}
+                            type="button"
+                            onClick={() => handleSelectOptionGeneric(idx, oIdx)}
+                            className={`w-full text-left p-3 sm:p-3.5 rounded-xl border-2 transition-all flex items-center gap-3 active:scale-[0.99] cursor-pointer ${
+                              isSelected
+                                ? 'bg-indigo-50/90 border-indigo-600 text-indigo-950 shadow-xs ring-2 ring-indigo-500/20 font-bold'
+                                : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-800'
+                            }`}
+                          >
+                            <span 
+                              className={`w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs font-black shrink-0 transition ${
+                                isSelected 
+                                  ? 'bg-indigo-600 border-indigo-600 text-white shadow-xs' 
+                                  : 'border-slate-300 text-slate-600 bg-slate-100/80'
+                              }`}
+                            >
+                              {letter}
+                            </span>
+
+                            <span 
+                              className={`flex-1 ${fontSize === 'sm' ? 'text-xs sm:text-sm' : fontSize === 'lg' ? 'text-base sm:text-lg' : 'text-sm sm:text-base'}`}
+                              dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} 
+                            />
+
+                            {isSelected && (
+                              <CheckCircle2 size={17} className="text-indigo-600 shrink-0" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Clear Button */}
+                    {isAns && (
+                      <div className="mt-3 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleClearResponseGeneric(idx)}
+                          className="text-xs text-rose-600 hover:text-rose-700 font-bold px-2.5 py-1 rounded-lg hover:bg-rose-50 transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <RotateCcw size={12} />
+                          <span>Clear Answer</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         ) : (
-          <div className="w-full max-w-3xl mx-auto flex-1 flex flex-col bg-white sm:rounded-2xl sm:border sm:border-slate-200/90 sm:shadow-xs overflow-hidden">
+          /* ═══════════════════════════════════════════════════════════════
+             SINGLE CARD MODE: One question at a time with swipe navigation
+             ═══════════════════════════════════════════════════════════════ */
+          <div className="w-full max-w-3xl mx-auto flex flex-col min-h-full bg-white rounded-2xl border border-slate-200/90 shadow-xs">
             
             {/* Question Text Area with integrated Question number & Topic header */}
-            <div className="p-3.5 sm:p-5 border-b border-slate-100">
+            <div className="p-3.5 sm:p-5 border-b border-slate-100 shrink-0">
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-1.5 flex-wrap min-w-0">
                   <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 font-extrabold text-[11px] shrink-0">
@@ -1235,7 +1678,7 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
             </div>
 
             {/* Options List */}
-            <div className="p-4 sm:p-6 flex flex-col gap-2.5 sm:gap-3 bg-slate-50/40">
+            <div className="p-3.5 sm:p-6 flex flex-col gap-2.5 sm:gap-3 bg-slate-50/40 rounded-b-2xl pb-6 sm:pb-8 flex-1">
               {(currentQ.options || []).map((opt: string, oIdx: number) => {
                 const isSelected = answers[currentIndex] === oIdx;
                 const letter = String.fromCharCode(65 + oIdx);
@@ -1245,7 +1688,7 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
                     key={oIdx}
                     type="button"
                     onClick={() => handleSelectOption(oIdx)}
-                    className={`w-full text-left p-3.5 sm:p-4 rounded-xl border-2 transition-all flex items-center gap-3.5 active:scale-[0.99] cursor-pointer ${
+                    className={`w-full text-left p-3.5 sm:p-4 rounded-xl border-2 transition-all flex items-center gap-3.5 active:scale-[0.99] cursor-pointer touch-pan-y ${
                       isSelected 
                         ? 'bg-indigo-50/90 border-indigo-600 text-indigo-950 shadow-sm ring-2 ring-indigo-500/20 font-bold' 
                         : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80 text-slate-800'
@@ -1264,7 +1707,7 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
 
                     {/* Option Text Content */}
                     <span 
-                      className={`flex-1 ${fontSize === 'sm' ? 'text-xs sm:text-sm' : fontSize === 'lg' ? 'text-base sm:text-lg' : 'text-sm sm:text-base'}`}
+                      className={`flex-1 break-words ${fontSize === 'sm' ? 'text-xs sm:text-sm' : fontSize === 'lg' ? 'text-base sm:text-lg' : 'text-sm sm:text-base'}`}
                       dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} 
                     />
 
@@ -1276,24 +1719,62 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
                 );
               })}
 
-              {/* Clear Response Button */}
-              {isCurrentAnswered && (
-                <div className="pt-2 flex justify-end">
+              {/* Clear Response Button & Swipe hint */}
+              <div className="pt-2 flex items-center justify-between gap-2 flex-wrap text-slate-400">
+                <span className="text-[11px] font-medium hidden sm:inline flex items-center gap-1">
+                  👈 <span>Swipe left/right or use Prev/Next</span> 👉
+                </span>
+                {isCurrentAnswered && (
                   <button
                     type="button"
                     onClick={handleClearResponse}
-                    className="text-xs text-rose-600 hover:text-rose-700 font-bold px-2.5 py-1 rounded-lg hover:bg-rose-50 transition flex items-center gap-1 cursor-pointer"
+                    className="text-xs text-rose-600 hover:text-rose-700 font-bold px-2.5 py-1 rounded-lg hover:bg-rose-50 transition flex items-center gap-1 cursor-pointer ml-auto"
                   >
                     <RotateCcw size={12} />
                     <span>Clear Answer</span>
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
           </div>
         )}
       </main>
+
+      {/* Floating Speed-Dial Buttons in Scroll Mode */}
+      {viewMode === 'scroll' && (
+        <div className="fixed bottom-16 sm:bottom-18 right-3 sm:right-6 z-40 flex flex-col gap-2 items-end pointer-events-none">
+          <div className="flex flex-col gap-1.5 pointer-events-auto">
+            <button
+              type="button"
+              onClick={scrollToTop}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-900/90 hover:bg-slate-900 text-white shadow-lg border border-white/20 flex items-center justify-center transition active:scale-95 cursor-pointer backdrop-blur-xs"
+              title="Scroll to Top"
+              aria-label="Scroll to Top"
+            >
+              <ArrowUp size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={scrollToNextUnanswered}
+              className="h-9 sm:h-10 px-3 rounded-full bg-amber-500 hover:bg-amber-600 text-white shadow-lg border border-white/20 flex items-center gap-1.5 text-xs font-black transition active:scale-95 cursor-pointer backdrop-blur-xs"
+              title="Next Unanswered Question par scroll karein"
+            >
+              <FastForward size={14} />
+              <span className="hidden xs:inline">Next</span>
+            </button>
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-900/90 hover:bg-slate-900 text-white shadow-lg border border-white/20 flex items-center justify-center transition active:scale-95 cursor-pointer backdrop-blur-xs"
+              title="Scroll to Bottom"
+              aria-label="Scroll to Bottom"
+            >
+              <ArrowDown size={16} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── ERGONOMIC BOTTOM ACTION BAR: 1/20 (5vh in rotated landscape, py-3 in portrait) ── */}
       <footer 
@@ -1302,47 +1783,117 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
         }`}
         style={isRotatedOrLandscape ? { height: '5vh', minHeight: '26px', maxHeight: '38px' } : undefined}
       >
-        {/* Left: Back & Skip buttons */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          <button
-            type="button"
-            onClick={handlePrev}
-            disabled={currentIndex === 0}
-            className={`flex items-center gap-1 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold disabled:opacity-30 disabled:pointer-events-none transition active:scale-95 cursor-pointer whitespace-nowrap ${
-              isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-2.5 text-xs' : 'px-3 sm:px-4 py-2.5 text-xs sm:text-sm'
-            }`}
-            aria-label="Previous question"
-          >
-            <ChevronLeft size={isRotatedOrLandscape ? 13 : 16} />
-            <span>Prev</span>
-          </button>
-        </div>
+        {viewMode === 'scroll' ? (
+          <>
+            {/* Scroll Mode Footer: Top / Card toggle, Submit, Next Unanswered */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                onClick={scrollToTop}
+                className={`flex items-center gap-1 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold transition active:scale-95 cursor-pointer whitespace-nowrap ${
+                  isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-2.5 text-xs' : 'px-3 sm:px-4 py-2.5 text-xs sm:text-sm'
+                }`}
+                title="Scroll to Top"
+              >
+                <ArrowUp size={isRotatedOrLandscape ? 13 : 16} />
+                <span>Top</span>
+              </button>
 
-        {/* Center: Submit button */}
-        <button
-          type="button"
-          onClick={handleSubmitButtonClick}
-          className={`flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black shadow-md shadow-emerald-600/25 transition cursor-pointer whitespace-nowrap ${
-            isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-3 text-xs' : 'px-3.5 sm:px-5 py-2.5 text-xs sm:text-sm'
-          }`}
-        >
-          <Trophy size={isRotatedOrLandscape ? 13 : 16} />
-          <span>Submit</span>
-        </button>
+              <button
+                type="button"
+                onClick={() => handleToggleViewMode('card')}
+                className={`hidden sm:flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold transition active:scale-95 cursor-pointer whitespace-nowrap ${
+                  isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-2.5 text-xs' : 'px-3 py-2.5 text-xs'
+                }`}
+                title="Card Mode me switch karein"
+              >
+                <Rows3 size={14} />
+                <span>Card View</span>
+              </button>
+            </div>
 
-        {/* Right: Next Question */}
-        <button
-          type="button"
-          onClick={handleNext}
-          className={`flex items-center gap-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold shadow-md shadow-indigo-600/25 transition cursor-pointer whitespace-nowrap ${
-            isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-3 text-xs' : 'px-3.5 sm:px-5 py-2.5 text-xs sm:text-sm'
-          }`}
-        >
-          <span>
-            {isCurrentAnswered ? 'Next' : (currentIndex >= totalQuestions - 1 ? 'Review & Submit' : 'Next')}
-          </span>
-          <ChevronRight size={isRotatedOrLandscape ? 13 : 16} />
-        </button>
+            {/* Center: Submit button with Solved Count */}
+            <button
+              type="button"
+              onClick={handleSubmitButtonClick}
+              className={`flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black shadow-md shadow-emerald-600/25 transition cursor-pointer whitespace-nowrap ${
+                isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-3 text-xs' : 'px-4 sm:px-6 py-2.5 text-xs sm:text-sm'
+              }`}
+            >
+              <Trophy size={isRotatedOrLandscape ? 13 : 16} />
+              <span>Submit Test ({attemptedCount}/{totalQuestions})</span>
+            </button>
+
+            {/* Right: Next Unanswered Scroll Action */}
+            <button
+              type="button"
+              onClick={scrollToNextUnanswered}
+              className={`flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-black shadow-md shadow-amber-500/25 transition cursor-pointer whitespace-nowrap ${
+                isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-3 text-xs' : 'px-3.5 sm:px-5 py-2.5 text-xs sm:text-sm'
+              }`}
+              title="Next Unanswered Question par scroll karein"
+            >
+              <span>Next Unanswered</span>
+              <FastForward size={isRotatedOrLandscape ? 13 : 16} />
+            </button>
+          </>
+        ) : (
+          <>
+            {/* Left: Back button */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                onClick={handlePrev}
+                disabled={currentIndex === 0}
+                className={`flex items-center gap-1 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold disabled:opacity-30 disabled:pointer-events-none transition active:scale-95 cursor-pointer whitespace-nowrap ${
+                  isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-2.5 text-xs' : 'px-3 sm:px-4 py-2.5 text-xs sm:text-sm'
+                }`}
+                aria-label="Previous question"
+              >
+                <ChevronLeft size={isRotatedOrLandscape ? 13 : 16} />
+                <span>Prev</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleToggleViewMode('scroll')}
+                className={`hidden sm:flex items-center gap-1 rounded-xl border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold transition active:scale-95 cursor-pointer whitespace-nowrap ${
+                  isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-2 text-xs' : 'px-3 py-2 text-xs'
+                }`}
+                title="Sabhi questions scroll view me dekhein"
+              >
+                <ScrollText size={14} />
+                <span>Scroll Mode</span>
+              </button>
+            </div>
+
+            {/* Center: Submit button */}
+            <button
+              type="button"
+              onClick={handleSubmitButtonClick}
+              className={`flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black shadow-md shadow-emerald-600/25 transition cursor-pointer whitespace-nowrap ${
+                isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-3 text-xs' : 'px-3.5 sm:px-5 py-2.5 text-xs sm:text-sm'
+              }`}
+            >
+              <Trophy size={isRotatedOrLandscape ? 13 : 16} />
+              <span>Submit</span>
+            </button>
+
+            {/* Right: Next Question */}
+            <button
+              type="button"
+              onClick={handleNext}
+              className={`flex items-center gap-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-extrabold shadow-md shadow-indigo-600/25 transition cursor-pointer whitespace-nowrap ${
+                isRotatedOrLandscape ? 'h-[calc(5vh-6px)] min-h-[22px] px-3 text-xs' : 'px-3.5 sm:px-5 py-2.5 text-xs sm:text-sm'
+              }`}
+            >
+              <span>
+                {isCurrentAnswered ? 'Next' : (currentIndex >= totalQuestions - 1 ? 'Review & Submit' : 'Next')}
+              </span>
+              <ChevronRight size={isRotatedOrLandscape ? 13 : 16} />
+            </button>
+          </>
+        )}
       </footer>
 
       {/* ── QUESTION PALETTE GRID DRAWER / MODAL ── */}

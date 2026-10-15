@@ -12,6 +12,7 @@ import { inlineMd } from '../utils/mcqRender';
 import { getStatementLabel, getStatementText, getMcqStatements } from '../utils/mcqStructure';
 import { extractStatements } from '../utils/mcqParser';
 import { renderMathInHtml, formatExplanationHtml } from '../utils/mathUtils';
+import { extractMatchColumns, cleanMatchQuestionStem, MatchColumnData } from '../utils/questionTypeDetector';
 import McqQuestionNavigator from './McqQuestionNavigator';
 import UnifiedMcqPracticeView from './UnifiedMcqPracticeView';
 
@@ -26,6 +27,11 @@ interface CoachingMcq {
   question: string;
   options: string[];
   statements?: string[];
+  matchColumns?: MatchColumnData;
+  questionType?: string;
+  passage?: string;
+  assertion?: string;
+  reason?: string;
   /** Single correct answer (legacy) */
   correctAnswer?: number;
   /** Multiple correct answers (new) */
@@ -157,21 +163,124 @@ function splitCoachingQuestion(question: string): CoachingQuestionParts {
   return { intro, statements, suffix };
 }
 
-function QuestionText({ question, accent, statements }: { question: string; accent: string; statements?: string[] }) {
-  const parts = splitCoachingQuestion(question);
+function QuestionText({
+  question,
+  accent,
+  statements,
+  matchColumns,
+  assertion,
+  reason,
+  passage,
+}: {
+  question: string;
+  accent: string;
+  statements?: string[];
+  matchColumns?: MatchColumnData;
+  assertion?: string;
+  reason?: string;
+  passage?: string;
+}) {
   const render = (value: string) => renderMathInHtml(inlineMd(value));
+  let effectiveMC = matchColumns || extractMatchColumns(question, statements);
+  if (effectiveMC && effectiveMC.rows && effectiveMC.rows.length > 0) {
+    const seen = new Set<string>();
+    const deduplicatedRows = [];
+    for (const row of effectiveMC.rows) {
+      const key = `${(row.leftKey || '').toLowerCase()}|${(row.leftText || '').toLowerCase().trim()}`;
+      const txtKey = (row.leftText || '').toLowerCase().trim();
+      if (!seen.has(key) && !seen.has(txtKey)) {
+        seen.add(key);
+        seen.add(txtKey);
+        deduplicatedRows.push(row);
+      }
+    }
+    effectiveMC = { ...effectiveMC, rows: deduplicatedRows };
+  }
+  const cleanStem = effectiveMC ? cleanMatchQuestionStem(question) : question;
+  const parts = splitCoachingQuestion(cleanStem);
   const explicitStatements = (statements || []).map(s => s.trim()).filter(Boolean);
-  const displayStatements = explicitStatements.length > 0 ? explicitStatements : parts.statements;
+  const displayStatements = effectiveMC ? [] : (explicitStatements.length > 0 ? explicitStatements : parts.statements);
   const hasStatements = displayStatements.length > 0;
 
   return (
     <div className="space-y-2">
+      {/* Passage for Case Study */}
+      {passage && (
+        <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] leading-relaxed text-slate-800">
+          <span className="font-bold text-amber-800 block mb-1">📖 गद्यांश (Passage):</span>
+          <div dangerouslySetInnerHTML={{ __html: render(passage) }} />
+        </div>
+      )}
+
+      {/* Assertion & Reason */}
+      {assertion && reason && (
+        <div className="space-y-1.5 my-1.5">
+          <div className="p-2 rounded-lg bg-purple-50 border border-purple-200 text-[11px] text-slate-800">
+            <span className="font-black text-purple-700 mr-1">अभिकथन (A):</span>
+            <span dangerouslySetInnerHTML={{ __html: render(assertion) }} />
+          </div>
+          <div className="p-2 rounded-lg bg-indigo-50 border border-indigo-200 text-[11px] text-slate-800">
+            <span className="font-black text-indigo-700 mr-1">कारण (R):</span>
+            <span dangerouslySetInnerHTML={{ __html: render(reason) }} />
+          </div>
+        </div>
+      )}
+
       {parts.intro && (
         <p
           className="text-[12px] font-bold text-slate-800 leading-relaxed"
           dangerouslySetInnerHTML={{ __html: render(parts.intro) }}
         />
       )}
+
+      {/* 2 Dedicated Boxes for Match Column — Left & Right Side-by-Side */}
+      {effectiveMC && effectiveMC.rows && effectiveMC.rows.length > 0 && (
+        <div className="grid grid-cols-2 gap-1.5 sm:gap-2.5 my-2 items-stretch">
+          {/* Box 1: सूची - I (खण्ड 'अ') */}
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-1.5 sm:p-2 space-y-1.5 shadow-2xs flex flex-col">
+            <div className="flex items-center justify-between pb-1 border-b border-indigo-100">
+              <span className="text-[10px] font-black text-indigo-700 flex items-center gap-1 truncate">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-600 shrink-0"></span>
+                <span className="truncate">{effectiveMC.list1Title || "खण्ड 'अ' (सूची-I)"}</span>
+              </span>
+              <span className="text-[9px] font-mono text-indigo-500 font-bold shrink-0 ml-1">सूची-I</span>
+            </div>
+            <div className="space-y-1 flex-1">
+              {effectiveMC.rows.map((row, rIdx) => (
+                <div key={rIdx} className="flex items-center gap-1.5 p-1 sm:p-1.5 rounded-lg bg-white border border-indigo-100 text-[10px] sm:text-[11px] font-medium text-slate-800 min-h-[30px] sm:min-h-[34px]">
+                  <span className="w-4 h-4 rounded bg-indigo-600 text-white font-black text-[9px] sm:text-[10px] flex items-center justify-center shrink-0">
+                    {row.leftKey || String.fromCharCode(97 + rIdx)}
+                  </span>
+                  <span className="leading-snug flex-1 break-words" dangerouslySetInnerHTML={{ __html: render(row.leftText) }} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Box 2: सूची - II (खण्ड 'ब') */}
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-1.5 sm:p-2 space-y-1.5 shadow-2xs flex flex-col">
+            <div className="flex items-center justify-between pb-1 border-b border-emerald-100">
+              <span className="text-[10px] font-black text-emerald-700 flex items-center gap-1 truncate">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0"></span>
+                <span className="truncate">{effectiveMC.list2Title || "खण्ड 'ब' (सूची-II)"}</span>
+              </span>
+              <span className="text-[9px] font-mono text-emerald-500 font-bold shrink-0 ml-1">सूची-II</span>
+            </div>
+            <div className="space-y-1 flex-1">
+              {effectiveMC.rows.map((row, rIdx) => (
+                <div key={rIdx} className="flex items-center gap-1.5 p-1 sm:p-1.5 rounded-lg bg-white border border-emerald-100 text-[10px] sm:text-[11px] font-medium text-slate-800 min-h-[30px] sm:min-h-[34px]">
+                  <span className="w-4 h-4 rounded bg-emerald-600 text-white font-black text-[9px] sm:text-[10px] flex items-center justify-center shrink-0">
+                    {row.rightKey || String(rIdx + 1)}
+                  </span>
+                  <span className="leading-snug flex-1 break-words" dangerouslySetInnerHTML={{ __html: render(row.rightText) }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Statements (kathan) */}
       {hasStatements && (
         <div className="space-y-1.5">
           {displayStatements.map((statement, index) => (
@@ -188,14 +297,15 @@ function QuestionText({ question, accent, statements }: { question: string; acce
           ))}
         </div>
       )}
+
       {parts.suffix && (
         <p
           className="text-[12px] font-bold text-slate-800 leading-relaxed"
           dangerouslySetInnerHTML={{ __html: render(parts.suffix) }}
         />
       )}
-      {!parts.intro && !hasStatements && !parts.suffix && (
-        <p className="text-[12px] font-bold text-slate-800 leading-relaxed" dangerouslySetInnerHTML={{ __html: render(question) }} />
+      {!parts.intro && !hasStatements && !parts.suffix && !effectiveMC && (
+        <p className="text-[12px] font-bold text-slate-800 leading-relaxed" dangerouslySetInnerHTML={{ __html: render(cleanStem) }} />
       )}
     </div>
   );
@@ -390,7 +500,15 @@ function McqCard({ mcq, accent, onSendToMcqCommunity, user, answer, multiAnswers
         <div className="flex items-start gap-2 mb-2">
           <HelpCircle size={13} style={{ color: accent }} className="shrink-0 mt-0.5" />
           <div className="flex-1">
-            <QuestionText question={mcq.question} accent={accent} statements={mcq.statements} />
+            <QuestionText
+              question={mcq.question}
+              accent={accent}
+              statements={mcq.statements}
+              matchColumns={mcq.matchColumns}
+              assertion={mcq.assertion}
+              reason={mcq.reason}
+              passage={mcq.passage}
+            />
             {isMultiple && (
               <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full mt-0.5 inline-block"
                 style={{ background: `${accent}20`, color: accent }}>

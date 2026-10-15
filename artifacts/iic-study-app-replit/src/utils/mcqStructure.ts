@@ -1,4 +1,5 @@
 import type { MCQItem } from '../types';
+import { buildMatchStatements } from './questionTypeDetector';
 
 export type McqQuestionNumber = string;
 
@@ -49,6 +50,9 @@ export function getMcqQuestionNumber(q: Partial<MCQItem> | null | undefined, fal
 export function getMcqStatements(q: Partial<MCQItem> | null | undefined): string[] {
   if (Array.isArray(q?.statements) && q.statements.some(Boolean)) {
     return q.statements.map(asText).filter(Boolean);
+  }
+  if (q?.matchColumns && q.matchColumns.rows && q.matchColumns.rows.length > 0) {
+    return buildMatchStatements(q.matchColumns);
   }
 
   const raw = asText(q?.question).replace(/<br\s*\/?>/gi, '\n');
@@ -112,13 +116,26 @@ export function normalizeMcqForTracking(q: Partial<MCQItem>, fallbackIndex?: num
 
 export function normalizeMcqForStorage(q: Partial<MCQItem>, fallbackIndex = 0) {
   const tracked = normalizeMcqForTracking(q, fallbackIndex);
+  const matchColumns = q.matchColumns || undefined;
+  let statements = tracked.statements.length ? tracked.statements : (q.statements && q.statements.length > 0 ? q.statements : undefined);
+  if (matchColumns && (!statements || statements.length === 0)) {
+    statements = buildMatchStatements(matchColumns);
+  }
   return {
+    ...q,
     question: tracked.question,
     questionNumber: tracked.questionNumber,
-    statements: tracked.statements.length ? tracked.statements : undefined,
+    statements: statements && statements.length > 0 ? statements : undefined,
     options: tracked.allOptions,
     correctAnswer: tracked.correctAnswer,
     explanation: tracked.explanation || undefined,
+    matchColumns,
+    questionType: q.questionType || (matchColumns ? 'MATCH_COLUMN' : undefined),
+    assertion: q.assertion || undefined,
+    reason: q.reason || undefined,
+    passage: q.passage || undefined,
+    negativeHighlight: q.negativeHighlight || undefined,
+    topic: q.topic || undefined,
   };
 }
 

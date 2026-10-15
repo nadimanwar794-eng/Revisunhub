@@ -4,9 +4,11 @@ import { ref, set, onValue, off, push, remove, update } from 'firebase/database'
 import { rtdb } from '../firebase';
 import {
   ArrowLeft, Plus, Trash2, ChevronDown, ChevronUp, Save,
-  BookOpen, HelpCircle, FileText, Calendar, X, Edit3, Loader2, School
+  BookOpen, HelpCircle, FileText, Calendar, X, Edit3, Loader2, School, Layers
 } from 'lucide-react';
 import { DirectUploadButton } from './DirectUploadButton';
+import { parseMCQText, normalizeMcqPaste } from '../utils/mcqParser';
+import { extractMatchColumns, buildMatchStatements, MatchColumnData, MatchColumnRow } from '../utils/questionTypeDetector';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface CoachingNote { id: string; title: string; content?: string; pageNo?: string; }
@@ -14,6 +16,9 @@ interface CoachingMcq  {
   id: string;
   question: string;
   options: string[];
+  statements?: string[];
+  matchColumns?: MatchColumnData;
+  questionType?: string;
   /** Legacy single-answer field */
   correctAnswer?: number;
   /** New: multiple correct answers support */
@@ -239,7 +244,8 @@ function parseBulkMcq(text: string): CoachingMcq[] {
       if (ansMatch) { ansLetter = ansMatch[1]?.toUpperCase(); collectingExp = false; continue; }
 
       // Options: *A: text OR *A) text OR A: text OR A) text
-      const optMatch = line.match(/^(\*?)\s*([A-Da-d])[:.)\s]\s*(.+)/);
+      const isMatchPair = /(?:\||—|\t| {2,})\s*(?:(?:\(?([1-4a-dA-DIVXivx]+)\)?[\.\:\-]?\s*)?[^|—\t]{2,})$/.test(line);
+      const optMatch = !isMatchPair && line.match(/^(\*?)\s*([A-Da-d])[:.)\s]\s*(.+)/);
       if (optMatch) {
         const isCorrect = optMatch[1] === '*';
         const idx = optMatch[2]?.toUpperCase().charCodeAt(0) - 65;
@@ -289,9 +295,30 @@ function McqEditor({ mcqs, onChange, accent }:{ mcqs: CoachingMcq[]; onChange:(m
 
   const handleBulkImport = () => {
     setBulkError('');
-    const parsed = parseBulkMcq(bulkText);
-    if (parsed.length === 0) { setBulkError('Koi MCQ parse nahi hua — format check karo'); return; }
-    onChange([...mcqs, ...parsed]);
+    const raw = (bulkText || '').trim();
+    if (!raw) return;
+    const norm = normalizeMcqPaste(raw);
+    const parsed = parseMCQText(norm);
+    const list = Array.isArray(parsed) ? parsed : (parsed.questions || []);
+    if (list.length === 0) { setBulkError('Koi MCQ parse nahi hua — format check karo'); return; }
+    const imported: CoachingMcq[] = list.map((q: any) => {
+      let matchColumns = q.matchColumns || extractMatchColumns(q.question, q.statements);
+      let statements = q.statements || [];
+      if (matchColumns && (!statements || statements.length === 0)) {
+        statements = buildMatchStatements(matchColumns);
+      }
+      return {
+        id: uid(),
+        question: (q.question || '').replace(/<br\/?>/g, '\n').trim(),
+        options: (q.options || ['', '', '', '']).slice(0, 4),
+        correctAnswers: [q.correctAnswer ?? 0],
+        statements: statements.length ? statements : undefined,
+        matchColumns: matchColumns || undefined,
+        questionType: q.questionType || (matchColumns ? 'MATCH_COLUMN' : undefined),
+        explanation: q.explanation || '',
+      };
+    });
+    onChange([...mcqs, ...imported]);
     setBulkText('');
     setShowBulk(false);
   };
@@ -338,11 +365,197 @@ function McqEditor({ mcqs, onChange, accent }:{ mcqs: CoachingMcq[]; onChange:(m
                   <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full"
                     style={{background:`${accent}20`, color:accent}}>✦ Multiple</span>
                 )}
+                {m.matchColumns && (
+                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                    🔗 सूची मिलान
+                  </span>
+                )}
               </div>
               <button onClick={()=>del(m.id)} className="text-red-400 hover:text-red-600"><Trash2 size={12}/></button>
             </div>
             <textarea value={m.question} onChange={e=>upd(m.id,'question',e.target.value)} placeholder="Question"
               rows={2} className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-indigo-400 resize-none" />
+
+            {/* Toggle buttons for Statements & Suchi 2 Boxes */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  const hasMC = !!m.matchColumns;
+                  if (hasMC) {
+                    upd(m.id, 'matchColumns', undefined);
+                  } else {
+                    const defaultMC: MatchColumnData = {
+                      list1Title: "खण्ड 'अ' (सूची-I)",
+                      list2Title: "खण्ड 'ब' (सूची-II)",
+                      rows: [
+                        { leftKey: 'A', leftText: '', rightKey: '1', rightText: '' },
+                        { leftKey: 'B', leftText: '', rightKey: '2', rightText: '' },
+                        { leftKey: 'C', leftText: '', rightKey: '3', rightText: '' },
+                        { leftKey: 'D', leftText: '', rightKey: '4', rightText: '' },
+                      ]
+                    };
+                    upd(m.id, 'matchColumns', defaultMC);
+                    upd(m.id, 'questionType', 'MATCH_COLUMN');
+                    if (!m.statements || m.statements.length === 0) {
+                      upd(m.id, 'statements', buildMatchStatements(defaultMC));
+                    }
+                  }
+                }}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border ${
+                  m.matchColumns ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                }`}
+              >
+                <Layers size={10} />
+                <span>{m.matchColumns ? '✓ सूची Boxes सक्रिय' : '+ सूची का अलग 2 Box (सूची-I व सूची-II)'}</span>
+              </button>
+
+              {!m.matchColumns && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentStmts = m.statements || [];
+                    upd(m.id, 'statements', [...currentStmts, `कथन ${currentStmts.length + 1}: `]);
+                    upd(m.id, 'questionType', m.questionType || 'MULTI_STATEMENT');
+                  }}
+                  className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 flex items-center gap-1"
+                >
+                  <Plus size={10} /> + Statement (कथन)
+                </button>
+              )}
+            </div>
+
+            {/* 2 Dedicated Boxes for सूची-I and सूची-II */}
+            {m.matchColumns && (
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-2 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-indigo-200 bg-white p-2 space-y-1">
+                    <span className="text-[10px] font-bold text-indigo-700 block">Box 1: सूची - I (खण्ड 'अ')</span>
+                    <input
+                      type="text"
+                      value={m.matchColumns.list1Title || ''}
+                      onChange={e => {
+                        const updated = { ...m.matchColumns, list1Title: e.target.value };
+                        upd(m.id, 'matchColumns', updated);
+                      }}
+                      placeholder="सूची - I (शीर्षक)"
+                      className="w-full p-1 border border-indigo-100 rounded text-[10px] bg-indigo-50/50"
+                    />
+                    <textarea
+                      rows={3}
+                      value={m.matchColumns.rows.map((r, ri) => `${r.leftKey || String.fromCharCode(65 + ri)}. ${r.leftText}`).join('\n')}
+                      onChange={e => {
+                        const lines = e.target.value.split('\n');
+                        const newRows = [...m.matchColumns!.rows];
+                        lines.forEach((l, li) => {
+                          const clean = l.replace(/^[A-Da-d1-4][\.\:\-\)]\s*/, '').trim();
+                          if (newRows[li]) newRows[li] = { ...newRows[li], leftText: clean };
+                          else newRows.push({ leftKey: String.fromCharCode(65 + li), leftText: clean, rightKey: String(li + 1), rightText: '' });
+                        });
+                        const updatedMC = { ...m.matchColumns!, rows: newRows };
+                        upd(m.id, 'matchColumns', updatedMC);
+                        upd(m.id, 'statements', buildMatchStatements(updatedMC));
+                      }}
+                      placeholder={'A. मद 1\nB. मद 2\nC. मद 3\nD. मद 4'}
+                      className="w-full p-1 border border-indigo-200 rounded text-xs"
+                    />
+                  </div>
+                  <div className="rounded-lg border border-indigo-200 bg-white p-2 space-y-1">
+                    <span className="text-[10px] font-bold text-indigo-700 block">Box 2: सूची - II (खण्ड 'ब')</span>
+                    <input
+                      type="text"
+                      value={m.matchColumns.list2Title || ''}
+                      onChange={e => {
+                        const updated = { ...m.matchColumns, list2Title: e.target.value };
+                        upd(m.id, 'matchColumns', updated);
+                      }}
+                      placeholder="सूची - II (शीर्षक)"
+                      className="w-full p-1 border border-indigo-100 rounded text-[10px] bg-indigo-50/50"
+                    />
+                    <textarea
+                      rows={3}
+                      value={m.matchColumns.rows.map((r, ri) => `${r.rightKey || String(ri + 1)}. ${r.rightText}`).join('\n')}
+                      onChange={e => {
+                        const lines = e.target.value.split('\n');
+                        const newRows = [...m.matchColumns!.rows];
+                        lines.forEach((l, li) => {
+                          const clean = l.replace(/^[1-4A-Da-dIVXivx][\.\:\-\)]\s*/, '').trim();
+                          if (newRows[li]) newRows[li] = { ...newRows[li], rightText: clean };
+                          else newRows.push({ leftKey: String.fromCharCode(65 + li), leftText: '', rightKey: String(li + 1), rightText: clean });
+                        });
+                        const updatedMC = { ...m.matchColumns!, rows: newRows };
+                        upd(m.id, 'matchColumns', updatedMC);
+                        upd(m.id, 'statements', buildMatchStatements(updatedMC));
+                      }}
+                      placeholder={'1. विवरण 1\n2. विवरण 2\n3. विवरण 3\n4. विवरण 4'}
+                      className="w-full p-1 border border-indigo-200 rounded text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Statements Box */}
+            {!m.matchColumns && m.statements && m.statements.length > 0 && (
+              <div className="rounded-xl border border-sky-200 bg-sky-50/40 p-2 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-sky-800">
+                    कथन सूची ({m.statements.length} Statements)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      upd(m.id, 'statements', [...(m.statements || []), `कथन ${(m.statements || []).length + 1}: `]);
+                    }}
+                    className="text-[9px] font-bold text-sky-700 bg-white border border-sky-200 px-1.5 py-0.5 rounded hover:bg-sky-100 flex items-center gap-0.5"
+                  >
+                    <Plus size={9} /> + कथन
+                  </button>
+                </div>
+                <div className="space-y-1">
+                  {m.statements.map((stmt, sIdx) => (
+                    <div key={sIdx} className="flex items-center gap-1">
+                      <span className="w-4 h-4 rounded bg-sky-600 text-white font-black text-[9px] flex items-center justify-center shrink-0">
+                        {sIdx + 1}
+                      </span>
+                      <input
+                        type="text"
+                        value={stmt}
+                        onChange={e => {
+                          const updatedStmts = [...(m.statements || [])];
+                          updatedStmts[sIdx] = e.target.value;
+                          upd(m.id, 'statements', updatedStmts);
+                        }}
+                        className="flex-1 bg-white border border-sky-100 rounded px-1.5 py-0.5 text-[11px] outline-none"
+                        placeholder={`Statement ${sIdx + 1}...`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updatedStmts = (m.statements || []).filter((_, idx) => idx !== sIdx);
+                          upd(m.id, 'statements', updatedStmts.length ? updatedStmts : undefined);
+                        }}
+                        className="text-red-400 hover:text-red-600 p-0.5"
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Statements / कथन Box */}
+            <textarea
+              value={Array.isArray(m.statements) ? m.statements.join('\n') : ''}
+              onChange={e => {
+                const arr = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
+                upd(m.id, 'statements', arr.length > 0 ? arr : undefined);
+              }}
+              rows={2}
+              placeholder="Statements / कथन (उदा. 1. कथन एक \n 2. कथन दो)"
+              className="w-full border border-sky-200 bg-sky-50/40 rounded-lg px-2 py-1 text-xs outline-none focus:border-sky-400 font-mono"
+            />
 
             {/* Hint label */}
             <p className="text-[9px] text-slate-400 font-medium">

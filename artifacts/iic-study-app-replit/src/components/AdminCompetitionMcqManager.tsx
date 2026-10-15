@@ -33,6 +33,7 @@ import { parseMCQText } from '../utils/mcqParser';
 import { saveMcqLesson, deleteMcqLesson, subscribeMcqLessons, saveSystemSettings } from '../firebase';
 import { CustomPracticeSetEntry, SubjectMcqPoolEntry, MCQItem } from '../types';
 import { hapticLight, hapticStrong } from '../utils/haptic';
+import McqQuestionDisplay from './McqQuestionDisplay';
 
 // ── Normalizer for dirty copied text ─────────────────────────────────────────
 function normalizeMcqPaste(raw: string): string {
@@ -1920,14 +1921,14 @@ Explanation: प्रकाश वर्ष खगोलीय दूरी म
                 const optLabels = ['A', 'B', 'C', 'D'];
                 return (
                   <div key={idx} className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 mb-1">
                       <span className="px-2 py-0.5 rounded text-[10px] font-black bg-indigo-500/20 text-indigo-300">
                         Q{idx + 1}
                       </span>
-                      <p className="text-xs font-bold text-white flex-1">{q.question}</p>
                     </div>
+                    <McqQuestionDisplay q={q} variant="dark" />
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
                       {q.options?.map((opt, oi) => {
                         const isCorrect = q.correctAnswer === oi;
                         return (

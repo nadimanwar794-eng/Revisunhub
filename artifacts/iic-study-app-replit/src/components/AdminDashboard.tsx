@@ -11743,82 +11743,13 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                   {/* MCQ Section — Lucent-style: structured Add MCQ + Bulk Paste, OR fallback raw mcqText.
                                       Both flows write into parsedMcqs at save time. Student attempt UI shows instant
                                       sahi/galat feedback (green/red) via the existing parsedMcqs renderer. */}
-                                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 space-y-2">
-                                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                                          <label className="text-[10px] font-bold text-emerald-700 uppercase flex items-center gap-1">
-                                              📝 Page-wise MCQs ({newHomeworkMcqs.length})
-                                          </label>
-                                          <div className="flex gap-1">
-                                              <button type="button" onClick={() => setNewHomeworkBulk(prev => prev === undefined ? '' : undefined)} className="bg-amber-500 text-white px-2 py-0.5 rounded text-[10px] font-bold hover:bg-amber-600">📋 Bulk Paste</button>
-                                              <button type="button" onClick={() => setNewHomeworkMcqs(prev => [...prev, { id: `mcq_${Date.now()}_${Math.random()}`, question: '', options: ['', '', '', ''], correctAnswer: 0 }])} className="bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] font-bold hover:bg-emerald-700 flex items-center gap-1"><Plus size={10} /> Add MCQ</button>
-                                          </div>
-                                      </div>
-                                      {newHomeworkBulk !== undefined && (
-                                          <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-1.5">
-                                              <p className="text-[9px] text-amber-800 font-bold">Poora MCQ block paste karein. Hindi/English dono format support: **प्रश्न:**, **सही उत्तर:**, **Q 1:**, **Ans:** etc.</p>
-                                              <textarea
-                                                  value={newHomeworkBulk}
-                                                  onChange={e => setNewHomeworkBulk(e.target.value)}
-                                                  placeholder={"**प्रश्न:** ... ?\nA) ...\nB) ...\nC) ...\nD) ...\n**सही उत्तर:** B) ..."}
-                                                  className="w-full p-1.5 border border-amber-300 rounded text-[11px] font-mono outline-none h-32 focus:border-amber-500"
-                                              />
-                                              <div className="flex gap-1">
-                                                  <button type="button" onClick={() => {
-                                                      const raw = (newHomeworkBulk || '').trim();
-                                                      if (!raw) return alert('Text khaali hai.');
-                                                      const norm = normalizeMcqPaste(raw);
-                                                      const parsed = parseMCQText(norm);
-                                                      if (!parsed.questions || parsed.questions.length === 0) {
-                                                          return alert('Parse fail. Format check karein.');
-                                                      }
-                                                      const added = parsed.questions.map(q => ({
-                                                          id: `mcq_${Date.now()}_${Math.random()}`,
-                                                          questionNumber: q.questionNumber,
-                                                          question: (q.question || '').replace(/<br\/?>/g, '\n').trim(),
-                                                          options: (q.options || ['', '', '', '']).slice(0, 4),
-                                                          correctAnswer: q.correctAnswer ?? 0,
-                                                          statements: q.statements?.length ? q.statements : undefined,
-                                                          explanation: q.explanation?.trim() || undefined,
-                                                      }));
-                                                      setNewHomeworkMcqs(prev => [...prev, ...added]);
-                                                      setNewHomeworkBulk(undefined);
-                                                      setAlertConfig({ isOpen: true, message: `✅ ${added.length} MCQ add ho gaye!` });
-                                                  }} className="flex-1 bg-amber-600 text-white px-2 py-1 rounded text-[10px] font-bold hover:bg-amber-700">Parse & Add All</button>
-                                                  <button type="button" onClick={() => setNewHomeworkBulk(undefined)} className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-[10px] font-bold hover:bg-slate-300">Cancel</button>
-                                              </div>
-                                          </div>
-                                      )}
-                                      {newHomeworkMcqs.map((mcq, mIdx) => (
-                                          <div key={mcq.id} className="bg-white border border-emerald-100 rounded p-2 relative space-y-1.5">
-                                              <button type="button" onClick={() => setNewHomeworkMcqs(prev => prev.filter((_, i) => i !== mIdx))} className="absolute top-1 right-1 p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"><Trash2 size={11} /></button>
-                                              <input type="text" value={mcq.question} onChange={e => setNewHomeworkMcqs(prev => prev.map((m, i) => i === mIdx ? { ...m, question: e.target.value } : m))} placeholder={`Q${mIdx + 1}: Question?`} className="w-full p-1.5 pr-6 border border-slate-200 rounded text-xs outline-none focus:border-emerald-500" />
-                                              <textarea
-                                                  value={Array.isArray(mcq.statements) ? mcq.statements.join('\n') : ((mcq as any).statement || '')}
-                                                  onChange={e => {
-                                                      const val = e.target.value;
-                                                      const arr = val.split('\n').map(s => s.trim()).filter(Boolean);
-                                                      setNewHomeworkMcqs(prev => prev.map((m, i) => i === mIdx ? {
-                                                          ...m,
-                                                          statements: arr.length > 0 ? arr : undefined,
-                                                          statement: val || undefined,
-                                                      } as any : m));
-                                                  }}
-                                                  rows={2}
-                                                  placeholder="Statements / कथन (Optional — Har statement nayi line me)"
-                                                  className="w-full p-1.5 border border-sky-200 bg-sky-50/50 rounded text-xs outline-none focus:border-sky-500 placeholder-slate-400 resize-none"
-                                              />
-                                              <div className="grid grid-cols-2 gap-1">
-                                                  {mcq.options.map((opt, oi) => (
-                                                      <div key={oi} className="flex items-center gap-1">
-                                                          <input type="radio" name={`hwmcq-${mcq.id}`} checked={mcq.correctAnswer === oi} onChange={() => setNewHomeworkMcqs(prev => prev.map((m, i) => i === mIdx ? { ...m, correctAnswer: oi } : m))} className="shrink-0" />
-                                                          <input type="text" value={opt} onChange={e => setNewHomeworkMcqs(prev => prev.map((m, i) => i === mIdx ? { ...m, options: m.options.map((o, j) => j === oi ? e.target.value : o) } : m))} placeholder={`Option ${String.fromCharCode(65 + oi)}`} className="w-full p-1 border border-slate-200 rounded text-[11px] outline-none focus:border-emerald-500" />
-                                                      </div>
-                                                  ))}
-                                              </div>
-                                              <p className="text-[9px] text-slate-500">✓ Sahi answer ke saamne radio click karein</p>
-                                          </div>
-                                      ))}
-                                      <details className="text-[10px]">
+                                  <div className="border-t border-slate-200 pt-2 mt-1">
+                                      <CoachingMcqEditor
+                                          value={newHomeworkMcqs as any}
+                                          onChange={setNewHomeworkMcqs as any}
+                                          accent="emerald"
+                                      />
+                                      <details className="text-[10px] mt-2">
                                           <summary className="text-slate-500 cursor-pointer hover:text-slate-700">Ya raw MCQ text paste karein (purana tarika)</summary>
                                           <textarea value={newHomework.mcqText} onChange={e => setNewHomework({...newHomework, mcqText: e.target.value})} className="w-full mt-1 p-2 border border-slate-200 rounded text-sm outline-none h-20 focus:border-indigo-500" placeholder="Enter MCQ text..." />
                                       </details>
@@ -11871,9 +11802,13 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                           }
                                           // Merge structured (Lucent-style) MCQs created via Add MCQ / Bulk Paste UI.
                                           // These are kept ahead of any raw-text-parsed ones so admin's hand-curated order wins.
-                                          const structuredMcqs = newHomeworkMcqs
-                                              .filter(m => m.question.trim() && m.options.some(o => o.trim()))
-                                              .map(m => ({ question: m.question.trim(), options: m.options, correctAnswer: m.correctAnswer, topic: 'General' }));
+                                          const structuredMcqs = (newHomeworkMcqs as any[])
+                                              .filter(m => (m.question || '').trim() && m.options && m.options.some((o: any) => (o || '').trim()))
+                                              .map((m, idx) => ({
+                                                  ...normalizeMcqForStorage(m, idx),
+                                                  id: m.id || `mcq_${Date.now()}_${idx}`,
+                                                  topic: m.topic || 'General'
+                                              }));
                                           parsedMcqs = [...structuredMcqs, ...parsedMcqs];
                                           // targetSubject: if type is 'mcq', store 'mcq'.
                                           // if a bookRef is set (Sar Sangrah / Speedy / custom), store that.
@@ -12084,104 +12019,15 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                               </div>
 
                                               {/* --- Inline Parsed MCQ Editor --- */}
-                                              <div className="border border-emerald-200 rounded-lg p-3 bg-emerald-50/40">
-                                                  <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-                                                      <label className="text-[10px] font-bold text-emerald-700 uppercase">📝 Parsed MCQs ({(hw.parsedMcqs || []).length})</label>
-                                                      <div className="flex gap-1">
-                                                          <button type="button" onClick={() => {
-                                                              const updated = [...(localSettings.homework || [])];
-                                                              const existing = updated[i].parsedMcqs || [];
-                                                              updated[i] = {
-                                                                  ...updated[i],
-                                                                  parsedMcqs: [...existing, { question: '', options: ['', '', '', ''], correctAnswer: 0, explanation: '' } as MCQItem]
-                                                              };
-                                                              setLocalSettings({...localSettings, homework: updated});
-                                                          }} className="bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] font-bold hover:bg-emerald-700 flex items-center gap-1">
-                                                              <Plus size={10} /> Add MCQ
-                                                          </button>
-                                                          {(hw.mcqText || '').trim() && (
-                                                              <button type="button" onClick={() => {
-                                                                  const parsed = parseMCQText((hw.mcqText || '').trim());
-                                                                  const updated = [...(localSettings.homework || [])];
-                                                                  updated[i] = { ...updated[i], parsedMcqs: parsed.questions || [] };
-                                                                  setLocalSettings({...localSettings, homework: updated});
-                                                              }} className="bg-amber-500 text-white px-2 py-0.5 rounded text-[10px] font-bold hover:bg-amber-600">
-                                                                  Re-parse Text
-                                                              </button>
-                                                          )}
-                                                      </div>
-                                                  </div>
-                                                  {(hw.parsedMcqs || []).length === 0 && (
-                                                      <p className="text-[11px] text-slate-500 italic">No parsed MCQs. Add manually or paste in MCQ Text and click Re-parse.</p>
-                                                  )}
-                                                  {(hw.parsedMcqs || []).map((mcq, mIdx) => (
-                                                      <div key={mIdx} className="bg-white border border-emerald-100 rounded p-2 mb-2 space-y-1.5 relative">
-                                                          <button type="button" onClick={() => {
-                                                              const updated = [...(localSettings.homework || [])];
-                                                              updated[i] = { ...updated[i], parsedMcqs: (updated[i].parsedMcqs || []).filter((_, idx) => idx !== mIdx) };
-                                                              setLocalSettings({...localSettings, homework: updated});
-                                                          }} className="absolute top-1 right-1 p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded">
-                                                              <Trash2 size={11} />
-                                                          </button>
-                                                          <input type="text" value={mcq.question} onChange={e => {
-                                                              const updated = [...(localSettings.homework || [])];
-                                                              const mcqs = [...(updated[i].parsedMcqs || [])];
-                                                              mcqs[mIdx] = { ...mcqs[mIdx], question: e.target.value };
-                                                              updated[i] = { ...updated[i], parsedMcqs: mcqs };
-                                                              setLocalSettings({...localSettings, homework: updated});
-                                                          }} className="w-full p-1.5 pr-6 border border-slate-200 rounded text-xs outline-none focus:border-emerald-500" placeholder={`Q${mIdx + 1}: Question?`} />
-                                                          <textarea
-                                                              value={Array.isArray(mcq.statements) ? mcq.statements.join('\n') : ((mcq as any).statement || '')}
-                                                              onChange={e => {
-                                                                  const val = e.target.value;
-                                                                  const arr = val.split('\n').map(s => s.trim()).filter(Boolean);
-                                                                  const updated = [...(localSettings.homework || [])];
-                                                                  const mcqs = [...(updated[i].parsedMcqs || [])];
-                                                                  mcqs[mIdx] = {
-                                                                      ...mcqs[mIdx],
-                                                                      statements: arr.length > 0 ? arr : undefined,
-                                                                      statement: val || undefined,
-                                                                  };
-                                                                  updated[i] = { ...updated[i], parsedMcqs: mcqs };
-                                                                  setLocalSettings({...localSettings, homework: updated});
-                                                              }}
-                                                              rows={2}
-                                                              placeholder="Statements / कथन (Optional — Har statement nayi line me)"
-                                                              className="w-full p-1.5 border border-sky-200 bg-sky-50/50 rounded text-xs outline-none focus:border-sky-500 placeholder-slate-400 resize-none"
-                                                          />
-                                                          <div className="grid grid-cols-2 gap-1">
-                                                              {(mcq.options || ['', '', '', '']).map((opt, oi) => (
-                                                                  <div key={oi} className="flex items-center gap-1">
-                                                                      <input type="radio" name={`hw-correct-${hw.id}-${mIdx}`} checked={(mcq.correctAnswer ?? 0) === oi} onChange={() => {
-                                                                          const updated = [...(localSettings.homework || [])];
-                                                                          const mcqs = [...(updated[i].parsedMcqs || [])];
-                                                                          mcqs[mIdx] = { ...mcqs[mIdx], correctAnswer: oi };
-                                                                          updated[i] = { ...updated[i], parsedMcqs: mcqs };
-                                                                          setLocalSettings({...localSettings, homework: updated});
-                                                                      }} className="shrink-0" />
-                                                                      <input type="text" value={opt} onChange={e => {
-                                                                          const updated = [...(localSettings.homework || [])];
-                                                                          const mcqs = [...(updated[i].parsedMcqs || [])];
-                                                                          const opts = [...(mcqs[mIdx].options || ['', '', '', ''])];
-                                                                          opts[oi] = e.target.value;
-                                                                          mcqs[mIdx] = { ...mcqs[mIdx], options: opts };
-                                                                          updated[i] = { ...updated[i], parsedMcqs: mcqs };
-                                                                          setLocalSettings({...localSettings, homework: updated});
-                                                                      }} className="w-full p-1 border border-slate-200 rounded text-[11px] outline-none focus:border-emerald-500" placeholder={`Option ${String.fromCharCode(65 + oi)}`} />
-                                                                  </div>
-                                                              ))}
-                                                          </div>
-                                                          <textarea value={mcq.explanation || ''} onChange={e => {
-                                                              const updated = [...(localSettings.homework || [])];
-                                                              const mcqs = [...(updated[i].parsedMcqs || [])];
-                                                              mcqs[mIdx] = { ...mcqs[mIdx], explanation: e.target.value };
-                                                              updated[i] = { ...updated[i], parsedMcqs: mcqs };
-                                                              setLocalSettings({...localSettings, homework: updated});
-                                                          }} className="w-full p-1 border border-slate-200 rounded text-[11px] outline-none h-12 focus:border-emerald-500" placeholder="Explanation (optional)" />
-                                                          <p className="text-[9px] text-slate-500">✓ Sahi answer ke saamne radio click karein</p>
-                                                      </div>
-                                                  ))}
-                                              </div>
+                                              <CoachingMcqEditor
+                                                  value={(hw.parsedMcqs || []) as any}
+                                                  onChange={(mcqs) => {
+                                                      const updated = [...(localSettings.homework || [])];
+                                                      updated[i] = { ...updated[i], parsedMcqs: mcqs as any };
+                                                      setLocalSettings({...localSettings, homework: updated});
+                                                  }}
+                                                  accent="emerald"
+                                              />
                                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                                 <div className="space-y-1">
                                                     <div className="flex items-center justify-between gap-1 flex-wrap">

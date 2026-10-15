@@ -8,6 +8,7 @@ import { tryEarnScore, subtractDailyScore, getMcqStreakBonus } from '../utils/sc
 import { renderMathInHtml, formatExplanationHtml } from '../utils/mathUtils';
 import { playSoundClick, playSoundCorrect, playSoundWrong, playSoundVictory } from '../utils/soundEffects';
 import { hapticCorrect, hapticWrong } from '../utils/haptic';
+import McqQuestionDisplay from './McqQuestionDisplay';
 
 interface Props {
   mistakes: MistakeEntry[];
@@ -289,8 +290,8 @@ export const MistakePracticeView: React.FC<Props> = ({ mistakes, onClose, onComp
               )}
             </div>
 
-            {/* Question text */}
-            <p className="text-[15px] font-bold text-slate-800 leading-relaxed">{current.question}</p>
+            {/* Question text with full 8 competition formats */}
+            <McqQuestionDisplay q={current as any} questionClassName="text-[15px] font-bold text-slate-800 leading-relaxed" />
           </div>
 
           {/* Options */}

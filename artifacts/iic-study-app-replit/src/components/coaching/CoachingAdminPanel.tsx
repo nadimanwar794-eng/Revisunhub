@@ -15,17 +15,22 @@ import {
   Plus, Trash2, Save, ChevronDown, ChevronUp, CheckCircle,
   XCircle, Pencil, X, FileText, Download, BarChart2, Search,
   AlertCircle, HelpCircle, Calendar, Loader2, Edit3, School,
-  Settings, RefreshCw, CalendarDays
+  Settings, RefreshCw, CalendarDays, Layers
 } from "lucide-react";
 import type {
   CoachingBatch, CoachingStudent, CoachingFeeRecord, CoachingTest
 } from "../CoachingManager";
 import type { CoachingSession } from "../../coaching-types";
+import { parseMCQText, normalizeMcqPaste } from "../../utils/mcqParser";
+import { extractMatchColumns, buildMatchStatements, MatchColumnData } from "../../utils/questionTypeDetector";
 
 // ─── Types for Homework ───────────────────────────────────────────────────────
 interface CoachingNote { id: string; title: string; content?: string; pageNo?: string; }
 interface CoachingMcq {
   id: string; question: string; options: string[];
+  statements?: string[];
+  matchColumns?: MatchColumnData;
+  questionType?: string;
   correctAnswer?: number; correctAnswers?: number[]; explanation?: string;
 }
 interface CoachingPdf { id: string; title: string; url: string; }
@@ -62,77 +67,30 @@ const ALL_CATS = Object.keys(CAT_META);
  *  are supported — continuation lines before the options are appended to the question.
  *  Blocks separated by blank lines or a `---` divider. */
 function parseBulkMcq(text: string): CoachingMcq[] {
-  const blocks = text.split(/\n(?:\s*-{3,}\s*|\s*)\n/).map(b => b.trim()).filter(Boolean);
-  const out: CoachingMcq[] = [];
-  for (const block of blocks) {
-    const lines = block.split("\n").map(l => l.trim()).filter(Boolean);
-    let question = "";
-    const options: string[] = ["", "", "", ""];
-    let optionCount = 0;
-    let explanation = "";
-    let ansLetter = "";
-    let collectingExp = false;
-    let optionsStarted = false;
-
-    for (const rawLine of lines) {
-      // Strip markdown bold (**) — handles WhatsApp/Telegram/AI-formatted MCQs
-      const line = rawLine.replace(/\*\*/g, "").trim();
-      if (!line) continue;
-
-      // Question: Q: / Q1. / Q1) / प्रश्न 1:
-      const qMatch = line.match(/^(?:\*?\s*)?(?:Q\s*\d*\s*[:.)\s]|प्रश्न\s*\d*\s*[:.]\s*)\s*(.+)/i);
-      if (qMatch) {
-        question = qMatch[1].trim().replace(/^\[[^\]]*\]\s*/, "");
-        collectingExp = false;
-        continue;
+  const norm = normalizeMcqPaste(text || '');
+  const parsed = parseMCQText(norm);
+  const list = Array.isArray(parsed) ? parsed : (parsed.questions || []);
+  if (list.length > 0) {
+    return list.map((q: any) => {
+      let matchColumns = q.matchColumns || extractMatchColumns(q.question, q.statements);
+      let statements = q.statements || [];
+      if (matchColumns && (!statements || statements.length === 0)) {
+        statements = buildMatchStatements(matchColumns);
       }
-
-      // Explanation / Exp: / व्याख्या:
-      const expMatch = line.match(/^(?:Exp|Explanation|व्याख्या)[:.]\s*(.*)/i);
-      if (expMatch) { explanation = expMatch[1].trim(); collectingExp = true; continue; }
-      if (collectingExp && !/^[*]?[A-Da-d][:.)]/.test(line) && !/^(?:Ans|Answer|सही)/i.test(line)) {
-        explanation += (explanation ? " " : "") + line;
-        continue;
-      }
-
-      // Ans: / Answer: / सही उत्तर: B or B) or B) text
-      const ansMatch = line.match(/^(?:Ans|Answer|सही\s*उत्तर)\s*[:.]\s*\*?\s*([A-Da-d])/i);
-      if (ansMatch) { ansLetter = ansMatch[1].toUpperCase(); collectingExp = false; continue; }
-
-      // Options: *A: text OR *A) text OR A: text OR A) text
-      const optMatch = line.match(/^(\*?)\s*([A-Da-d])[:.)\s]\s*(.+)/);
-      if (optMatch) {
-        const letterIdx = "ABCD".indexOf(optMatch[2].toUpperCase());
-        if (letterIdx >= 0) {
-          options[letterIdx] = optMatch[3].trim();
-          optionCount++;
-          if (optMatch[1] === "*") ansLetter = optMatch[2].toUpperCase();
-        }
-        optionsStarted = true;
-        collectingExp = false;
-        continue;
-      }
-
-      // First unrecognized line = question fallback.
-      if (!question) { question = line; continue; }
-
-      // Continuation lines of a multi-line/statement-based question — append
-      // them to the question as long as options haven't started yet.
-      if (!optionsStarted && !collectingExp) {
-        question += (/[:?]$/.test(question) ? "\n" : " ") + line;
-      }
-    }
-    const correctAnswer = ansLetter ? Math.max(0, "ABCD".indexOf(ansLetter)) : 0;
-    if (question && optionCount >= 2) {
-      // NOTE: never write `explanation: undefined` — Firebase RTDB's set() throws
-      // on any undefined property, which silently breaks "Save Entry" once MCQs
-      // (parsed without an explanation) are added to the entry.
-      const mcq: CoachingMcq = { id: uidGen(), question, options, correctAnswer };
-      if (explanation) mcq.explanation = explanation;
-      out.push(mcq);
-    }
+      const mcq: CoachingMcq = {
+        id: uidGen(),
+        question: (q.question || '').replace(/<br\/?>/g, '\n').trim(),
+        options: (q.options || ['', '', '', '']).slice(0, 4),
+        correctAnswer: q.correctAnswer ?? 0,
+      };
+      if (statements && statements.length > 0) mcq.statements = statements;
+      if (matchColumns) mcq.matchColumns = matchColumns;
+      if (q.questionType || matchColumns) mcq.questionType = q.questionType || 'MATCH_COLUMN';
+      if (q.explanation) mcq.explanation = q.explanation;
+      return mcq;
+    });
   }
-  return out;
+  return [];
 }
 
 /** Recursively strip `undefined` values — Firebase RTDB's set()/update() throw
@@ -729,38 +687,359 @@ D) Option 4
                           </div>
                         </div>
                       )}
-                      {(catData[k]?.mcqs || []).map((m: CoachingMcq, i: number) => (
-                        <div key={m.id} className="border border-slate-200 rounded-xl p-2.5 space-y-1.5 mb-1.5">
-                          <div className="flex items-start gap-1.5">
-                            <textarea value={m.question} onChange={e => {
-                              const mcqs = [...(catData[k]?.mcqs || [])];
-                              mcqs[i] = { ...m, question: e.target.value };
-                              updateCatMcqs(k, mcqs);
-                            }} placeholder="Question" rows={2}
-                              className="flex-1 border border-slate-200 rounded-lg px-2 py-1 text-[11px] outline-none focus:border-indigo-300 resize-none" />
-                            <button onClick={() => updateCatMcqs(k, (catData[k]?.mcqs || []).filter(x => x.id !== m.id))}
-                              className="text-red-400 hover:text-red-600 p-1"><Trash2 size={11} /></button>
-                          </div>
-                          {m.options.map((opt, oi) => (
-                            <div key={oi} className="flex items-center gap-1.5">
-                              <button onClick={() => {
-                                const mcqs = [...(catData[k]?.mcqs || [])];
-                                mcqs[i] = { ...m, correctAnswer: oi };
-                                updateCatMcqs(k, mcqs);
-                              }} className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-black transition-colors ${
-                                m.correctAnswer === oi ? "bg-green-500 text-white" : "bg-slate-100 text-slate-400"
-                              }`}>{oi + 1}</button>
-                              <input value={opt} onChange={e => {
-                                const mcqs = [...(catData[k]?.mcqs || [])];
-                                const opts = [...m.options]; opts[oi] = e.target.value;
-                                mcqs[i] = { ...m, options: opts };
-                                updateCatMcqs(k, mcqs);
-                              }} placeholder={`Option ${oi + 1}`}
-                                className="flex-1 border border-slate-200 rounded-lg px-2 py-1 text-[11px] outline-none focus:border-indigo-300" />
+                      {(catData[k]?.mcqs || []).map((m: CoachingMcq, i: number) => {
+                        const hasMatch = Boolean(m.matchColumns && m.matchColumns.rows && m.matchColumns.rows.length > 0);
+                        const hasStmts = Boolean(m.statements && m.statements.length > 0 && !hasMatch);
+
+                        return (
+                          <div key={m.id} className="border border-slate-200 rounded-xl p-3 space-y-2 mb-2 bg-white shadow-2xs">
+                            <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-[10px] font-black text-slate-400">MCQ #{i + 1}</span>
+                                {hasMatch && (
+                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                                    🔗 सूची मिलान
+                                  </span>
+                                )}
+                                {hasStmts && (
+                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700">
+                                    📄 {m.statements?.length} कथनों वाला प्रश्न
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                onClick={() => updateCatMcqs(k, (catData[k]?.mcqs || []).filter(x => x.id !== m.id))}
+                                className="text-red-400 hover:text-red-600 p-1"
+                                title="MCQ हटाएं"
+                              >
+                                <Trash2 size={12} />
+                              </button>
                             </div>
-                          ))}
-                        </div>
-                      ))}
+
+                            <textarea
+                              value={m.question}
+                              onChange={e => {
+                                const mcqs = [...(catData[k]?.mcqs || [])];
+                                mcqs[i] = { ...m, question: e.target.value };
+                                updateCatMcqs(k, mcqs);
+                              }}
+                              placeholder="प्रश्न (Question stem)"
+                              rows={2}
+                              className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-indigo-400 resize-y"
+                            />
+
+                            {/* Action Buttons: Suchi 2 Boxes & Statements */}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const mcqs = [...(catData[k]?.mcqs || [])];
+                                  if (hasMatch) {
+                                    mcqs[i] = { ...m, matchColumns: undefined, questionType: undefined };
+                                  } else {
+                                    const defaultMC: MatchColumnData = {
+                                      list1Title: "खण्ड 'अ' (सूची-I)",
+                                      list2Title: "खण्ड 'ब' (सूची-II)",
+                                      rows: [
+                                        { leftKey: 'a', leftText: '', rightKey: '1', rightText: '' },
+                                        { leftKey: 'b', leftText: '', rightKey: '2', rightText: '' },
+                                        { leftKey: 'c', leftText: '', rightKey: '3', rightText: '' },
+                                        { leftKey: 'd', leftText: '', rightKey: '4', rightText: '' },
+                                      ]
+                                    };
+                                    mcqs[i] = {
+                                      ...m,
+                                      matchColumns: defaultMC,
+                                      questionType: 'MATCH_COLUMN',
+                                      statements: buildMatchStatements(defaultMC),
+                                    };
+                                  }
+                                  updateCatMcqs(k, mcqs);
+                                }}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 border transition-all ${
+                                  hasMatch
+                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                                }`}
+                              >
+                                <Layers size={10} />
+                                <span>{hasMatch ? '✓ सूची Boxes सक्रिय' : '+ सूची का अलग 2 Box (सूची-I व सूची-II)'}</span>
+                              </button>
+
+                              {!hasMatch && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const mcqs = [...(catData[k]?.mcqs || [])];
+                                    const currentStmts = m.statements || [];
+                                    mcqs[i] = {
+                                      ...m,
+                                      statements: [...currentStmts, `कथन ${currentStmts.length + 1}: `],
+                                      questionType: m.questionType || 'MULTI_STATEMENT'
+                                    };
+                                    updateCatMcqs(k, mcqs);
+                                  }}
+                                  className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 flex items-center gap-1"
+                                >
+                                  <Plus size={10} /> + Statement (कथन)
+                                </button>
+                              )}
+                            </div>
+
+                            {/* ── 2 DEDICATED BOXES FOR सूची-I AND सूची-II ── */}
+                            {hasMatch && m.matchColumns && (
+                              <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-2.5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-black text-indigo-900 uppercase flex items-center gap-1">
+                                    <Layers size={11} className="text-indigo-600" />
+                                    <span>सूची-I व सूची-II के 2 अलग-अलग Boxes</span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const mcqs = [...(catData[k]?.mcqs || [])];
+                                      const curRows = m.matchColumns?.rows || [];
+                                      const nextIdx = curRows.length;
+                                      const updatedRows = [
+                                        ...curRows,
+                                        {
+                                          leftKey: String.fromCharCode(97 + nextIdx),
+                                          leftText: '',
+                                          rightKey: String(nextIdx + 1),
+                                          rightText: ''
+                                        }
+                                      ];
+                                      const updatedMC: MatchColumnData = { ...m.matchColumns!, rows: updatedRows };
+                                      mcqs[i] = {
+                                        ...m,
+                                        matchColumns: updatedMC,
+                                        statements: buildMatchStatements(updatedMC)
+                                      };
+                                      updateCatMcqs(k, mcqs);
+                                    }}
+                                    className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded flex items-center gap-0.5 hover:bg-emerald-100"
+                                  >
+                                    <Plus size={9} /> + Row जोड़ें
+                                  </button>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {/* ── BOX 1: सूची - I (खण्ड 'अ') ── */}
+                                  <div className="rounded-lg border border-indigo-200 bg-white p-2 space-y-1.5 shadow-2xs">
+                                    <div className="flex items-center justify-between pb-1 border-b border-indigo-100">
+                                      <span className="text-[10px] font-black text-indigo-700 flex items-center gap-1">
+                                        <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                                        Box 1: सूची - I (खण्ड 'अ')
+                                      </span>
+                                      <span className="text-[9px] font-mono text-indigo-500 font-bold">सूची-I</span>
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={m.matchColumns.list1Title || ''}
+                                      onChange={e => {
+                                        const mcqs = [...(catData[k]?.mcqs || [])];
+                                        mcqs[i] = {
+                                          ...m,
+                                          matchColumns: { ...m.matchColumns!, list1Title: e.target.value }
+                                        };
+                                        updateCatMcqs(k, mcqs);
+                                      }}
+                                      placeholder="सूची - I (शीर्षक)"
+                                      className="w-full p-1 border border-indigo-100 rounded text-[10px] font-bold text-indigo-900 bg-indigo-50/50"
+                                    />
+                                    <div className="space-y-1 pt-0.5">
+                                      {m.matchColumns.rows.map((row, rIdx) => (
+                                        <div key={rIdx} className="flex items-center gap-1 bg-indigo-50/50 px-1.5 py-0.5 rounded border border-indigo-100">
+                                          <span className="w-4 h-4 rounded bg-indigo-600 text-white font-black text-[9px] flex items-center justify-center shrink-0">
+                                            {row.leftKey || String.fromCharCode(97 + rIdx)}
+                                          </span>
+                                          <input
+                                            type="text"
+                                            value={row.leftText}
+                                            onChange={e => {
+                                              const mcqs = [...(catData[k]?.mcqs || [])];
+                                              const updatedRows = [...m.matchColumns!.rows];
+                                              updatedRows[rIdx] = { ...updatedRows[rIdx], leftText: e.target.value };
+                                              const updatedMC: MatchColumnData = { ...m.matchColumns!, rows: updatedRows };
+                                              mcqs[i] = {
+                                                ...m,
+                                                matchColumns: updatedMC,
+                                                statements: buildMatchStatements(updatedMC)
+                                              };
+                                              updateCatMcqs(k, mcqs);
+                                            }}
+                                            placeholder={`मद ${row.leftKey || String.fromCharCode(97 + rIdx)}...`}
+                                            className="flex-1 bg-transparent border-0 outline-none text-[11px] font-medium text-slate-800"
+                                          />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  {/* ── BOX 2: सूची - II (खण्ड 'ब') ── */}
+                                  <div className="rounded-lg border border-emerald-200 bg-white p-2 space-y-1.5 shadow-2xs">
+                                    <div className="flex items-center justify-between pb-1 border-b border-emerald-100">
+                                      <span className="text-[10px] font-black text-emerald-700 flex items-center gap-1">
+                                        <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+                                        Box 2: सूची - II (खण्ड 'ब')
+                                      </span>
+                                      <span className="text-[9px] font-mono text-emerald-500 font-bold">सूची-II</span>
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={m.matchColumns.list2Title || ''}
+                                      onChange={e => {
+                                        const mcqs = [...(catData[k]?.mcqs || [])];
+                                        mcqs[i] = {
+                                          ...m,
+                                          matchColumns: { ...m.matchColumns!, list2Title: e.target.value }
+                                        };
+                                        updateCatMcqs(k, mcqs);
+                                      }}
+                                      placeholder="सूची - II (शीर्षक)"
+                                      className="w-full p-1 border border-emerald-100 rounded text-[10px] font-bold text-emerald-900 bg-emerald-50/50"
+                                    />
+                                    <div className="space-y-1 pt-0.5">
+                                      {m.matchColumns.rows.map((row, rIdx) => (
+                                        <div key={rIdx} className="flex items-center gap-1 bg-emerald-50/50 px-1.5 py-0.5 rounded border border-emerald-100">
+                                          <span className="w-4 h-4 rounded bg-emerald-600 text-white font-black text-[9px] flex items-center justify-center shrink-0">
+                                            {row.rightKey || String(rIdx + 1)}
+                                          </span>
+                                          <input
+                                            type="text"
+                                            value={row.rightText}
+                                            onChange={e => {
+                                              const mcqs = [...(catData[k]?.mcqs || [])];
+                                              const updatedRows = [...m.matchColumns!.rows];
+                                              updatedRows[rIdx] = { ...updatedRows[rIdx], rightText: e.target.value };
+                                              const updatedMC: MatchColumnData = { ...m.matchColumns!, rows: updatedRows };
+                                              mcqs[i] = {
+                                                ...m,
+                                                matchColumns: updatedMC,
+                                                statements: buildMatchStatements(updatedMC)
+                                              };
+                                              updateCatMcqs(k, mcqs);
+                                            }}
+                                            placeholder={`विवरण ${row.rightKey || String(rIdx + 1)}...`}
+                                            className="flex-1 bg-transparent border-0 outline-none text-[11px] font-medium text-slate-800"
+                                          />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* ── STATEMENTS BOX (कथन आधारित प्रश्न) ── */}
+                            {hasStmts && m.statements && (
+                              <div className="rounded-xl border border-sky-200 bg-sky-50/40 p-2 space-y-1.5">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[10px] font-bold text-sky-800">
+                                    कथन सूची ({m.statements.length} Statements)
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const mcqs = [...(catData[k]?.mcqs || [])];
+                                      mcqs[i] = {
+                                        ...m,
+                                        statements: [...(m.statements || []), `कथन ${(m.statements || []).length + 1}: `]
+                                      };
+                                      updateCatMcqs(k, mcqs);
+                                    }}
+                                    className="text-[9px] font-bold text-sky-700 bg-white border border-sky-200 px-1.5 py-0.5 rounded hover:bg-sky-100 flex items-center gap-0.5"
+                                  >
+                                    <Plus size={9} /> + कथन
+                                  </button>
+                                </div>
+                                <div className="space-y-1">
+                                  {m.statements.map((stmt, sIdx) => (
+                                    <div key={sIdx} className="flex items-center gap-1">
+                                      <span className="w-4 h-4 rounded bg-sky-600 text-white font-black text-[9px] flex items-center justify-center shrink-0">
+                                        {sIdx + 1}
+                                      </span>
+                                      <input
+                                        type="text"
+                                        value={stmt}
+                                        onChange={e => {
+                                          const mcqs = [...(catData[k]?.mcqs || [])];
+                                          const updatedStmts = [...(m.statements || [])];
+                                          updatedStmts[sIdx] = e.target.value;
+                                          mcqs[i] = { ...m, statements: updatedStmts };
+                                          updateCatMcqs(k, mcqs);
+                                        }}
+                                        className="flex-1 bg-white border border-sky-100 rounded px-1.5 py-0.5 text-[11px] outline-none"
+                                        placeholder={`Statement ${sIdx + 1}...`}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const mcqs = [...(catData[k]?.mcqs || [])];
+                                          const updatedStmts = (m.statements || []).filter((_, idx) => idx !== sIdx);
+                                          mcqs[i] = { ...m, statements: updatedStmts.length ? updatedStmts : undefined };
+                                          updateCatMcqs(k, mcqs);
+                                        }}
+                                        className="text-red-400 hover:text-red-600 p-0.5"
+                                      >
+                                        <Trash2 size={10} />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Options A to D */}
+                            <div className="space-y-1 pt-1">
+                              {m.options.map((opt, oi) => (
+                                <div key={oi} className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const mcqs = [...(catData[k]?.mcqs || [])];
+                                      mcqs[i] = { ...m, correctAnswer: oi };
+                                      updateCatMcqs(k, mcqs);
+                                    }}
+                                    className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-black transition-colors ${
+                                      m.correctAnswer === oi ? "bg-green-500 text-white" : "bg-slate-100 text-slate-400 hover:bg-slate-200"
+                                    }`}
+                                  >
+                                    {String.fromCharCode(65 + oi)}
+                                  </button>
+                                  <input
+                                    value={opt}
+                                    onChange={e => {
+                                      const mcqs = [...(catData[k]?.mcqs || [])];
+                                      const opts = [...m.options];
+                                      opts[oi] = e.target.value;
+                                      mcqs[i] = { ...m, options: opts };
+                                      updateCatMcqs(k, mcqs);
+                                    }}
+                                    placeholder={`Option ${String.fromCharCode(65 + oi)}`}
+                                    className="flex-1 border border-slate-200 rounded-lg px-2 py-1 text-[11px] outline-none focus:border-indigo-300 bg-white"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Explanation */}
+                            <div className="pt-0.5">
+                              <input
+                                type="text"
+                                value={m.explanation || ''}
+                                onChange={e => {
+                                  const mcqs = [...(catData[k]?.mcqs || [])];
+                                  mcqs[i] = { ...m, explanation: e.target.value };
+                                  updateCatMcqs(k, mcqs);
+                                }}
+                                placeholder="व्याख्या (Explanation) — optional"
+                                className="w-full border border-slate-200 rounded-lg px-2 py-1 text-[10px] text-slate-600 outline-none focus:border-indigo-300 bg-slate-50/50"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

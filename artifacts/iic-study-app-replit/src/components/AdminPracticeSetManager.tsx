@@ -20,6 +20,7 @@ import {
 import { SystemSettings, CustomPracticeSetEntry, MCQItem } from '../types';
 import { parseMCQText } from '../utils/mcqParser';
 import { hapticLight, hapticStrong } from '../utils/haptic';
+import McqQuestionDisplay from './McqQuestionDisplay';
 
 interface Props {
   settings?: SystemSettings;
@@ -419,6 +420,58 @@ export const AdminPracticeSetManager: React.FC<Props> = ({
               placeholder={`**Question 1**\n❓ Question: बिहार में 1857 की क्रांति का नेतृत्व किसने किया था?\nA) कुंवर सिंह\nB) नाना साहेब\nC) अमर सिंह\nD) पीर अली\n✅ Correct Answer: कुंवर सिंह\nExplanation: जगदीशपुर के वीर कुंवर सिंह ने 1857 की क्रांति का नेतृत्व किया था।`}
               className="w-full p-3.5 rounded-2xl border border-slate-300 bg-white text-xs font-mono focus:ring-2 focus:ring-indigo-500 outline-none leading-relaxed"
             />
+
+            {/* Live Questions Preview */}
+            {parsedQuestions.length > 0 && (
+              <div className="mt-3 p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-200 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-xs font-black text-indigo-900 flex items-center gap-1.5">
+                    <span>👁️ प्रश्नों का लाइव प्रीव्यू ({parsedQuestions.length} प्रश्न पहचाने गए)</span>
+                  </span>
+                  <span className="text-[10px] text-indigo-700 font-bold bg-white px-2.5 py-0.5 rounded-full border border-indigo-200 shadow-2xs">
+                    सूची Boxes व Statement Boxes सक्रिय
+                  </span>
+                </div>
+                <div className="max-h-96 overflow-y-auto space-y-2.5 pr-1">
+                  {parsedQuestions.map((q, idx) => (
+                    <div key={idx} className="p-3 bg-white rounded-xl border border-indigo-100 shadow-2xs space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">
+                          Q{idx + 1}
+                        </span>
+                        {q.questionType && (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
+                            {q.questionType}
+                          </span>
+                        )}
+                      </div>
+                      <McqQuestionDisplay q={q} />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] pt-1">
+                        {q.options?.map((opt, oi) => (
+                          <div
+                            key={oi}
+                            className={`p-1.5 rounded-lg border flex items-center gap-1.5 ${
+                              oi === q.correctAnswer
+                                ? 'bg-emerald-50 border-emerald-300 text-emerald-800 font-bold'
+                                : 'bg-slate-50 border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <span className="font-bold">{String.fromCharCode(65 + oi)})</span>
+                            <span className="truncate">{opt}</span>
+                            {oi === q.correctAnswer && <span className="ml-auto text-emerald-600 font-black">✓</span>}
+                          </div>
+                        ))}
+                      </div>
+                      {q.explanation && (
+                        <p className="text-[10px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 leading-relaxed">
+                          💡 <span className="font-bold text-slate-700">व्याख्या:</span> {q.explanation}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Save Action */}

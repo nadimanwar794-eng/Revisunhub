@@ -259,6 +259,31 @@ export const McqHub: React.FC<McqHubProps> = ({
   const [reviewFilter, setReviewFilter] = useState<'ALL' | 'CORRECT' | 'WRONG' | 'UNATTEMPTED'>('ALL');
   const reviewContainerRef = useRef<HTMLDivElement>(null);
 
+  // Touch swipe navigation for official quiz card
+  const officialTouchStartX = useRef<number | null>(null);
+  const officialTouchStartY = useRef<number | null>(null);
+
+  const handleOfficialTouchStart = (e: React.TouchEvent) => {
+    officialTouchStartX.current = e.touches[0].clientX;
+    officialTouchStartY.current = e.touches[0].clientY;
+  };
+
+  const handleOfficialTouchEnd = (e: React.TouchEvent) => {
+    if (officialTouchStartX.current === null || officialTouchStartY.current === null) return;
+    const deltaX = e.changedTouches[0].clientX - officialTouchStartX.current;
+    const deltaY = e.changedTouches[0].clientY - officialTouchStartY.current;
+    officialTouchStartX.current = null;
+    officialTouchStartY.current = null;
+
+    if (Math.abs(deltaX) > 45 && Math.abs(deltaX) > Math.abs(deltaY) * 1.3) {
+      if (deltaX < 0) {
+        handleNextOfficialQ();
+      } else {
+        handlePrevOfficialQ();
+      }
+    }
+  };
+
   // Class Selection Drawer
   const [showClassDrawer, setShowClassDrawer] = useState<boolean>(false);
 
@@ -2401,6 +2426,8 @@ export const McqHub: React.FC<McqHubProps> = ({
               {currentQ && (
                 <div
                   id="mcq-question-card"
+                  onTouchStart={handleOfficialTouchStart}
+                  onTouchEnd={handleOfficialTouchEnd}
                   className={`flex flex-col p-3.5 sm:p-4 rounded-2xl border transition-all shadow-2xs ${
                     isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
                   }`}
@@ -2625,6 +2652,10 @@ export const McqHub: React.FC<McqHubProps> = ({
                       )}
                     </div>
                   )}
+                  {/* Swipe / Scroll Gesture Hint */}
+                  <div className="text-[10px] text-slate-400 dark:text-slate-500 font-medium text-center pt-1.5 flex items-center justify-center gap-1 select-none">
+                    <span>👈 Swipe or use Prev/Next to scroll questions 👉</span>
+                  </div>
                 </div>
               )}
 
