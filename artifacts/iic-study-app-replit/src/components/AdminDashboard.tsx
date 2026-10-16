@@ -18596,7 +18596,8 @@ const AdminDashboardInner: React.FC<Props> = ({ onNavigate, settings, onUpdateSe
                                                                   if (replaced === 0) {
                                                                       alert('Note mein matching line nahi mili — original text match nahi hua. Suggestion open rahega.');
                                                                   } else {
-                                                                      await resolvesuggestion(s.id);
+                                                                      setAdminSuggestions(prev => prev.map(item => item.id === s.id ? { ...item, status: 'resolved' } : item));
+                                                                      resolvesuggestion(s.id).catch(e => console.error('resolvesuggestion error:', e));
                                                                       setApplyEditId(null);
                                                                       setApplyEditCorrections([]);
                                                                       setApplyEditManualChapterKey('');
