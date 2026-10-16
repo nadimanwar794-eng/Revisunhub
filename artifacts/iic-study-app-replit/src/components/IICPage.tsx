@@ -192,7 +192,7 @@ export const IICPage: React.FC<Props> = ({ user, onBack }) => {
                                   currentUrl={content}
                                   onUploaded={(url, file) => {
                                       setContent(url);
-                                      if (!title) {
+                                       if (!title && file) {
                                           setTitle(file.name.replace(/\.[^/.]+$/, ''));
                                       }
                                   }}

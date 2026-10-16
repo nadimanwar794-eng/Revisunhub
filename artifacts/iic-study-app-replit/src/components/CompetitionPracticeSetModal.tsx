@@ -33,6 +33,7 @@ import { saveSetLeaderboardScore } from '../utils/setLeaderboard';
 import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
 import { playSoundClick, playSoundCorrect, playSoundWrong, playSoundVictory } from '../utils/soundEffects';
 import McqQuestionDisplay from './McqQuestionDisplay';
+import { SetLeaderboardModal } from './SetLeaderboardModal';
 
 interface Props {
   meta: PracticeSetMeta;

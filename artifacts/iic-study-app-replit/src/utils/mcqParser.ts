@@ -1,5 +1,11 @@
 import { MCQItem } from '../types';
-import { detectQuestionType, extractMatchColumns, buildMatchStatements, cleanMatchQuestionStem } from './questionTypeDetector';
+import {
+  detectQuestionType,
+  extractMatchColumns,
+  buildMatchStatements,
+  cleanMatchQuestionStem,
+  extractCaseStudy,
+} from './questionTypeDetector';
 
 /**
  * Normalize the markdown-heavy paste format used by coaching books before
@@ -10,6 +16,14 @@ export function normalizeMcqPaste(raw: string): string {
     let text = raw.replace(/\r\n/g, '\n');
     text = text.replace(/^---+\s*$/gm, '');
     text = text.replace(/^###\s+.+$/gm, '');
+
+    // Convert Devnagari numerals (०-९) to ASCII digits (0-9)
+    text = text.replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)));
+
+    // Strip common AI chatbot preambles like "तालिका में दिए गए सभी 100 प्रश्नों को आपके वांछित प्रारूप (Q, Options, Answer, Explanation) में रूपांतरित कर प्रस्तुत किया गया है:"
+    text = text.replace(/^(?:तालिका\s+में\s+दिए\s+गए|यहाँ\s+(?:\d+\s+)?प्रश्न|दिए\s+गए\s+प्रश्न|Sure,?\s+here\s+are|Here\s+are\s+the|Below\s+are\s+the)[^\n]*?(?:\n|$)/gim, '');
+    // Strip inline conversational transitions like "ye 10 question ya तालिका में दिए गए सभी 100 प्रश्नों..." before a Q1. or Q11.
+    text = text.replace(/(?:ye\s+\d+\s+question|तालिका\s+में\s+दिए\s+गए)[^\n]*?(?=\n\s*(?:Q\d+|Question\s+\d+|प्रश्न\s+\d+))/gi, '');
 
     // Remove duplicate/orphan answer labels before parsing. Lucent copies
     // sometimes put the answer label on one line and the answer on the next.
@@ -30,9 +44,21 @@ export function normalizeMcqPaste(raw: string): string {
     // Normalize koot (codes) line for match questions so it acts as clear delimiter
     text = text.replace(/^\s*\*{0,2}\s*(?:कूट|Codes?)\s*[:：/]?\s*(?:Codes?)?\s*\*?\*?\s*$/gim, '\nकूट:');
 
-    // Convert the common bold question variants to the canonical simple
-    // format. Using one boundary format is important when a paste mixes
-    // ordinary Q1. blocks with bold Question 2: blocks.
+    // 1. Move [Topic] prefixes placed before Q or numbers: e.g. "[Topic] Q74." or "[Topic] 74." -> "Q74. [Topic]"
+    text = text.replace(/(?:^|\n)\s*(\[[^\]\n]{2,80}\])\s*Q\s*(\d+)[\.\:\-)]\s*/gi, '\nQ$2. $1 ');
+    text = text.replace(/(?:^|\n)\s*(\[[^\]\n]{2,80}\])\s*(?:प्रश्न|Question)\s*(\d+)[\.\:\-)]\s*/gi, '\nQ$2. $1 ');
+    text = text.replace(/(?:^|\n)\s*(\[[^\]\n]{2,80}\])\s*(\d{1,4})[\.\)\:\-]\s+(?=[^\n]+(?:\n+[ \t]*(?:\(?[A-Da-d]\)?[\.\:\-]|[\u0915-\u0918][\.\)])))/gi, '\nQ$2. $1 ');
+
+    // 2. Convert all explicit Question/प्रश्न/प्र./Que/Ques variants to canonical "Q<n>. "
+    // Handles: **Q1:**, Q1., Q.1, Q-1, Q 1:, Q1), Question 1:, Question 1., Que 1., Ques 1., Qstn 1.
+    text = text.replace(/(?:^|\n)[ \t]*(?:\*\*\s*)?Q(?:uestion|ue|ues|stn)?\s*[:.\-]?\s*(\d+)\s*[:.\-)]\s*(?:\*\*)?/gi, '\nQ$1. ');
+    // Handles: प्रश्न 1:, प्रश्न 1., प्रश्न: 1, प्रश्न संख्या 1, प्रश्न सं. 1, प्रश्न क्र. 1, प्र. 1., प्र 1:
+    text = text.replace(/(?:^|\n)[ \t]*(?:\*\*\s*)?(?:प्रश्न(?:\s*संख्या|\s*सं|\s*क्र)?|प्र|Prashna)\s*[:.\-]?\s*(\d+)\s*[:.\-)]\s*(?:\*\*)?/gi, '\nQ$1. ');
+
+    // 3. For bracketed/parenthesized question numbers like "(1) " or "[1] ", convert to "Q<n>. "
+    text = text.replace(/(?:^|\n)[ \t]*(?:\*\*\s*)?(?:\(\s*(\d{1,4})\s*\)|\[\s*(\d{1,4})\s*\])\s*[:.\-]?\s+(?=[^\n]{2,})/gi, (_m, n1, n2) => `\nQ${n1 || n2}. `);
+
+    // Convert old bold markdown question wrappers
     text = text.replace(/\*\*Q\s*(\d+)\s*[:.]\s*([\s\S]*?)\*\*/gi, (_m, n, q) =>
         `\nQ${n}. ${q.trim()}`,
     );
@@ -43,14 +69,10 @@ export function normalizeMcqPaste(raw: string): string {
                 .trim()
                 .replace(/\*\*$/, '')
                 .replace(/\s*\((?:Easy|Medium|Hard|आसान|मध्यम|कठिन)[^)]*\)\s*$/i, '')
-                .replace(/^\[.*?\]\s*/g, '')
+                .replace(/^\[(?:[⚡🔥💡🎯⭐✨🏆⚠️🌟][^\]]*?|[^\]]{1,10})\]\s*/g, '')
                 .trim();
             return `\nQ${n}. ${combined}`;
         },
-    );
-    text = text.replace(
-        /(?:^|\n)[ \t]*(?:\*\*\s*)?(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*/gi,
-        (_m, n) => `\nQ${n}. `,
     );
     text = text.replace(/\*\*प्रश्न\s*[:：]?\*\*/gi, '__PRASHNA__');
     text = text.replace(/\*\*Question\s*[:：]?\*\*/gi, '__PRASHNA__');
@@ -65,26 +87,21 @@ export function normalizeMcqPaste(raw: string): string {
         '✅ Correct Answer: ',
     );
     text = text.replace(
-        /(?:^|\n)\s*(?:Ans(?:wer)?|सही\s*उत्तर|उत्तर)\s*[:：=\-]\s*/gi,
+        /(?:^|\n)\s*(?:Ans(?:wer)?|सही\s*उत्तर|उत्तर)\s*[:：=\-]\s*(?=[A-D1-4]|\([A-D1-4]\)|Option|विकल्प|[\u0900-\u097F\w\s]{1,40}\n)/gi,
         '\n✅ Correct Answer: ',
     );
     text = text.replace(/\*\*/g, '');
 
     // For unnumbered Lucent blocks, turn a line followed by A/B/C/D into a
-    // canonical question marker. Do not run this over an already-simple paste.
+    // canonical question marker.
     let questionNumber = 0;
     text = text.replace(/__PRASHNA__\s*/g, () => {
         questionNumber += 1;
         return `\nQ${questionNumber}. `;
     });
-    const alreadySimpleFormat =
-        /<TOPIC:/i.test(text) || /^\s*Q\s*\d+[\.\)]/im.test(text);
-    if (
-        questionNumber === 0 &&
-        !text.includes('**Question') &&
-        !text.includes('❓') &&
-        !alreadySimpleFormat
-    ) {
+
+    const hasAnyQMarker = /^\s*Q\s*\d+[\.\)]/im.test(text);
+    if (!hasAnyQMarker) {
         const lines = text.split('\n');
         const output: string[] = [];
         let counter = 0;
@@ -113,39 +130,6 @@ export function normalizeMcqPaste(raw: string): string {
     return text;
 }
 
-/**
- * Parses a raw text containing MCQ questions formatted with specific emojis and headers
- * into an array of MCQItem objects.
- *
- * Supported Formats:
- *
- * FORMAT 1 (Emoji/Structured):
- * **Question X**
- * 📖 Topic: ...
- * ❓ Question: ...
- * Options:
- * A) ...
- * B) ...
- * C) ...
- * D) ...
- * ✅ Correct Answer: X) ...
- * 💡 Concept: ...
- * 🔎 Explanation: ...
- *
- * FORMAT 2 (Simple/Hindi — user pasted format):
- * <TOPIC: Topic Name>
- * Q1. Question text?
- * A) Option A
- * B) Option B
- * C) Option C
- * D) Option D
- * Answer: C) Option text
- * Explanation: explanation text
- *
- * <NOTE: Topic Name>
- * HTML or plain note content
- * </NOTE: Topic Name>
- */
 export function extractStatements(questionText: string): { statements: string[], cleanedQuestion: string } {
     const statements: string[] = [];
     let cleanedQuestion = "";
@@ -164,35 +148,51 @@ export function extractStatements(questionText: string): { statements: string[],
     const tempQuestionLines: string[] = [];
     const endingQuestionLines: string[] = [];
 
-    const statementStartRegex = /^(?:(?:Statement|कथन|Assertion|Reason|अभिकथन|कारण)\s*(?:\(?\s*[0-9IVXivxABab]+\s*\)?)?\s*[:\-\.]?|\(?\d+[\)\.\:\-]\s*|\(?[IVXivx]+[\)\.\:\-]\s*|\(?[a-dA-D]\)[\s\:\.]*)/i;
-    const endingQuestionRegex = /^(?:which\s+of\s+the|which\s+of\s+above|उपर्युक्त|उपरोक्त|choose\s+the|select\s+the|find\s+the|निम्नलिखित\s+में\s+से|कूट\b|कूट\s+का|उपर्युक्त\s+कथनों|\*\*\s*कूट)/i;
+    // Supports:
+    // 1. Bullets: * or - or • or ▪ or ◦
+    // 2. "Statement 1", "कथन I", "अभिकथन (A)", "कारण (R)"
+    // 3. Numbers "1.", "(1)", "1)"
+    // 4. Roman "(i)", "I."
+    // 5. Letter "(a)"
+    const statementStartRegex = /^(?:(?:\*|-|•|▪|◦)\s+|(?:Statement|कथन|Assertion|Reason|अभिकथन|कारण)\s*(?:\(?\s*[0-9IVXivxABab]+\s*\)?)?\s*[:\-\.]?|\(?\d+[\)\.\:\-]\s*|\(?[IVXivx]+[\)\.\:\-]\s*|\(?[a-dA-D]\)[\s\:\.]*)/i;
+    const endingQuestionRegex = /^(?:which\s+of\s+the|which\s+of\s+above|उपर्युक्त|उपरोक्त|choose\s+the|select\s+the|find\s+the|निम्नलिखित\s+में\s+से|कूट\b|कूट\s+का|उपर्युक्त\s+कथनों|\*\*\s*कूट|उपर्युक्त\s+में\s+से|उपरोक्त\s+में\s+से|सही\s+विकल्प|सही\s+कूट|दिए\s*गए\s*कूट)/i;
+
+    let bulletCounter = 0;
 
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
+        const rawLine = lines[i].trim();
+        if (!rawLine) continue;
 
-        if (statementStartRegex.test(line)) {
+        const isBullet = /^(?:\*|-|•|▪|◦)\s+/.test(rawLine);
+
+        if (statementStartRegex.test(rawLine)) {
             if (currentStatement) {
                 statements.push(currentStatement.trim());
             }
-            currentStatement = line;
+            if (isBullet) {
+                bulletCounter += 1;
+                const cleanContent = rawLine.replace(/^(?:\*|-|•|▪|◦)\s+/, '').trim();
+                currentStatement = `${bulletCounter}. ${cleanContent}`;
+            } else {
+                currentStatement = rawLine;
+            }
             inStatementBlock = true;
         } else if (inStatementBlock) {
-            if (endingQuestionRegex.test(line) || (line.includes("?") || line.includes("सही है") || line.includes("गलत है"))) {
+            if (endingQuestionRegex.test(rawLine) || /^(?:उपर्युक्त|उपरोक्त|इनमें\s+से)\s+.*(?:सही|गलत|सत्य|असत्य)/i.test(rawLine)) {
                 if (currentStatement) {
                     statements.push(currentStatement.trim());
                     currentStatement = "";
                 }
                 inStatementBlock = false;
-                endingQuestionLines.push(line);
+                endingQuestionLines.push(rawLine);
             } else {
-                currentStatement += " " + line;
+                currentStatement += " " + rawLine;
             }
         } else {
             if (statements.length > 0) {
-                endingQuestionLines.push(line);
+                endingQuestionLines.push(rawLine);
             } else {
-                tempQuestionLines.push(line);
+                tempQuestionLines.push(rawLine);
             }
         }
     }
@@ -209,43 +209,35 @@ export function extractStatements(questionText: string): { statements: string[],
     return { statements, cleanedQuestion: cleanedQuestion || questionText };
 }
 
-/**
- * Try to parse a simple-format MCQ block like:
- * Q1. Question text?
- * A) Option A
- * B) Option B
- * C) Option C
- * D) Option D
- * Answer: C) Option text
- * Explanation: explanation text
- *
- * Returns a partial MCQItem or null if it doesn't match this format.
- */
 function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> | null {
-    const lines = block.split('\n').map(l => l.trim()).filter(l => l);
+    // If multiple options are horizontal on the same line, split them
+    let normalizedBlock = block.replace(/(?<=[^\n])\s{2,}(?=(?:\([A-Da-d\u0915-\u0918]\)|[A-Da-d\u0915-\u0918][\)\.\:\-]))/g, '\n');
+
+    const lines = normalizedBlock.split('\n').map(l => l.trim()).filter(l => l);
     if (lines.length < 3) return null;
 
-    // First line: **Q1:** / Q1. / Q1) / **प्रश्न 1:** / प्रश्न 1. / plain question text
-    const questionLineMatch = lines[0].match(/^\*{0,2}\s*(?:Q(?:uestion)?\s*\d*\s*[:.)-]|प्रश्न\s*\d*\s*[:.)-])\*{0,2}\s*([\s\S]+)/i)
-        || lines[0].match(/^(?:Q\s*\d+[\.\)]\s*)?([\s\S]+)/i);
-    if (!questionLineMatch) return null;
+    // Detect question number and clean stem from lines[0]
+    const questionNumberMatch = lines[0].match(/^\*{0,2}\s*(?:Q(?:uestion|ue|ues|stn)?|प्रश्न(?:\s*संख्या|\s*सं|\s*क्र)?|प्र)?\s*[:.\-]?\s*\(?(\d{1,4})\)?/i);
 
-    let questionText = questionLineMatch[1].trim();
+    let questionText = lines[0]
+      .replace(/^\*{0,2}\s*(?:Q(?:uestion|ue|ues|stn)?|प्रश्न(?:\s*संख्या|\s*सं|\s*क्र)?|प्र)?\s*[:.\-]?\s*\(?\d{1,4}\)?[\.\:\-\)]\s*\*{0,2}/i, '')
+      .replace(/^\*{0,2}\s*Q\s*\d+[\.\)]\s*\*{0,2}/i, '')
+      .trim();
+
+    // If lines[0] only contained the question number header (e.g. "Q1." alone on its line)
+    if (!questionText && lines.length > 1) {
+      questionText = lines[1];
+    }
+
     if (!questionText) return null;
-    const questionNumberMatch = lines[0].match(/^\*{0,2}\s*(?:Q(?:uestion)?|प्रश्न)\s*([0-9]+)/i);
 
-    // ── Collect multi-line question body ─────────────────────────────────────
-    // Lines between the Q-marker and the first option/answer may contain:
-    //   • Statement lines  (कथन I: …, कथन II: …, 1. …, 2. …)
-    //   • Intro context    (निम्नलिखित कथनों पर विचार कीजिए:)
-    //   • Closing question (उपर्युक्त में से कौन-सा/से …?)
-    // All of them belong to the question body — collect them here.
-    // A line is treated as an MCQ option only when its content is ≤100 chars.
     // Detect if this question is a Match Column (सूची / सुमेलित) question
     const kootIdx = lines.findIndex(l => /^(?:\*{0,2}\s*)?(?:कूट\b|Codes?\b|दिए\s*गए\s*कूट|उपर्युक्त\s*कूट|सही\s*कूट)/i.test(l));
     const isMatchQuestion = kootIdx !== -1 || /(?:सूची[- ]?[I1]|List[- ]?[I1]|खण्ड\s*['"‘]?[अAab]|Khand\s*['"‘]?[अAab]|सुमेलित|सुमेल\s+करें|सही\s+जोड़ी|मिलान|Match\s+the\s+column|Match\s+the\s+following)/i.test(block);
 
     const isOptionLine = (l: string, idx: number) => {
+        // Match list header lines or list lines are NEVER MCQ options
+        if (/^(?:(?:सूची|List)[- ]*(?:I(?![I\w])|II|1|2\b)|खण्ड\s*['"‘]?[अबAB]|Khand\s*['"‘]?[अबAB])(?:\s*\([^)]*\))?\s*[:：\-.]/i.test(l)) return false;
         // If there's an explicit koot marker, lines before or on it are NOT MCQ options
         if (kootIdx !== -1 && idx <= kootIdx) return false;
         // Two columns separated by pipe, dash, tabs or multiple spaces are match rows, NOT options
@@ -257,9 +249,9 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
                 return false;
             }
         }
-        return /^\s*\*?\s*(?:\([A-D]\)|[A-D])\s*(?:[\).:\-])?\s*(.+)/i.test(l);
+        return /^\s*\*?\s*(?:\(([A-Da-d\u0915-\u0918])\)|\[([A-Da-d\u0915-\u0918])\]|([A-Da-d\u0915-\u0918]))\s*(?:[\).:\-])?\s+(.+)/i.test(l);
     };
-    // Also handles **सही उत्तर: (bold markdown prefix used in some paste formats)
+
     const isAnswerLine = (l: string) =>
       /^(?:\*{1,2}\s*)?(?:(?:Correct\s+)?Answer|Ans|सही\s*उत्तर|उत्तर)\s*[:：=\-]/i.test(l)
       || /^✅\s*Correct\s+Answer\s*[:：=\-]/i.test(l);
@@ -273,7 +265,7 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
             break;
         }
         extraBodyLines.push(lines[i]);
-        bodyStart = i + 1; // will be reset each iteration; final value = past last extra line
+        bodyStart = i + 1;
     }
     if (extraBodyLines.length > 0) {
         questionText = questionText + '\n' + extraBodyLines.join('\n');
@@ -281,24 +273,27 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
 
     // Collect option lines
     const optionMap: Record<number, string> = {};
-    const starCorrects: number[] = []; // from *A) style
+    const starCorrects: number[] = [];
     let answerLine = '';
     let explanationLines: string[] = [];
     let collectingExplanation = false;
 
+    const HINDI_TO_OPT: Record<string, string> = { 'क': 'A', 'ख': 'B', 'ग': 'C', 'घ': 'D' };
+
     for (let i = bodyStart; i < lines.length; i++) {
         const line = lines[i];
 
-        // Option lines: *A) / *A: / A) / A. / A:
+        // Option lines: *A) / *A: / A) / A. / A: / (A) / [A] / क) / (ख)
         const optionMatch = line.match(
-          /^\s*(\*?)\s*(?:\(([A-D])\)|([A-D]))\s*(?:[\).:\-])?\s*(.+)/i,
+          /^\s*(\*?)\s*(?:\(([A-Da-d\u0915-\u0918])\)|\[([A-Da-d\u0915-\u0918])\]|([A-Da-d\u0915-\u0918]))\s*(?:[\).:\-])?\s*(.+)/i,
         );
         if (optionMatch && !collectingExplanation) {
             const isCorrect = optionMatch[1] === '*';
-            const optionLetter = (optionMatch[2] || optionMatch[3]).toUpperCase();
-            const idx = optionLetter.charCodeAt(0) - 65;
+            let letter = (optionMatch[2] || optionMatch[3] || optionMatch[4]).toUpperCase();
+            if (HINDI_TO_OPT[letter]) letter = HINDI_TO_OPT[letter];
+            const idx = letter.charCodeAt(0) - 65;
             if (idx >= 0 && idx < 4) {
-                optionMap[idx] = optionMatch[4].trim();
+                optionMap[idx] = optionMatch[5].trim();
                 if (isCorrect) starCorrects.push(idx);
             }
             continue;
@@ -313,28 +308,38 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
         // Explanation line: Explanation: / Exp: / व्याख्या:
         if (/^(?:Explanation|Exp|व्याख्या)\s*[:：=\-]/i.test(line)) {
             collectingExplanation = true;
-            const expText = line.replace(/^(?:Explanation|Exp|व्याख्या)\s*[:：=\-]\s*/i, '').trim();
+            let expText = line.replace(/^(?:Explanation|Exp|व्याख्या)\s*[:：=\-]\s*/i, '').trim();
+            // Clean any trailing conversational text before next question
+            expText = expText.replace(/(?:ye\s+\d+\s+question|तालिका\s+में\s+दिए\s+गए|यहाँ\s+\d+\s+प्रश्न)[^\n]*$/i, '').trim();
             if (expText) explanationLines.push(expText);
             continue;
         }
 
         if (collectingExplanation) {
-            explanationLines.push(line);
+            const cleanLine = line.replace(/(?:ye\s+\d+\s+question|तालिका\s+में\s+दिए\s+गए|यहाँ\s+\d+\s+प्रश्न)[^\n]*$/i, '').trim();
+            if (cleanLine) explanationLines.push(cleanLine);
         }
     }
 
     const options = [optionMap[0]||'', optionMap[1]||'', optionMap[2]||'', optionMap[3]||''].filter((_, i) => optionMap[i] !== undefined);
-    // Need at least 2 options
     if (Object.keys(optionMap).length < 2) return null;
 
-    // Determine correct answer: star style takes priority, else Ans: line
     let correctAnswer: number | undefined;
     if (starCorrects.length > 0) {
         correctAnswer = starCorrects[0];
     } else if (answerLine) {
-    const answerLetterMatch = answerLine.match(/^(?:Option\s*)?[\(\[]?([A-D])(?:[\)\].:\s]|$)/i);
-        if (answerLetterMatch) {
-            correctAnswer = ['A', 'B', 'C', 'D'].indexOf(answerLetterMatch[1].toUpperCase());
+        const rawAns = answerLine.trim();
+        let letter = '';
+        const hindiMatch = rawAns.match(/[\(\[]?([क-घ])[\)\]]?/);
+        if (hindiMatch && HINDI_TO_OPT[hindiMatch[1]]) {
+          letter = HINDI_TO_OPT[hindiMatch[1]];
+        } else {
+          const letterMatch = rawAns.match(/(?:Option\s*)?[\(\[]?([A-D])(?:[\)\].:\s]|$)/i);
+          if (letterMatch) letter = letterMatch[1].toUpperCase();
+        }
+
+        if (letter) {
+            correctAnswer = ['A', 'B', 'C', 'D'].indexOf(letter);
         } else {
             const clean = answerLine.trim();
             const allOpts = [0, 1, 2, 3].map(index => optionMap[index] || '').filter(Boolean);
@@ -389,18 +394,14 @@ export function parseMCQText(text: string): { questions: MCQItem[], notes: {titl
     cleanText = cleanText.slice(0, start) + cleanText.slice(end);
   }
 
-  // ── Detect if text contains simple Q1./Q2. or **प्रश्न 1.** format ──────
-  const hasSimpleFormat = /^\s*(?:\*{0,2}\s*(?:Q(?:uestion)?\s*\d*\s*[:.)-]|प्रश्न\s*\d+\s*[:.)-])|<TOPIC:)/im.test(cleanText);
+  // ── Detect if text contains simple Q1./Q2., **प्रश्न 1.** or numbered format ──────
+  const hasSimpleFormat = /^\s*(?:\*{0,2}\s*(?:Q(?:uestion|ue|ues|stn)?\s*[:.\-]?\s*\d+|प्रश्न(?:\s*संख्या|\s*सं|\s*क्र)?\s*[:.\-]?\s*\d+|प्र\s*[:.]\s*\d+|\(?\d{1,4}\)?[\.\:\-]\s+)|<TOPIC:|<PASSAGE>|\[गद्यांश\]|गद्यांश\s*[:：]|पैसेज\s*[:：])/im.test(cleanText)
+    || /(?:(?:Correct\s+)?Answer|Ans|सही\s*उत्तर|उत्तर)\s*[:：=\-]/i.test(cleanText);
 
   if (hasSimpleFormat) {
     // ── SIMPLE FORMAT PARSER ─────────────────────────────────────────────────
     // Split by <TOPIC: ...> first to get topic sections
-    const topicSplitRegex = /<TOPIC:\s*(.*?)>/gi;
     const topicParts: { topic: string; content: string }[] = [];
-
-    let lastIndex = 0;
-    let currentTopic = 'General';
-    let match: RegExpExecArray | null;
 
     // Find all TOPIC tags and split content
     const topicMatches: { index: number; topic: string }[] = [];
@@ -428,19 +429,124 @@ export function parseMCQText(text: string): { questions: MCQItem[], notes: {titl
       }
     }
 
-    // For each topic section, split by Q1. / Q2. / प्रश्न 1. markers and parse each block
-    for (const { topic, content } of topicParts) {
-      // Split by Q<number>. or Q<number>) or **प्रश्न <number>: markers
-      const qBlocks = content.split(/(?=^\s*\*{0,2}\s*(?:Q(?:uestion)?\s*\d*\s*[:.)-]|प्रश्न\s*\d+\s*[:.)-]))/im).filter(b => b.trim());
+    interface ContentBlock {
+      type: 'passage' | 'question';
+      content: string;
+    }
 
-      for (const block of qBlocks) {
-        const trimmed = block.trim();
+    const splitContentIntoBlocks = (text: string): ContentBlock[] => {
+      const lines = text.split('\n');
+      const blocks: ContentBlock[] = [];
+      let currentLines: string[] = [];
+      let currentType: 'passage' | 'question' = 'question';
+      let hasSeenOptions = false;
+      let hasSeenAnswer = false;
+
+      const isOption = (l: string) => /^\s*(\*?)\s*(?:\(([A-Da-d\u0915-\u0918])\)|\[([A-Da-d\u0915-\u0918])\]|([A-Da-d\u0915-\u0918]))\s*(?:[\).:\-])?\s+(.+)/i.test(l);
+      const isAnswer = (l: string) => /^(?:\*{1,2}\s*)?(?:(?:Correct\s+)?Answer|Ans|सही\s*उत्तर|उत्तर)\s*[:：=\-]/i.test(l) || /^✅/i.test(l);
+      const isExplicitQ = (l: string) => /^\s*\*{0,2}\s*(?:Q(?:uestion|ue|ues|stn)?\s*[:.\-]?\s*\d+|प्रश्न(?:\s*संख्या|\s*सं|\s*क्र)?\s*[:.\-]?\s*\d+|प्र\s*[:.]\s*\d+)/i.test(l);
+      const isPassageHeader = (l: string) => /^(?:<PASSAGE>|\[गद्यांश\]|\[CASE_STUDY\]|\[पैसेज\]|गद्यांश\s*[:：]|पैसेज\s*[:：]|अपठित\s+गद्यांश\s*[:：]|निर्देश\s*[:：][^\n]*(?:गद्यांश|पैसेज)|Passage\s*[:：]|Comprehension\s*[:：]|Case\s*Study\s*[:：])/i.test(l);
+      const isBareNumberQ = (l: string) => {
+        const m = l.match(/^\s*\*{0,2}\s*(?:\(?\s*(\d{1,4})\s*[\.\)\:\-]\s*|\[\s*(\d{1,4})\s*\]\s*)/);
+        if (!m) return null;
+        return parseInt(m[1] || m[2], 10);
+      };
+
+      const flush = () => {
+        if (currentLines.length > 0) {
+          const content = currentLines.join('\n').trim();
+          if (content) {
+            blocks.push({ type: currentType, content });
+          }
+          currentLines = [];
+          hasSeenOptions = false;
+          hasSeenAnswer = false;
+          currentType = 'question';
+        }
+      };
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          if (currentLines.length > 0) currentLines.push(line);
+          continue;
+        }
+
+        if (isPassageHeader(trimmed)) {
+          flush();
+          currentType = 'passage';
+          currentLines.push(line);
+          continue;
+        }
+
+        if (isExplicitQ(trimmed)) {
+          flush();
+          currentType = 'question';
+          currentLines.push(line);
+          continue;
+        }
+
+        const num = isBareNumberQ(trimmed);
+        if (num !== null) {
+          const isStart = currentLines.length === 0 || hasSeenAnswer || hasSeenOptions || num > 5;
+          if (isStart) {
+            flush();
+            currentType = 'question';
+            currentLines.push(line);
+            continue;
+          }
+        }
+
+        if (isOption(trimmed)) hasSeenOptions = true;
+        if (isAnswer(trimmed)) hasSeenAnswer = true;
+
+        currentLines.push(line);
+      }
+      flush();
+      return blocks;
+    };
+
+    let currentActivePassage = '';
+    let passageRemainingCount: number | null = null;
+
+    // For each topic section, split into question & passage blocks
+    for (const { topic, content } of topicParts) {
+      let cleanTopic = topic;
+      const topicPassageMatch = topic.match(/^(.*?)(?:गद्यांश|Passage|पैसेज)\s*[:：\-]\s*([\s\S]+)$/i);
+      if (topicPassageMatch) {
+        cleanTopic = topicPassageMatch[1].trim() || 'General';
+        currentActivePassage = topicPassageMatch[2].trim();
+        passageRemainingCount = 5;
+      }
+
+      const blocks = splitContentIntoBlocks(content);
+
+      for (const block of blocks) {
+        if (block.type === 'passage') {
+          const rawPassage = block.content;
+          const rangeMatch = rawPassage.match(/(?:प्रश्न|Q(?:uestion)?)\s*(?:संख्या|सं)?\s*(\d+)\s*(?:से|to|-)\s*(\d+)/i)
+            || rawPassage.match(/\((\d+)\s*(?:से|to|-)\s*(\d+)\)/i);
+          if (rangeMatch) {
+            const startQ = parseInt(rangeMatch[1], 10);
+            const endQ = parseInt(rangeMatch[2], 10);
+            if (endQ >= startQ) {
+              passageRemainingCount = endQ - startQ + 1;
+            }
+          } else {
+            passageRemainingCount = 5;
+          }
+
+          currentActivePassage = rawPassage
+            .replace(/^(?:<PASSAGE>|\[गद्यांश\]|\[CASE_STUDY\]|\[पैसेज\]|गद्यांश\s*[:：]|पैसेज\s*[:：]|अपठित\s+गद्यांश\s*[:：]|निर्देश\s*[:：][^\n]*(?:गद्यांश|पैसेज)|Passage\s*[:：]|Comprehension\s*[:：]|Case\s*Study\s*[:：])\s*/i, '')
+            .replace(/<\/PASSAGE>|\[\/गद्यांश\]|\[\/CASE_STUDY\]|\[\/पैसेज\]$/i, '')
+            .trim();
+          continue;
+        }
+
+        let trimmed = block.content.trim();
         if (!trimmed) continue;
 
-        // Skip if this block doesn't start with Q<number> or (optional **) प्रश्न <number>
-        if (!/^\*{0,2}\s*(?:Q(?:uestion)?\s*\d*\s*[:.)-]|प्रश्न\s*\d+\s*[:.)-])/i.test(trimmed)) continue;
-
-        const parsed = parseSimpleFormatBlock(trimmed, topic);
+        const parsed = parseSimpleFormatBlock(trimmed, cleanTopic);
         if (parsed && parsed.question && parsed.options && parsed.options.length >= 2 && parsed.correctAnswer !== undefined) {
           // Multi-statement extraction
           const statementData = extractStatements(parsed.question);
@@ -449,9 +555,30 @@ export function parseMCQText(text: string): { questions: MCQItem[], notes: {titl
             parsed.question = statementData.cleanedQuestion;
           }
 
+          // If question contains inline passage, extract it
+          const inlinePassage = extractCaseStudy(parsed.question);
+          if (inlinePassage?.passage) {
+            parsed.passage = inlinePassage.passage;
+            currentActivePassage = inlinePassage.passage;
+            passageRemainingCount = 5;
+            if (inlinePassage.cleanedQuestion) {
+              parsed.question = inlinePassage.cleanedQuestion;
+            }
+          } else if (!parsed.passage && currentActivePassage) {
+            // Attach active passage
+            parsed.passage = currentActivePassage;
+            if (passageRemainingCount !== null) {
+              passageRemainingCount--;
+              if (passageRemainingCount <= 0) {
+                currentActivePassage = '';
+                passageRemainingCount = null;
+              }
+            }
+          }
+
           // 8 Competition Question Types Detection & Enrichment
           const detected = detectQuestionType(parsed);
-          parsed.questionType = detected.type;
+          parsed.questionType = parsed.passage ? 'CASE_STUDY' : detected.type;
           if (detected.assertionReason) {
             parsed.assertion = detected.assertionReason.assertion;
             parsed.reason = detected.assertionReason.reason;
@@ -468,7 +595,7 @@ export function parseMCQText(text: string): { questions: MCQItem[], notes: {titl
               parsed.question = cleanStem;
             }
           }
-          if (detected.caseStudy?.passage) {
+          if (detected.caseStudy?.passage && !parsed.passage) {
             parsed.passage = detected.caseStudy.passage;
             if (detected.caseStudy.cleanedQuestion) {
               parsed.question = detected.caseStudy.cleanedQuestion;

@@ -150,9 +150,10 @@ export const QUESTION_TYPES_CONFIG: Record<MCQQuestionType, QuestionTypeBadgeCon
 
 // ── Negative Keywords for Highlighting ──
 export const NEGATIVE_PATTERNS = [
-  /\b(?:नहीं\s+है|नहीं\s+हैं|नहीं\s+होता|नहीं\s+होती|नहीं\s+था|नहीं\s+थी|नहीं\s+किया|नहीं\s+पड़ता|नहीं\s+पाया|नहीं\s+बनता|नहीं\s+रहता)\b/gi,
-  /\b(?:असत्य\s+है|असत्य\s+कथन|गलत\s+है|गलत\s+कथन|त्रुटिपूर्ण\s+है|सही\s+नहीं\s+है|सत्य\s+नहीं\s+है|सुमेलित\s+नहीं\s+है)\b/gi,
-  /\b(?:NOT\s+correct|INCORRECT|NOT\s+true|FALSE|EXCEPT|NOT\s+a|NOT\s+an)\b/g,
+  /\b(?:नहीं\s+है|नहीं\s+हैं|नहीं\s+होता|नहीं\s+होती|नहीं\s+था|नहीं\s+थी|नहीं\s+किया|नहीं\s+पड़ता|नहीं\s+पाया|नहीं\s+बनता|नहीं\s+रहता|नहीं\s+गिरती|नहीं\s+मिला|नहीं\s+मिलता|नहीं\s+हो\s*सकता)\b/gi,
+  /\b(?:असत्य\s+है|असत्य\s+कथन|गलत\s+है|गलत\s+कथन|त्रुटिपूर्ण\s+है|सही\s+नहीं\s+है|सत्य\s+नहीं\s+है|सुमेलित\s+नहीं\s+है|सुमेलित\s+नहीं|सत्य\s+नहीं|सही\s+नहीं)\b/gi,
+  /\b(?:परिचित\s+नहीं\s+थे|परिचित\s+नहीं\s+था|प्रयुक्त\s+नहीं\s+होता|विद्यमान\s+नहीं|शामिल\s+नहीं|प्राप्त\s+नहीं\s+हुआ|स्थित\s+नहीं\s+है|संबंधित\s+नहीं\s+है)\b/gi,
+  /\b(?:NOT\s+correct|INCORRECT|NOT\s+true|FALSE|EXCEPT|NOT\s+a|NOT\s+an|NOT\s+matched)\b/gi,
   /\bNOT\b/g,
 ];
 
@@ -165,11 +166,11 @@ export function highlightNegativeInText(text: string): string {
   // Replace negative patterns with styled highlight span
   const patterns = [
     {
-      regex: /(कौन[- ]?सा\/से\s+)?(सही\s+नहीं\s+है|सत्य\s+नहीं\s+है|सुमेलित\s+नहीं\s+है|असत्य\s+है|गलत\s+है|त्रुटिपूर्ण\s+है)/gi,
+      regex: /(कौन[- ]?सा\/से\s+)?(सही\s+नहीं\s+है|सत्य\s+नहीं\s+है|सुमेलित\s+नहीं\s+है|सुमेलित\s+नहीं|असत्य\s+है|गलत\s+है|त्रुटिपूर्ण\s+है|सत्य\s+नहीं|सही\s+नहीं)/gi,
       highlight: '<span class="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md font-black bg-rose-500 text-white shadow-sm ring-1 ring-rose-400 text-xs sm:text-sm animate-pulse">$2</span>',
     },
     {
-      regex: /(नहीं\s+[\u0900-\u097F]+(?:\s+है|\s+हैं)?|नहीं\s+हैं|नहीं\s+है|नहीं\s+थी|नहीं\s+था|नहीं\s+करता|नहीं\s+करती|नहीं\s+होता|नहीं\s+होती)/gi,
+      regex: /(नहीं\s+[\u0900-\u097F]+(?:\s+है|\s+हैं)?|नहीं\s+हैं|नहीं\s+है|नहीं\s+थी|नहीं\s+था|नहीं\s+करता|नहीं\s+करती|नहीं\s+होता|नहीं\s+होती|नहीं\s+गिरती\s+है|नहीं\s+गिरती|प्राप्त\s+नहीं\s+हुआ|परिचित\s+नहीं\s+थे|प्रयुक्त\s+नहीं\s+होता|स्थित\s+नहीं\s+है|संबंधित\s+नहीं\s+है)/gi,
       highlight: '<span class="inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded-md font-black bg-rose-500 text-white shadow-sm ring-1 ring-rose-400 text-xs sm:text-sm animate-pulse">$1</span>',
     },
     {
@@ -194,8 +195,8 @@ export function highlightNegativeInText(text: string): string {
 export function hasNegativeTrap(text: string): boolean {
   if (!text) return false;
   return (
-    /(?:नहीं\s+[\u0900-\u097F]+(?:\s+है|\s+हैं)?|नहीं\s+है|नहीं\s+हैं|नहीं\s+होता|नहीं\s+था|नहीं\s+थी|असत्य|गलत\s+है|सुमेलित\s+नहीं|सत्य\s+नहीं|सही\s+नहीं)(?:\s|[?.!,।:]|$)/i.test(text) ||
-    /\b(?:NOT|INCORRECT|NOT\s+CORRECT|NOT\s+TRUE|FALSE|EXCEPT)\b/i.test(text)
+    /(?:नहीं\s+[\u0900-\u097F]+(?:\s+है|\s+हैं)?|नहीं\s+है|नहीं\s+हैं|नहीं\s+होता|नहीं\s+होती|नहीं\s+था|नहीं\s+थी|नहीं\s+गिरती|प्राप्त\s+नहीं\s+हुआ|परिचित\s+नहीं\s+थे|प्रयुक्त\s+नहीं|स्थित\s+नहीं|संबंधित\s+नहीं|असत्य|गलत\s+है|सुमेलित\s+नहीं|सत्य\s+नहीं|सही\s+नहीं)(?:\s|[?.!,।:]|$)/i.test(text) ||
+    /\b(?:NOT|INCORRECT|NOT\s+CORRECT|NOT\s+TRUE|FALSE|EXCEPT|NOT\s+MATCHED)\b/i.test(text)
   );
 }
 
@@ -210,22 +211,22 @@ export function extractAssertionReason(questionText: string, statements?: string
   const combined = (questionText + '\n' + (statements || []).join('\n')).replace(/<br\s*\/?>/gi, '\n');
 
   // Pattern 1: Assertion (A): ... Reason (R): ...
-  const match1 = combined.match(/(?:अभिकथन|Assertion|दावा)\s*(?:\([Aa]\)|-[Aa]|:|\b[Aa]\b)\s*[:：\-]?\s*([^\n\r]+?)(?=\n|\r|(?:कारण|Reason)\s*(?:\([Rr]\)|-[Rr]|:|\b[Rr]\b))/i);
-  const match2 = combined.match(/(?:कारण|Reason)\s*(?:\([Rr]\)|-[Rr]|:|\b[Rr]\b)\s*[:：\-]?\s*([^\n\r]+)/i);
+  const match1 = combined.match(/(?:अभिकथन|Assertion|दावा)\s*(?:\([Aa]\)|-[Aa]|:|\b[Aa]\b)\s*[:：\-]?\s*([\s\S]+?)(?=\n|\r|(?:कारण|Reason)\s*(?:\([Rr]\)|-[Rr]|:|\b[Rr]\b))/i);
+  const match2 = combined.match(/(?:कारण|Reason)\s*(?:\([Rr]\)|-[Rr]|:|\b[Rr]\b)\s*[:：\-]?\s*([\s\S]+?)(?=\n\s*(?:A\)|[A-D]\)|Option|विकल्प|उत्तर|Ans|✅)|$)/i);
 
   if (match1 && match2) {
-    const assertion = match1[1].trim();
-    const reason = match2[1].trim();
+    const assertion = match1[1].replace(/^(?:अभिकथन|Assertion|दावा)\s*(?:\([Aa]\)|-[Aa]|:|\b[Aa]\b)?\s*[:：\-]?\s*/i, '').trim();
+    const reason = match2[1].replace(/^(?:कारण|Reason)\s*(?:\([Rr]\)|-[Rr]|:|\b[Rr]\b)?\s*[:：\-]?\s*/i, '').trim();
     const cleaned = questionText
-      .replace(/(?:अभिकथन|Assertion|दावा)\s*(?:\([Aa]\)|-[Aa]|:|\b[Aa]\b)\s*[:：\-]?\s*[^\n\r]+/gi, '')
-      .replace(/(?:कारण|Reason)\s*(?:\([Rr]\)|-[Rr]|:|\b[Rr]\b)\s*[:：\-]?\s*[^\n\r]+/gi, '')
+      .replace(/(?:अभिकथन|Assertion|दावा)\s*(?:\([Aa]\)|-[Aa]|:|\b[Aa]\b)\s*[:：\-]?\s*[\s\S]+?(?=(?:कारण|Reason)|$)/gi, '')
+      .replace(/(?:कारण|Reason)\s*(?:\([Rr]\)|-[Rr]|:|\b[Rr]\b)\s*[:：\-]?\s*[\s\S]+?(?=\n\s*(?:A\)|[A-D]\)|Option|विकल्प|उत्तर|Ans)|$)/gi, '')
       .replace(/<br\s*\/?>/gi, ' ')
       .trim();
 
     return {
       assertion,
       reason,
-      cleanedQuestion: cleaned || 'नीचे दिए गए अभिकथन और कारण पर विचार कीजिए:',
+      cleanedQuestion: cleaned || 'नीचे दिए गए अभिकथन और कारण पर विचार कीजिए तथा सही विकल्प चुनिए:',
     };
   }
 
@@ -258,57 +259,67 @@ export function cleanMatchQuestionStem(questionText: string): string {
   if (!questionText) return '';
   const lines = questionText.replace(/<br\s*\/?>/gi, '\n').split('\n');
   const kept: string[] = [];
-  let inMatchArea = false;
 
   const isInstruction = (str: string) =>
     /(?:सुमेलित|सुमेल\s+करें|सही\s+जोड़ी|मिलान|Match\s+the|दिए\s*गए\s*कूट\s*से|उत्तर\s*चुनिए)/i.test(str) ||
     /(?:(?:सूची|List)[- ]*[I1].*?को.*?(?:सूची|List)[- ]*[II2])/i.test(str);
 
-  const isList1 = (str: string) => /(?:(?:सूची|List)[- ]*(?:I(?![I\w])|1\b)|खण्ड\s*['"‘]?[अA]|Khand\s*['"‘]?[अA])/i.test(str);
-  const isList2 = (str: string) => /(?:(?:सूची|List)[- ]*(?:II|2\b)|खण्ड\s*['"‘]?[बB]|Khand\s*['"‘]?[बB])/i.test(str);
-  const isPairLine = (str: string) => /(?:\||—|\t| {2,})\s*(?:(?:\(?([1-4a-dA-DIVXivx]+)\)?[\.\:\-]?\s*)?[^|—\t]{2,})$/.test(str);
+  const isListLine = (str: string) =>
+    /^(?:(?:सूची|List)[- ]*(?:I(?![I\w])|II|1|2\b)|खण्ड\s*['"‘]?[अबAB]|Khand\s*['"‘]?[अबAB])(?:\s*\([^)]*\))?\s*[:：\-.]/i.test(str);
+
+  const isPairLine = (str: string) =>
+    /(?:\||—|\t| {2,})\s*(?:(?:\(?([1-4a-dA-DIVXivx]+)\)?[\.\:\-]?\s*)?[^|—\t]{2,})$/.test(str);
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line) continue;
 
-    // Header line: "सूची-I (विटामिन) | सूची-II (कमी से होने वाला रोग)"
-    if (isList1(line) && isList2(line) && (line.includes('|') || line.includes('—') || line.includes('\t') || /\s{2,}/.test(line))) {
-      inMatchArea = true;
+    // Remove list lines like "सूची-I: a. हड़प्पा, b. मोहनजोदड़ो..."
+    if (isListLine(line)) {
       continue;
     }
-    // Pair row: "a. विटामिन A | 1. स्कर्वी"
+    // Remove table/pair header or rows: "सूची-I (विटामिन) | सूची-II (रोग)" or "a. विटामिन A | 1. स्कर्वी"
     if (isPairLine(line)) {
-      inMatchArea = true;
       continue;
     }
-    // Single list header: "सूची-I" or "खण्ड 'अ'"
-    if ((isList1(line) || isList2(line)) && (line.length <= 40 || line.includes('|') || !line.includes('को'))) {
-      inMatchArea = true;
-      continue;
-    }
-
-    if (isInstruction(line)) {
-      kept.push(line);
-      continue;
-    }
-    // Stop at koot / codes
+    // Remove koot / codes marker line
     if (/^(?:कूट\b|Codes?\b|दिए\s*गए\s*कूट|उपर्युक्त\s*कूट)/i.test(line)) {
-      inMatchArea = true;
       continue;
     }
-    // If in match area and line starts with a list key
-    if (inMatchArea && /^(?:[a-dA-D1-4IVXivx][\.\)\:\-]\s*)/i.test(line)) {
+    // Single list header without instruction: "सूची-I" or "खण्ड 'अ'"
+    if (/^(?:(?:सूची|List)[- ]*(?:I(?![I\w])|II|1|2\b)|खण्ड\s*['"‘]?[अबAB]|Khand\s*['"‘]?[अबAB])(?:\s*\([^)]*\))?$/i.test(line)) {
+      continue;
+    }
+    // If line starts with match item key in match area: "a. हड़प्पा"
+    if (/^(?:[a-dA-D1-4IVXivx][\.\)\:\-]\s*)/i.test(line) && !isInstruction(line)) {
       continue;
     }
 
-    if (!inMatchArea) {
-      kept.push(line);
-    }
+    kept.push(line);
   }
 
   const result = kept.join('\n').trim();
   return result || questionText;
+}
+
+/**
+ * Parses sub-items from an inline string such as:
+ * "a. हड़प्पा, b. मोहनजोदड़ो, c. कालीबंगन, d. लोथल"
+ * or "1. सिन्धु, 2. रावी, 3. भोगवा, 4. घग्घर"
+ */
+function parseInlineMatchItems(line: string): { key: string; text: string }[] {
+  // Strip header part like "सूची-I (पुरातात्विक स्थल):" or "सूची-I:" or "खण्ड 'अ':"
+  const content = line.replace(/^(?:(?:सूची|List)[- ]*(?:I(?![I\w])|II|1|2\b)|खण्ड\s*['"‘]?[अबAB]|Khand\s*['"‘]?[अबAB])(?:\s*\([^)]*\))?\s*[:：\-.]?\s*/i, '').trim();
+  const regex = /(?:\(?([a-dA-D1-4IVXivx]+)\)?[\.\:\-]?\s*)([^,;|\n]+?)(?=(?:[,;|\n]\s*(?:\(?[a-dA-D1-4IVXivx]+\)?[\.\:\-]?\s*))|$)/g;
+  const items: { key: string; text: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(content)) !== null) {
+    const text = m[2]?.trim().replace(/\s*(?:कूट|Codes?)\s*[:：/]?.*$/i, '').trim();
+    if (text) {
+      items.push({ key: m[1], text });
+    }
+  }
+  return items;
 }
 
 /**
@@ -339,28 +350,59 @@ export function extractMatchColumns(questionText: string, statements?: string[])
     }
   }
 
-  // Strategy 1: Look for pair lines like: "a. विटामिन A | 1. स्कर्वी" or "a. विटामिन A   1. स्कर्वी" or "| a. विटामिन A | 1. स्कर्वी |"
-  for (const line of lines) {
-    const cleanLine = line.replace(/^\||\|$/g, '').trim();
-    const pairMatch = cleanLine.match(/^(?:(?:\(?([a-dA-D1-4])\)?[\.\:\-]?\s*)?([^|—\t]{2,}))\s*(?:\||—|\t| {2,})\s*(?:(?:\(?([1-4a-dA-DIVXivx]+)\)?[\.\:\-]?\s*)?([^|—\t]{2,}))$/);
-    if (pairMatch) {
-      const leftKey = pairMatch[1] || '';
-      const leftText = pairMatch[2]?.trim() || '';
-      const rightKey = pairMatch[3] || '';
-      const rightText = pairMatch[4]?.trim() || '';
+  // ── Strategy 1: Inline lists on single lines ──
+  // E.g.: "सूची-I: a. हड़प्पा, b. मोहनजोदड़ो, c. कालीबंगन, d. लोथल"
+  //       "सूची-II: 1. सिन्धु, 2. रावी, 3. भोगवा, 4. घग्घर"
+  const list1InlineLine = lines.find(l => isList1(l) && !/(?:को|सुमेलित|Match\s+the|जोड़ी|मिलाइए)/i.test(l) && !l.includes('|'));
+  const list2InlineLine = lines.find(l => isList2(l) && !/(?:को|सुमेलित|Match\s+the|जोड़ी|मिलाइए)/i.test(l) && !l.includes('|'));
 
-      if (leftText && rightText && !/(?:सूची|List|खण्ड|Khand|कूट|Code)/i.test(leftText)) {
+  if (list1InlineLine && list2InlineLine) {
+    const t1Match = list1InlineLine.match(/(?:(?:सूची|List)[- ]*(?:I(?![I\w])|1\b)|खण्ड\s*['"‘]?[अA]|Khand\s*['"‘]?[अA])\s*(?:\((.*?)\))?/i);
+    if (t1Match && t1Match[1]) list1Title = `सूची-I (${t1Match[1].trim()})`;
+
+    const t2Match = list2InlineLine.match(/(?:(?:सूची|List)[- ]*(?:II|2\b)|खण्ड\s*['"‘]?[बB]|Khand\s*['"‘]?[बB])\s*(?:\((.*?)\))?/i);
+    if (t2Match && t2Match[1]) list2Title = `सूची-II (${t2Match[1].trim()})`;
+
+    const leftInlineItems = parseInlineMatchItems(list1InlineLine);
+    const rightInlineItems = parseInlineMatchItems(list2InlineLine);
+
+    if (leftInlineItems.length >= 2 && rightInlineItems.length >= 2) {
+      const count = Math.min(leftInlineItems.length, rightInlineItems.length);
+      for (let i = 0; i < count; i++) {
         rows.push({
-          leftKey,
-          leftText,
-          rightKey,
-          rightText,
+          leftKey: leftInlineItems[i].key.toUpperCase(),
+          leftText: leftInlineItems[i].text,
+          rightKey: rightInlineItems[i].key,
+          rightText: rightInlineItems[i].text,
         });
       }
     }
   }
 
-  // Strategy 2: Check if statements look like pairs: "a. X - 1. Y" or "A. X — 1. Y"
+  // ── Strategy 2: Pair lines like: "a. विटामिन A | 1. स्कर्वी" or "a. विटामिन A   1. स्कर्वी" ──
+  if (rows.length === 0) {
+    for (const line of lines) {
+      const cleanLine = line.replace(/^\||\|$/g, '').trim();
+      const pairMatch = cleanLine.match(/^(?:(?:\(?([a-dA-D1-4])\)?[\.\:\-]?\s*)?([^|—\t]{2,}))\s*(?:\||—|\t| {2,})\s*(?:(?:\(?([1-4a-dA-DIVXivx]+)\)?[\.\:\-]?\s*)?([^|—\t]{2,}))$/);
+      if (pairMatch) {
+        const leftKey = pairMatch[1] || '';
+        const leftText = pairMatch[2]?.trim() || '';
+        const rightKey = pairMatch[3] || '';
+        const rightText = pairMatch[4]?.trim() || '';
+
+        if (leftText && rightText && !/(?:सूची|List|खण्ड|Khand|कूट|Code)/i.test(leftText)) {
+          rows.push({
+            leftKey,
+            leftText,
+            rightKey,
+            rightText,
+          });
+        }
+      }
+    }
+  }
+
+  // ── Strategy 3: Statements look like pairs: "a. X - 1. Y" or "A. X — 1. Y" ──
   if (rows.length === 0 && statements && statements.length >= 2) {
     for (const stmt of statements) {
       const m = stmt.match(/^(?:\(?([a-dA-D])\)?[\.\:\-]?\s*)?([^—\-:]{2,})\s*(?:[—\-:]|\|)\s*(?:\(?([1-4IVXivx]+)\)?[\.\:\-]?\s*)?(.+)$/);
@@ -375,7 +417,7 @@ export function extractMatchColumns(questionText: string, statements?: string[])
     }
   }
 
-  // Strategy 3: Check for two vertical blocks (Khand A items followed by Khand B items)
+  // ── Strategy 4: Two vertical blocks (Khand A items followed by Khand B items) ──
   if (rows.length === 0) {
     const leftItems: { key: string; text: string }[] = [];
     const rightItems: { key: string; text: string }[] = [];
@@ -402,6 +444,11 @@ export function extractMatchColumns(questionText: string, statements?: string[])
         } else if (line.length <= 30 && !line.includes('को')) {
           list1Title = line;
         }
+        // If this line also has inline items, parse them!
+        const inline = parseInlineMatchItems(line);
+        if (inline.length > 0) {
+          leftItems.push(...inline);
+        }
         continue;
       }
       if (isList2(line) && !line.includes('|')) {
@@ -411,6 +458,11 @@ export function extractMatchColumns(questionText: string, statements?: string[])
           list2Title = `सूची-II (${tMatch[1].trim()})`;
         } else if (line.length <= 30 && !line.includes('को')) {
           list2Title = line;
+        }
+        // If this line also has inline items, parse them!
+        const inline = parseInlineMatchItems(line);
+        if (inline.length > 0) {
+          rightItems.push(...inline);
         }
         continue;
       }
@@ -493,23 +545,103 @@ export function extractDataSufficiency(questionText: string, options?: string[])
   return isDsTrigger || Boolean(optionsHaveSufficiency);
 }
 
-export function extractCaseStudy(questionText: string): { passage?: string; cleanedQuestion: string } | null {
+export function extractCaseStudy(questionText: string, explicitCaseStudy = false): { passage?: string; cleanedQuestion: string } | null {
   if (!questionText) return null;
-  const normalized = questionText.replace(/<br\s*\/?>/gi, '\n');
-  const passageMatch = normalized.match(/(?:<PASSAGE>|\[गद्यांश\]|\[CASE_STUDY\]|गद्यांश\s*[:：])([\s\S]+?)(?:<\/PASSAGE>|\[\/गद्यांश\]|\[\/CASE_STUDY\]|\n\s*(?:प्रश्न|Q(?:uestion)?\s*[:\.]?))/i);
-  if (passageMatch) {
-    const passage = passageMatch[1].trim();
-    let cleaned = questionText
-      .replace(/<PASSAGE>[\s\S]*?<\/PASSAGE>/gi, '')
-      .replace(/\[गद्यांश\][\s\S]*?\[\/गद्यांश\]/gi, '')
-      .replace(/\[CASE_STUDY\][\s\S]*?\[\/CASE_STUDY\]/gi, '')
-      .replace(/^(?:<br\s*\/?>|\s)+|(?:<br\s*\/?>|\s)+$/gi, '')
-      .trim();
-    return {
-      passage,
-      cleanedQuestion: cleaned || questionText,
-    };
+  const normalized = questionText
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+  const passageQuestionLead = /(?:प्रश्न\s*[:：.]?|Q(?:uestion)?\s*[:.]?|(?:उपर्युक्त|उपरोक्त|इस|दिए गए)\s+गद्यांश|गद्यांश\s+(?:के\s+(?:अनुसार|आधार)|को\s*पढ़कर)|(?:based on|according to)\s+(?:the\s+)?passage)/i;
+  const marker = /<PASSAGE>|\[गद्यांश\]|\[CASE_STUDY\]|\[पैसेज\]|गद्यांश\s*[:：.\-]?|पैसेज\s*[:：.\-]?|अपठित\s+गद्यांश\s*[:：.\-]?|निर्देश[^\n]*(?:गद्यांश|पैसेज|Passage)|Passage\s*[:：.\-]?|Comprehension\s*[:：.\-]?|Case\s*Study\s*[:：.\-]?/i.exec(normalized);
+
+  if (marker) {
+    const passageStart = marker.index + marker[0].length;
+    const afterMarker = normalized.slice(passageStart);
+    const boundaries = [
+      /<\/PASSAGE>|\[\/गद्यांश\]|\[\/CASE_STUDY\]|\[\/पैसेज\]/i,
+      /\n\s*(?:प्रश्न\s*[:：.]?\s*|Q(?:uestion)?\s*[:.]?\s*)/i,
+      /\n[ \t]*(?:\n[ \t]*)?(?=(?:उपर्युक्त|उपरोक्त|इस|दिए गए)\s+गद्यांश|गद्यांश\s+(?:के\s+(?:अनुसार|आधार)|को\s*पढ़कर)|(?:based on|according to)\s+(?:the\s+)?passage)/i,
+    ];
+    const boundaryMatches = boundaries
+      .map(pattern => pattern.exec(afterMarker))
+      .filter((match): match is RegExpExecArray => match !== null)
+      .sort((a, b) => a.index - b.index);
+    const boundary = boundaryMatches[0];
+
+    const cleanPassageText = (raw: string) =>
+      raw
+        .replace(/<\/PASSAGE>|\[\/गद्यांश\]|\[\/CASE_STUDY\]|\[\/पैसेज\]/gi, '')
+        .trim();
+
+    if (!boundary) {
+      // If no explicit boundary, check if last line/paragraph is a question stem
+      const lines = afterMarker.split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length > 1) {
+        const lastLineIdx = lines.length - 1;
+        const lastLine = lines[lastLineIdx];
+        const isQLine = /[?？]\s*$/.test(lastLine) || /(?:क्या|कौन|किसे|किसने|कहाँ|कब|क्यों|चुनिए|बताइए|सत्य|असत्य|उचित|सही विकल्प|उपर्युक्त|उपरोक्त|Which|What|Who|Where|When|Why|How)/i.test(lastLine);
+        if (isQLine) {
+          const passage = cleanPassageText(lines.slice(0, lastLineIdx).join('\n'));
+          const prefix = normalized.slice(0, marker.index).trim();
+          const cleanedQuestion = [prefix, lastLine].filter(Boolean).join('\n');
+          if (passage) {
+            return { passage, cleanedQuestion: cleanedQuestion || questionText };
+          }
+        }
+      }
+
+      // If entire afterMarker is the passage (e.g. standalone passage block before questions)
+      const fullPassage = cleanPassageText(afterMarker);
+      if (fullPassage.length >= 10) {
+        return {
+          passage: fullPassage,
+          cleanedQuestion: normalized.slice(0, marker.index).trim() || '',
+        };
+      }
+      return null;
+    }
+
+    const passage = cleanPassageText(afterMarker.slice(0, boundary.index));
+    const prefix = normalized.slice(0, marker.index).trim();
+    const suffix = afterMarker.slice(boundary.index + boundary[0].length).replace(/^[ \t]*<\/PASSAGE>|^[ \t]*\[\/गद्यांश\]/i, '').trim();
+    const cleanedQuestion = [prefix, suffix].filter(Boolean).join('\n');
+    if (passage) {
+      return {
+        passage,
+        cleanedQuestion: cleanedQuestion || questionText,
+      };
+    }
   }
+
+  const unmarkedBoundary = new RegExp(`\\n\\s*(?=${passageQuestionLead.source})`, 'i').exec(normalized);
+  if (unmarkedBoundary) {
+    const passage = normalized.slice(0, unmarkedBoundary.index).trim();
+    const cleanedQuestion = normalized.slice(unmarkedBoundary.index + unmarkedBoundary[0].length).trim();
+    if (passage && cleanedQuestion) {
+      return { passage, cleanedQuestion };
+    }
+  }
+
+  // Some imported questions store the passage and its question together as
+  // separate paragraphs without a <PASSAGE> marker or a passage field.
+  const paragraphs = normalized.split(/\n[ \t]*\n/);
+  const questionParagraphIndex = paragraphs.findIndex((paragraph, index) => {
+    if (index === 0) return false;
+    if (passageQuestionLead.test(paragraph.trim())) return true;
+    return explicitCaseStudy &&
+      index === paragraphs.length - 1 &&
+      paragraphs.slice(0, index).join('\n\n').trim().length >= 100 &&
+      /[?？]\s*$/.test(paragraph.trim());
+  });
+
+  if (questionParagraphIndex > 0) {
+    const passage = paragraphs.slice(0, questionParagraphIndex).join('\n\n').trim();
+    const cleanedQuestion = paragraphs.slice(questionParagraphIndex).join('\n\n').trim();
+    if (passage && cleanedQuestion) {
+      return { passage, cleanedQuestion };
+    }
+  }
+
   return null;
 }
 
@@ -567,7 +699,7 @@ export function detectQuestionType(q: Partial<MCQItem>): {
   const isDS = explicitType === 'DATA_SUFFICIENCY' || extractDataSufficiency(qText, options);
 
   // Check Case Study
-  const caseData = extractCaseStudy(qText);
+  const caseData = extractCaseStudy(qText, explicitType === 'CASE_STUDY');
   const isCase = explicitType === 'CASE_STUDY' || Boolean(q.passage) || caseData !== null || (
     /(?:गद्यांश\s*(?:को\s*पढ़कर|के\s*आधार\s*पर)|read\s+the\s+passage|case\s+study)/i.test(qText)
   );

@@ -29,54 +29,11 @@ import {
   CheckCheck,
   Award
 } from 'lucide-react';
-import { parseMCQText } from '../utils/mcqParser';
+import { parseMCQText, normalizeMcqPaste } from '../utils/mcqParser';
 import { saveMcqLesson, deleteMcqLesson, subscribeMcqLessons, saveSystemSettings } from '../firebase';
 import { CustomPracticeSetEntry, SubjectMcqPoolEntry, MCQItem } from '../types';
 import { hapticLight, hapticStrong } from '../utils/haptic';
 import McqQuestionDisplay from './McqQuestionDisplay';
-
-// ── Normalizer for dirty copied text ─────────────────────────────────────────
-function normalizeMcqPaste(raw: string): string {
-  let txt = raw;
-  txt = txt.replace(/\r\n/g, '\n');
-  txt = txt.replace(/^---+\s*$/gm, '');
-  txt = txt.replace(/^###\s+.+$/gm, '');
-  txt = txt.replace(/^[ \t]*(?:\*{1,2})?\s*(?:सही\s*उत्तर|उत्तर)\s*:\s*(?:\*{1,2})?\s*$/gm, '');
-  txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]\s*\n+\s*(?=\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?))/gi, '');
-  txt = txt.replace(/^\s*\[(?:[⚡🔥💡🎯⭐✨🏆⚠️🌟][^\]]*?|[^\]]{1,10})\]\s*/gm, '');
-  txt = txt.replace(/^\*\*\s*कूट\s*:?\s*\*?\*?\s*$/gm, '');
-  txt = txt.replace(/\*\*Q\s*(\d+)\s*[:.]\s*([\s\S]*?)\*\*/gi, (_m, n, q) =>
-    `**Question ${n}**\n❓ Question: ${q.trim()}`
-  );
-  txt = txt.replace(/\*\*\s*(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*([\s\S]*?)\*\*([^\n]*)/gi, (_m, n, q, rest) => {
-    const combined = (String(q).trim() + ' ' + String(rest).trim()).trim()
-      .replace(/\*\*$/, '').replace(/\s*\((?:Easy|Medium|Hard|आसान|मध्यम|कठिन)[^)]*\)\s*$/i, '').replace(/^\[.*?\]\s*/g, '').trim();
-    return `\n**Question ${n}**\n❓ Question: ${combined}`;
-  });
-  txt = txt.replace(/(?:^|\n)[ \t]*(?:\*\*\s*)?(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*/gi, (_m, n) => `\n**Question ${n}**\n❓ Question: `);
-  txt = txt.replace(/\*\*प्रश्न\s*[:：]?\*\*/gi, '__PRASHNA__');
-  txt = txt.replace(/\*\*Question\s*[:：]?\*\*/gi, '__PRASHNA__');
-  txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]\s*([^*]+?)\s*\*\*/gi,
-    (_m, val) => `\n✅ Correct Answer: ${String(val).trim()}`);
-  txt = txt.replace(/\*\*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]?\*\*\s*/gi, '✅ Correct Answer: ');
-  txt = txt.replace(/(?:^|\n)\s*(?:Ans(?:wer)?|सही\s*उत्तर|उत्तर)\s*[:：]\s*/gi, '\n✅ Correct Answer: ');
-  txt = txt.replace(/\*\*/g, '');
-  let qNum = 0;
-  txt = txt.replace(/__PRASHNA__\s*/g, () => { qNum += 1; return `\n**Question ${qNum}**\n❓ Question: `; });
-  const alreadySimpleFormat = /<TOPIC:/i.test(txt) || /^\s*Q\s*\d+[\.\)]/im.test(txt);
-  if (qNum === 0 && !txt.includes('**Question') && !txt.includes('❓') && !alreadySimpleFormat) {
-    const lines = txt.split('\n'); const out: string[] = []; let counter = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i]; const next = (lines[i + 1] || '').trim();
-      const looksLikeOptStart = /^\s*[A-Da-d1-4][\)\.]/i.test(next);
-      const isQLine = looksLikeOptStart && l.trim().length > 0 && !/✅|Correct Answer/i.test(l) && !/^\s*[A-D][\)\.]/i.test(l);
-      if (isQLine) { counter += 1; out.push(`**Question ${counter}**`); out.push(`❓ Question: ${l.trim().replace(/^Q?\d+[.)]\s*/i, '')}`); }
-      else { out.push(l); }
-    }
-    txt = out.join('\n');
-  }
-  return txt;
-}
 
 // ── AVAILABLE SUBJECT METADATA ───────────────────────────────────────────────
 export const SUBJECT_OPTIONS = [
@@ -333,7 +290,7 @@ export const AdminCompetitionMcqManager: React.FC<Props> = ({
     }
     const normalized = normalizeMcqPaste(poolPasteText);
     const parsed = parseMCQText(normalized);
-    setPoolParsedQuestions(parsed);
+    setPoolParsedQuestions(Array.isArray(parsed) ? parsed : (parsed?.questions || []));
   }, [poolPasteText]);
 
   // Subscribe to legacy Firestore lessons
@@ -466,7 +423,11 @@ export const AdminCompetitionMcqManager: React.FC<Props> = ({
     // Format questions back into pasteable text
     const textLines: string[] = [];
     pool.questions.forEach((q, i) => {
-      textLines.push(`Q${i + 1}. ${q.question}`);
+      if (q.passage?.trim()) {
+        textLines.push(`Q${i + 1}. <PASSAGE>`, q.passage.trim(), `</PASSAGE> ${q.question}`);
+      } else {
+        textLines.push(`Q${i + 1}. ${q.question}`);
+      }
       const optLabels = ['A', 'B', 'C', 'D'];
       q.options.forEach((opt, oi) => {
         textLines.push(`${optLabels[oi]}) ${opt}`);

@@ -31,6 +31,7 @@ interface CoachingMcq {
   statements?: string[];
   matchColumns?: MatchColumnData;
   questionType?: string;
+  passage?: string;
   correctAnswer?: number; correctAnswers?: number[]; explanation?: string;
 }
 interface CoachingPdf { id: string; title: string; url: string; }
@@ -86,6 +87,7 @@ function parseBulkMcq(text: string): CoachingMcq[] {
       if (statements && statements.length > 0) mcq.statements = statements;
       if (matchColumns) mcq.matchColumns = matchColumns;
       if (q.questionType || matchColumns) mcq.questionType = q.questionType || 'MATCH_COLUMN';
+      if (q.passage) mcq.passage = q.passage;
       if (q.explanation) mcq.explanation = q.explanation;
       return mcq;
     });

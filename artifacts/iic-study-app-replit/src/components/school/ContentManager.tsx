@@ -5,36 +5,9 @@ import {
 } from "../../school-firebase";
 import type { SchoolLesson, LessonMCQ } from "../../school-types";
 import { Plus, Trash2, Save, ChevronLeft, BookOpen, Edit3, FileText, Layers, CheckSquare, Eye, EyeOff, HelpCircle, Check, X, ChevronDown, ChevronUp, Upload, AlignLeft, ListChecks, Settings2, Star } from "lucide-react";
-import { parseMCQText } from "../../utils/mcqParser";
+import { parseMCQText, normalizeMcqPaste } from "../../utils/mcqParser";
 import { ChunkedNotesReader } from "../ChunkedNotesReader";
 import { DirectUploadButton } from "../DirectUploadButton";
-
-// ── MCQ paste normalizer (handles common Hindi/English formats) ────────────
-function normalizeMcqPaste(raw: string): string {
-  let txt = raw.replace(/\r\n/g, "\n");
-  txt = txt.replace(/^---+\s*$/gm, "");
-  txt = txt.replace(/^###\s+.+$/gm, "");
-  // Pattern: **सही उत्तर:\n**सही उत्तर:** B) ... → drop the first empty line
-  txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]\s*\n+\s*(?=\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?))/gi, '');
-  txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]\s*([^*]+?)\s*\*\*/gi, (_m, v) => `\n✅ Correct Answer: ${v.trim()}`);
-  txt = txt.replace(/\*\*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]?\*\*\s*/gi, "✅ Correct Answer: ");
-  txt = txt.replace(/(?:^|\n)\s*(?:Ans(?:wer)?|सही\s*उत्तर|उत्तर)\s*[:：]\s*/gi, "\n✅ Correct Answer: ");
-  txt = txt.replace(/\*\*\s*(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*([\s\S]*?)\*\*([^\n]*)/gi, (_m, n, q, rest) => {
-    const combined = (String(q).trim() + " " + String(rest).trim()).trim();
-    return `\n**Question ${n}**\n❓ Question: ${combined}`;
-  });
-  // Bare (non-bold) "प्रश्न 18:" / "Question 18:" markers — common when the AI
-  // only bolds the label, not the number, or skips bold entirely. Without this,
-  // numbered statement lines ("1. ...", "2. ...") that follow get mistaken for
-  // new question boundaries by the fallback heuristic below, chopping the
-  // statement-based question apart and dropping its statements.
-  txt = txt.replace(/(?:^|\n)[ \t]*(?:\*\*\s*)?(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*/gi, (_m, n) => `\n**Question ${n}**\n❓ Question: `);
-  txt = txt.replace(/\*\*(?:प्रश्न|Question)\s*[:：]?\*\*/gi, "__PRASHNA__");
-  txt = txt.replace(/\*\*/g, "");
-  let qNum = 0;
-  txt = txt.replace(/__PRASHNA__\s*/g, () => { qNum += 1; return `\n**Question ${qNum}**\n❓ Question: `; });
-  return txt;
-}
 
 interface Props {
   schoolId: string;

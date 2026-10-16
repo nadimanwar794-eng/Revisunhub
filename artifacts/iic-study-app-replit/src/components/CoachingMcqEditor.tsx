@@ -13,6 +13,7 @@ export interface CoachingMcqEditorItem {
   statements?: string[];
   matchColumns?: MatchColumnData;
   questionType?: MCQQuestionType;
+  passage?: string;
   options: string[];
   correctAnswer: number;
   explanation?: string;
@@ -59,6 +60,7 @@ function normalizeItem(item: any): CoachingMcqEditorItem {
     statements,
     matchColumns: matchColumns || undefined,
     questionType: item?.questionType || (matchColumns ? 'MATCH_COLUMN' : undefined),
+    passage: item?.passage || undefined,
     options: [...(item?.options || ['', '', '', '']), '', '', '', ''].slice(0, 4),
     correctAnswer: Number.isInteger(item?.correctAnswer) ? item.correctAnswer : 0,
     explanation: item?.explanation || '',

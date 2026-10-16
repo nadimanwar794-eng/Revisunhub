@@ -1,5 +1,6 @@
 import { MCQItem, ClassLevel, SystemSettings } from '../types';
 import { parseMCQText, extractStatements } from './mcqParser';
+import { detectQuestionType } from './questionTypeDetector';
 
 export interface SkipEntry {
   skipCount: number; // 1 = first skip, 2 = second skip, etc.
@@ -22,25 +23,61 @@ export interface OfficialMcqProgress {
   initialRoundCount?: number;
 }
 
-export const MAX_REATTEMPT_ROUNDS = 2; // 1 = 2nd Chance (1 min), 2 = 3rd & Final Chance (5 min)
+export const MAX_REATTEMPT_ROUNDS = 2; // 1 = 2nd Chance (2 min / 120s), 2 = 3rd & Final Chance (5 min / 300s)
 
 /**
- * Returns ladder timer for questions:
- * 0 skips (1st attempt) -> 30 sec
- * 1st skip re-attempt (2nd Chance) -> 60 sec (1 min)
- * 2nd skip re-attempt (3rd & Final Chance) -> 300 sec (5 min)
+ * Returns timer duration based on question type and chance round:
+ * - Initial attempt (Round 0 / 1st Chance):
+ *     - Type 1 (Direct MCQ): 30 seconds
+ *     - Other types (Type 2 to 8: Multi-Statement, Assertion-Reason, Match Columns, Chronological, Data Sufficiency, Case Study / Passage, Negative / NOT): 60 seconds (1 min)
+ * - 2nd Chance (Round 1 / 1st skip re-attempt): 120 seconds (2 min)
+ * - 3rd & Final Chance (Round 2 / 2nd skip re-attempt): 300 seconds (5 min)
  */
-export const getSkipDurationSeconds = (skipCount: number): number => {
-  if (skipCount <= 0) return 30;
-  if (skipCount === 1) return 60;
-  return 300;
+export const getQuestionTimerDurationSeconds = (
+  q?: any,
+  roundOrSkipCount: number = 0
+): number => {
+  // 2nd Chance: 2 minutes (120 seconds)
+  if (roundOrSkipCount === 1) return 120;
+  // 3rd & Final Chance: 5 minutes (300 seconds)
+  if (roundOrSkipCount >= 2) return 300;
+
+  // Initial attempt (Round 0 / 1st Chance):
+  if (!q) return 30;
+
+  let type = q.questionType;
+  if (!type && (q.question || q.questionText)) {
+    try {
+      const detected = detectQuestionType(q);
+      type = detected.type;
+    } catch {
+      // fallback
+    }
+  }
+
+  // Type 1: Direct Single Select MCQ without statements, assertion/reason, match columns, passage, or negative highlighting
+  const isType1 = 
+    (type === 'DIRECT_MCQ' || !type) &&
+    (!q.statements || q.statements.length === 0) &&
+    !q.assertion &&
+    !q.reason &&
+    !q.matchColumns &&
+    !q.passage &&
+    !q.negativeHighlight;
+
+  // Type 1 gets 30 sec, all other types (Type 2 to 8) get 60 sec (1 min)
+  return isType1 ? 30 : 60;
+};
+
+export const getSkipDurationSeconds = (skipCount: number, q?: any): number => {
+  return getQuestionTimerDurationSeconds(q, skipCount);
 };
 
 /**
- * Formats seconds into human-readable label: e.g. "30s", "60 sec", "2 min", "5 min"
+ * Formats seconds into human-readable label: e.g. "30s", "1 min", "2 min", "5 min"
  */
 export const formatDurationLabel = (seconds: number): string => {
-  if (seconds < 60) return `${seconds} sec`;
+  if (seconds < 60) return `${seconds}s`;
   const mins = Math.floor(seconds / 60);
   const rem = seconds % 60;
   return rem > 0 ? `${mins} min ${rem}s` : `${mins} min`;

@@ -11,7 +11,7 @@ import { addMistakes, removeMistakeByQuestion } from '../utils/mistakeBank';
 import { renderMathInHtml } from '../utils/mathUtils';
 import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
 import McqQuestionDisplay from './McqQuestionDisplay';
-import { SkipEntry, getSkipDurationSeconds, formatDurationLabel } from '../utils/officialMcqBank';
+import { SkipEntry, getSkipDurationSeconds, getQuestionTimerDurationSeconds, formatDurationLabel } from '../utils/officialMcqBank';
 
 interface Props {
   test: WeeklyTest;
@@ -317,26 +317,21 @@ export const WeeklyTestView: React.FC<Props> = ({ test, onComplete, onExit }) =>
   // ── Sync per-question timer duration whenever currentIndex or round changes ──
   useEffect(() => {
     if (safeQuestions.length === 0 || isSubmitting) return;
-    const isAnswered = answers[currentIndex] !== undefined;
-    if (isAnswered) {
-      setQSecondsLeft(0);
-      return;
-    }
-
     const skipEntry = skipEntries[currentIndex];
+    const currentQ = safeQuestions[currentIndex];
     let duration = 30;
     if (isReattemptPhase && skipEntry) {
-      duration = getSkipDurationSeconds(skipEntry.skipCount);
+      duration = getQuestionTimerDurationSeconds(currentQ, skipEntry.skipCount);
     } else if (isReattemptPhase) {
-      duration = getSkipDurationSeconds(reattemptRound);
+      duration = getQuestionTimerDurationSeconds(currentQ, reattemptRound);
     } else {
-      duration = 30;
+      duration = getQuestionTimerDurationSeconds(currentQ, 0);
     }
     setQSecondsLeft(duration);
     setQMaxSeconds(duration);
-  }, [currentIndex, isReattemptPhase, reattemptRound, safeQuestions.length, answers[currentIndex], isSubmitting]);
+  }, [currentIndex, isReattemptPhase, reattemptRound, safeQuestions.length, isSubmitting]);
 
-  // ── Per-question countdown timer interval (30s initial, escalating ladder on reattempt) ──
+  // ── Per-question countdown timer interval (runs continuously; auto-advances if option chosen, auto-skips if not) ──
   useEffect(() => {
     if (
       isSubmitting || 
@@ -348,13 +343,19 @@ export const WeeklyTestView: React.FC<Props> = ({ test, onComplete, onExit }) =>
     ) {
       return;
     }
-    if (answers[currentIndex] !== undefined) return; // already answered
 
     const interval = setInterval(() => {
       setQSecondsLeft((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          handleAutoSkip(currentIndex, false);
+          setTimeout(() => {
+            const isOptionChosen = answers[currentIndex] !== undefined;
+            if (isOptionChosen) {
+              handleNext();
+            } else {
+              handleAutoSkip(currentIndex, false);
+            }
+          }, 0);
           return 0;
         }
         return prev - 1;
@@ -487,7 +488,7 @@ export const WeeklyTestView: React.FC<Props> = ({ test, onComplete, onExit }) =>
             remainingIndexes: remainingUnsolved,
             round: 1,
             chanceLabel: '2nd Chance',
-            nextDuration: 60,
+            nextDuration: getSkipDurationSeconds(1),
           });
         } else {
           handleSubmit();
@@ -552,7 +553,7 @@ export const WeeklyTestView: React.FC<Props> = ({ test, onComplete, onExit }) =>
             remainingIndexes: remainingUnsolved,
             round: 1,
             chanceLabel: '2nd Chance',
-            nextDuration: 60,
+            nextDuration: getSkipDurationSeconds(1),
           });
         } else {
           setShowSubmitModal(true);

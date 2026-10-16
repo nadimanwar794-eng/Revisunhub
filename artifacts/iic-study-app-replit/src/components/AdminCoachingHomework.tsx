@@ -19,6 +19,7 @@ interface CoachingMcq  {
   statements?: string[];
   matchColumns?: MatchColumnData;
   questionType?: string;
+  passage?: string;
   /** Legacy single-answer field */
   correctAnswer?: number;
   /** New: multiple correct answers support */
@@ -315,6 +316,7 @@ function McqEditor({ mcqs, onChange, accent }:{ mcqs: CoachingMcq[]; onChange:(m
         statements: statements.length ? statements : undefined,
         matchColumns: matchColumns || undefined,
         questionType: q.questionType || (matchColumns ? 'MATCH_COLUMN' : undefined),
+        passage: q.passage || undefined,
         explanation: q.explanation || '',
       };
     });

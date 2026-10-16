@@ -1,71 +1,7 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Save, Trash2, ChevronRight, ArrowLeft, Plus, BookOpen, Edit2, X, ArrowRight, Copy, Library } from 'lucide-react';
-import { parseMCQText } from '../utils/mcqParser';
-import { saveTopicNotes } from '../utils/revisionTrackerV2';
-import { saveMcqLesson, deleteMcqLesson, subscribeMcqLessons } from '../firebase';
-import { getClassSubjectOptions, getLucentSubjectOptions, isSubjectMatch, LUCENT_SUBJECT_OPTIONS_BASE } from '../constants';
-
-const CLASSES = ['6', '7', '8', '9', '10', '11', '12', 'COMPETITION'];
-
-// Subject lists are NOT hardcoded here — they come from the same source as
-// Book Notes Manager / Class 6-12 Notes Manager (constants.ts), so all three
-// admin screens (and Revision Hub's student-facing subject picker, which
-// derives from real saved lessons) always agree on which subjects exist.
-function subjectsForClass(classLevel: string, settings: any): string[] {
-  if (classLevel === 'COMPETITION') {
-    return getLucentSubjectOptions(settings).map(s => s.name);
-  }
-  return getClassSubjectOptions(classLevel).map(s => s.name);
-}
-
-function normalizeMcqPaste(raw: string): string {
-  let txt = raw;
-  txt = txt.replace(/\r\n/g, '\n');
-  txt = txt.replace(/^---+\s*$/gm, '');
-  txt = txt.replace(/^###\s+.+$/gm, '');
-  // Remove duplicate / orphan "**सही उत्तर:" lines (those with no answer value on same line)
-  txt = txt.replace(/^[ \t]*(?:\*{1,2})?\s*(?:सही\s*उत्तर|उत्तर)\s*:\s*(?:\*{1,2})?\s*$/gm, '');
-  txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]\s*\n+\s*(?=\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?))/gi, '');
-  txt = txt.replace(/^\s*\[(?:[⚡🔥💡🎯⭐✨🏆⚠️🌟][^\]]*?|[^\]]{1,10})\]\s*/gm, '');
-  txt = txt.replace(/^\*\*\s*कूट\s*:?\s*\*?\*?\s*$/gm, '');
-  txt = txt.replace(/\*\*Q\s*(\d+)\s*[:.]\s*([\s\S]*?)\*\*/gi, (_m, n, q) =>
-    `**Question ${n}**\n❓ Question: ${q.trim()}`
-  );
-  txt = txt.replace(/\*\*\s*(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*([\s\S]*?)\*\*([^\n]*)/gi, (_m, n, q, rest) => {
-    const combined = (String(q).trim() + ' ' + String(rest).trim()).trim()
-      .replace(/\*\*$/, '').replace(/\s*\((?:Easy|Medium|Hard|आसान|मध्यम|कठिन)[^)]*\)\s*$/i, '').replace(/^\[.*?\]\s*/g, '').trim();
-    return `\n**Question ${n}**\n❓ Question: ${combined}`;
-  });
-  // Bare (non-bold) "प्रश्न 18:" / "Question 18:" markers — common when the AI
-  // only bolds the label, not the number, or skips bold entirely. Without this,
-  // numbered statement lines ("1. ...", "2. ...") that follow get mistaken for
-  // new question boundaries by the fallback heuristic below, chopping the
-  // statement-based question apart and dropping its statements.
-  txt = txt.replace(/(?:^|\n)[ \t]*(?:\*\*\s*)?(?:प्रश्न|Question)\s*(\d+)\s*[:.\-]\s*/gi, (_m, n) => `\n**Question ${n}**\n❓ Question: `);
-  txt = txt.replace(/\*\*प्रश्न\s*[:：]?\*\*/gi, '__PRASHNA__');
-  txt = txt.replace(/\*\*Question\s*[:：]?\*\*/gi, '__PRASHNA__');
-  txt = txt.replace(/\*\*\s*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]\s*([^*]+?)\s*\*\*/gi,
-    (_m, val) => `\n✅ Correct Answer: ${String(val).trim()}`);
-  txt = txt.replace(/\*\*(?:सही\s*उत्तर|उत्तर|Ans(?:wer)?)\s*[:：]?\*\*\s*/gi, '✅ Correct Answer: ');
-  txt = txt.replace(/(?:^|\n)\s*(?:Ans(?:wer)?|सही\s*उत्तर|उत्तर)\s*[:：]\s*/gi, '\n✅ Correct Answer: ');
-  txt = txt.replace(/\*\*/g, '');
-  let qNum = 0;
-  txt = txt.replace(/__PRASHNA__\s*/g, () => { qNum += 1; return `\n**Question ${qNum}**\n❓ Question: `; });
-  const alreadySimpleFormat = /<TOPIC:/i.test(txt) || /^\s*Q\s*\d+[\.\)]/im.test(txt);
-  if (qNum === 0 && !txt.includes('**Question') && !txt.includes('❓') && !alreadySimpleFormat) {
-    const lines = txt.split('\n'); const out: string[] = []; let counter = 0;
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i]; const next = (lines[i + 1] || '').trim();
-      const looksLikeOptStart = /^\s*[A-Da-d1-4][\)\.]/i.test(next);
-      const isQLine = looksLikeOptStart && l.trim().length > 0 && !/✅|Correct Answer/i.test(l) && !/^\s*[A-D][\)\.]/i.test(l);
-      if (isQLine) { counter += 1; out.push(`**Question ${counter}**`); out.push(`❓ Question: ${l.trim().replace(/^Q?\d+[.)]\s*/i, '')}`); }
-      else { out.push(l); }
-    }
-    txt = out.join('\n');
-  }
-  return txt;
-}
+import { parseMCQText, normalizeMcqPaste } from '../utils/mcqParser';
 
 interface Props {
   settings: any;
@@ -311,6 +247,7 @@ export const AdminClassMcqManager: React.FC<Props> = ({ settings, onSave }) => {
           correctAnswer: q.correctAnswer ?? 0,
           statements: (q.statements && q.statements.length > 0) ? q.statements : undefined,
           matchColumns: q.matchColumns || undefined,
+          passage: (q.passage || '').trim() || undefined,
           questionType: q.questionType || (q.matchColumns ? 'MATCH_COLUMN' : undefined),
           topic: (q.topic || '').trim() || undefined,
           explanation: (q.explanation || '').trim() || undefined,

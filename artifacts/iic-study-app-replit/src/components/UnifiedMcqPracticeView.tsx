@@ -9,9 +9,7 @@ import {
 import { renderMathInHtml } from '../utils/mathUtils';
 import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
 import McqQuestionDisplay from './McqQuestionDisplay';
-import { tryEarnScore } from '../utils/scoreSystem';
-import { getSkipDurationSeconds, formatDurationLabel, SkipEntry } from '../utils/officialMcqBank';
-import { rotateScreen } from '../utils/displayPrefs';
+import { getSkipDurationSeconds, getQuestionTimerDurationSeconds, formatDurationLabel, SkipEntry } from '../utils/officialMcqBank';
 
 export interface UnifiedMcqPracticeProps {
   questions: any[];
@@ -302,26 +300,21 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
   // ── Sync per-question timer duration whenever currentIndex or round changes ──
   useEffect(() => {
     if (totalQuestions === 0 || !currentQ || isFinished) return;
-    const isAnswered = answers[currentIndex] !== undefined;
-    if (isAnswered) {
-      setQSecondsLeft(0);
-      return;
-    }
 
     const skipEntry = skipEntries[currentIndex];
     let duration = 30;
     if (isReattemptPhase && skipEntry) {
-      duration = getSkipDurationSeconds(skipEntry.skipCount);
+      duration = getQuestionTimerDurationSeconds(currentQ, skipEntry.skipCount);
     } else if (isReattemptPhase) {
-      duration = getSkipDurationSeconds(reattemptRound);
+      duration = getQuestionTimerDurationSeconds(currentQ, reattemptRound);
     } else {
-      duration = 30;
+      duration = getQuestionTimerDurationSeconds(currentQ, 0);
     }
     setQSecondsLeft(duration);
     setQMaxSeconds(duration);
-  }, [currentIndex, isReattemptPhase, reattemptRound, totalQuestions, answers[currentIndex]]);
+  }, [currentIndex, isReattemptPhase, reattemptRound, totalQuestions, currentQ]);
 
-  // ── Per-question countdown timer interval (30s initial, escalating ladder on re-attempt) ──
+  // ── Per-question countdown timer interval (runs continuously; auto-advances if option chosen, auto-skips if not) ──
   useEffect(() => {
     if (
       isFinished || 
@@ -332,15 +325,21 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
     ) {
       return;
     }
-    if (answers[currentIndex] !== undefined) return; // already answered
 
     const interval = setInterval(() => {
       setQSecondsLeft((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
-          // Auto-skip triggered on timer expiration — defer out of setState updater!
+          // Timer reached 0!
           setTimeout(() => {
-            handleAutoSkip(currentIndex, false);
+            const isOptionChosen = answers[currentIndex] !== undefined;
+            if (isOptionChosen) {
+              // User selected an option: timer finished -> auto-advance to next question!
+              handleNext();
+            } else {
+              // User has not selected any option: timer finished -> auto-skip question!
+              handleAutoSkip(currentIndex, false);
+            }
           }, 0);
           return 0;
         }
@@ -482,7 +481,7 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
             remainingIndexes: remainingUnsolved,
             round: 1,
             chanceLabel: '2nd Chance',
-            nextDuration: 60, // 1 min for 2nd chance!
+            nextDuration: getSkipDurationSeconds(1), // 2 min (120s) for 2nd chance!
           });
         } else {
           handleConfirmSubmit();
@@ -750,7 +749,7 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
             remainingIndexes: remainingUnsolved,
             round: 1,
             chanceLabel: '2nd Chance',
-            nextDuration: 60,
+            nextDuration: getSkipDurationSeconds(1), // 2 min (120s) for 2nd chance!
           });
         } else {
           setShowSubmitModal(true);
@@ -1057,20 +1056,26 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
               Q{currentIndex + 1}/{totalQuestions}
             </span>
 
-            {/* Countdown or Solved badge */}
-            {isCurrentAnswered ? (
-              <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-black px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-300">
-                <CheckCircle2 size={11} className="text-emerald-600" />
-                <span>Solved</span>
-              </span>
-            ) : (
-              <span className={`inline-flex items-center gap-1 font-mono font-black text-[10px] px-1.5 py-0.5 rounded-full border ${
-                qSecondsLeft <= 5 ? 'bg-rose-100 text-rose-700 border-rose-300' : 'bg-emerald-50 text-emerald-800 border-emerald-300'
-              }`}>
-                <Clock size={11} />
-                <span>{qSecondsLeft}s</span>
-              </span>
-            )}
+            {/* Countdown / Auto-next status */}
+            <span className={`inline-flex items-center gap-1 font-mono font-black text-[10px] px-2 py-0.5 rounded-full border transition-all ${
+              isCurrentAnswered
+                ? 'bg-indigo-50 text-indigo-900 border-indigo-300'
+                : qSecondsLeft <= 5
+                ? 'bg-rose-100 text-rose-700 border-rose-300 animate-pulse'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+            }`}>
+              {isCurrentAnswered ? (
+                <>
+                  <CheckCircle2 size={11} className="text-emerald-600" />
+                  <span>Next in {qSecondsLeft}s</span>
+                </>
+              ) : (
+                <>
+                  <Clock size={11} className={qSecondsLeft <= 5 ? 'text-rose-600 animate-spin' : 'text-emerald-600'} />
+                  <span>{qSecondsLeft}s</span>
+                </>
+              )}
+            </span>
 
             {isReattemptPhase && (
               <span className="hidden md:inline font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded text-[10px] border border-amber-200 truncate">
@@ -1482,7 +1487,7 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
                       </span>
                       {q.topic && (
                         <span className="text-[11px] font-bold text-slate-500 truncate max-w-[200px]">
-                          {q.topic}
+                          {q.topic.replace(/(?:गद्यांश|Passage|पैसेज)\s*[:：\-][\s\S]*$/i, '').trim() || q.topic}
                         </span>
                       )}
                     </div>
@@ -1618,33 +1623,37 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
                   </span>
                   {currentQ.topic && (
                     <span className="text-[11px] font-bold text-slate-500 truncate max-w-[160px] sm:max-w-xs">
-                      {currentQ.topic}
+                      {currentQ.topic.replace(/(?:गद्यांश|Passage|पैसेज)\s*[:：\-][\s\S]*$/i, '').trim() || currentQ.topic}
                     </span>
                   )}
                 </div>
                 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Active Question Countdown Timer / Solved status badge */}
-                  {isCurrentAnswered ? (
-                    <span className="flex items-center gap-1 text-[11px] font-black px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-300">
-                      <CheckCircle2 size={12} className="text-emerald-600" />
-                      <span>Solved</span>
-                    </span>
-                  ) : (
-                    <div 
-                      className={`flex items-center gap-1 font-mono font-black text-xs px-2.5 py-0.5 rounded-full border transition-all ${
-                        qSecondsLeft <= 5
-                          ? 'bg-rose-100 text-rose-700 border-rose-300 animate-pulse'
-                          : qSecondsLeft <= 15
-                          ? 'bg-amber-100 text-amber-800 border-amber-300'
-                          : 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                      }`}
-                      title={`${qSecondsLeft}s remaining before auto-skip`}
-                    >
-                      <Clock size={12} className={qSecondsLeft <= 5 ? 'text-rose-600 animate-spin' : 'text-emerald-600'} />
-                      <span>{qSecondsLeft}s</span>
-                    </div>
-                  )}
+                  {/* Active Question Countdown Timer / Auto-Next status badge */}
+                  <div 
+                    className={`flex items-center gap-1 font-mono font-black text-xs px-2.5 py-0.5 rounded-full border transition-all ${
+                      isCurrentAnswered
+                        ? 'bg-indigo-50 text-indigo-900 border-indigo-300'
+                        : qSecondsLeft <= 5
+                        ? 'bg-rose-100 text-rose-700 border-rose-300 animate-pulse'
+                        : qSecondsLeft <= 15
+                        ? 'bg-amber-100 text-amber-800 border-amber-300'
+                        : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    }`}
+                    title={isCurrentAnswered ? `Option selected. Auto-next in ${qSecondsLeft}s` : `${qSecondsLeft}s remaining`}
+                  >
+                    {isCurrentAnswered ? (
+                      <>
+                        <CheckCircle2 size={12} className="text-emerald-600 shrink-0" />
+                        <span>Selected · Next in {qSecondsLeft}s</span>
+                      </>
+                    ) : (
+                      <>
+                        <Clock size={12} className={qSecondsLeft <= 5 ? 'text-rose-600 animate-spin shrink-0' : 'text-emerald-600 shrink-0'} />
+                        <span>{qSecondsLeft}s</span>
+                      </>
+                    )}
+                  </div>
 
                   {isCurrentMarked && (
                     <span className="flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 shrink-0">
@@ -1656,11 +1665,17 @@ export const UnifiedMcqPracticeView: React.FC<UnifiedMcqPracticeProps> = ({
               </div>
 
               {/* Progress Countdown Bar under header */}
-              {!isCurrentAnswered && qMaxSeconds > 0 && (
+              {qMaxSeconds > 0 && (
                 <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mb-2.5">
                   <div
                     className={`h-full transition-all duration-1000 ease-linear rounded-full ${
-                      qSecondsLeft <= 5 ? 'bg-rose-500' : qSecondsLeft <= 15 ? 'bg-amber-500' : 'bg-emerald-500'
+                      isCurrentAnswered
+                        ? 'bg-indigo-500'
+                        : qSecondsLeft <= 5
+                        ? 'bg-rose-500'
+                        : qSecondsLeft <= 15
+                        ? 'bg-amber-500'
+                        : 'bg-emerald-500'
                     }`}
                     style={{ width: `${Math.max(0, (qSecondsLeft / qMaxSeconds) * 100)}%` }}
                   />

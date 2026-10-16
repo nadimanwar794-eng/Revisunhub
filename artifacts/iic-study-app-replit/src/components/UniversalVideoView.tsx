@@ -99,7 +99,6 @@ export const UniversalVideoView: React.FC<Props> = ({ user, onBack, settings, is
                                 isAdmin={isAdmin}
                                 onBack={closePlayer}
                                 onNext={nextVideo && canAccess(nextVideo) ? handleNext : undefined}
-                                nextTitle={nextVideo?.title}
                             />
                         )}
                     </div>

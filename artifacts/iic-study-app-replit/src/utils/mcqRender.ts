@@ -36,8 +36,8 @@ export const inlineMd = (s: string): string => {
 // Statement detection helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A line is a numbered statement: "1. text", "(1) text", "1) text", "Statement 1: text", "कथन I", "कथन 1", "कथन (1)", "I. text", "(i) text", "Assertion/Reason/अभिकथन/कारण" */
-const STMT_LINE_RE = /^(?:(?:\(?\d+[\).\:\-\s]\s*|\(?[IVXivx]+[\).\:\-\s]\s*|\(?[a-dA-D]\)[\s\:\.]*|(?:Statement|कथन|Assertion|Reason|अभिकथन|कारण)\s*(?:\(?\s*[0-9IVXivxABab]+\s*\)?)?\s*[:.\-)]?\s*)).+/i;
+/** A line is a numbered statement: "1. text", "(1) text", "1) text", "Statement 1: text", "कथन I", "कथन 1", "कथन (1)", "I. text", "(i) text", "Assertion/Reason/अभिकथन/कारण", or bullets "* ", "- ", "• " */
+const STMT_LINE_RE = /^(?:(?:\*|-|•|▪|◦)\s+|(?:\(?\d+[\).\:\-\s]\s*|\(?[IVXivx]+[\).\:\-\s]\s*|\(?[a-dA-D]\)[\s\:\.]*|(?:Statement|कथन|Assertion|Reason|अभिकथन|कारण)\s*(?:\(?\s*[0-9IVXivxABab]+\s*\)?)?\s*[:.\-)]?\s*)).+/i;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parsed MCQ result

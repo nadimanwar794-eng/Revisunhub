@@ -2078,6 +2078,7 @@ export const GroupStudyModal: React.FC<GroupStudyModalProps> = ({
     const userAnswersRecord: Record<number, number> = {};
     const topicAnalysisMap: Record<string, { correct: number; total: number; percentage: number }> = {};
     const omrDataList: any[] = [];
+    const wrongQuestionsList: NonNullable<MCQResult['wrongQuestions']> = [];
 
     questions.forEach((q, qIndex) => {
       const localAns = localBattleStats.answers?.[qIndex];
@@ -7891,7 +7892,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                       setActiveSetupDrawer(null);
                     }}
                     className={`p-4 rounded-2xl border cursor-pointer transition flex items-start gap-3 ${
-                      currentRoom.mcqType !== 'REVISION_HUB'
+                      currentRoom?.mcqType !== 'REVISION_HUB'
                         ? 'bg-cyan-600/25 border-cyan-400 text-white ring-1 ring-cyan-500 shadow-lg'
                         : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-slate-700'
                     }`}
@@ -7902,7 +7903,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-black text-white">🎯 MCQ Mode</h4>
-                        {currentRoom.mcqType !== 'REVISION_HUB' && (
+                        {currentRoom?.mcqType !== 'REVISION_HUB' && (
                           <span className="px-2 py-0.5 rounded-full bg-cyan-500 text-slate-950 text-[10px] font-black">
                             ✓ Active
                           </span>
@@ -7930,7 +7931,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                     className={`p-4 rounded-2xl border cursor-pointer transition flex items-start gap-3 ${
                       isFreeUser
                         ? 'bg-slate-950/50 border-slate-800 text-slate-500'
-                        : currentRoom.mcqType === 'REVISION_HUB'
+                        : currentRoom?.mcqType === 'REVISION_HUB'
                         ? 'bg-purple-600/25 border-purple-400 text-white ring-1 ring-purple-500 shadow-lg'
                         : 'bg-slate-950/80 border-slate-800 text-slate-300 hover:border-slate-700'
                     }`}
@@ -7948,7 +7949,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             </span>
                           )}
                         </div>
-                        {currentRoom.mcqType === 'REVISION_HUB' && (
+                        {currentRoom?.mcqType === 'REVISION_HUB' && (
                           <span className="px-2 py-0.5 rounded-full bg-purple-500 text-white text-[10px] font-black">
                             ✓ Active
                           </span>
@@ -8024,7 +8025,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                         )}
                       </div>
                       <p className="text-xs text-slate-300 font-bold mt-0.5">
-                        {currentRoom.mcqType === 'REVISION_HUB' ? '⚡ Revision Hub: Only Lucent' : '🎯 Sabhi Competition Books'}
+                        {currentRoom?.mcqType === 'REVISION_HUB' ? '⚡ Revision Hub: Only Lucent' : '🎯 Sabhi Competition Books'}
                       </p>
                       <p className="text-[11px] text-slate-400 mt-1">
                         Lucent GK, Speedy Science, Speedy Social Science aur sabhi competitive exam sets.
@@ -8122,7 +8123,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   })()}
 
                   {/* Category Pills (if Projector mode) */}
-                  {currentRoom.mcqType !== 'REVISION_HUB' && (
+                  {currentRoom?.mcqType !== 'REVISION_HUB' && (
                     <div>
                       <label className="text-xs font-bold text-slate-300 block mb-2">Category:</label>
                       <div className="flex flex-wrap gap-1.5">
@@ -8192,7 +8193,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   </div>
 
                   {/* Revision Hub: Only Lucent Topics */}
-                  {currentRoom.mcqType === 'REVISION_HUB' ? (
+                  {currentRoom?.mcqType === 'REVISION_HUB' ? (
                     <div className="space-y-2">
                       <p className="text-xs font-bold text-amber-300">📖 Lucent Samanya Gyan Topics:</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
@@ -8293,7 +8294,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   </div>
 
                   {/* Toolbar based on Assessment Mode: MCQ+ (Strictly 1 Lesson) vs MCQ (Multi-Lesson) */}
-                  {currentRoom.mcqType === 'REVISION_HUB' ? (
+                  {currentRoom?.mcqType === 'REVISION_HUB' ? (
                     <div className="flex items-center justify-between bg-purple-950/40 p-2.5 rounded-xl border border-purple-500/40 text-xs">
                       <span className="font-bold text-purple-200 flex items-center gap-1.5">
                         <span>⚡ MCQ+ Mode:</span>
@@ -8332,7 +8333,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                   {availableBattleSets.length > 0 ? (
                     <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
                       {availableBattleSets.map((set, sIdx) => {
-                        const isRevision = currentRoom.mcqType === 'REVISION_HUB';
+                        const isRevision = currentRoom?.mcqType === 'REVISION_HUB';
                         const isSelected = isRevision
                           ? selectedCuratedSet === set.id
                           : selectedCuratedSets.includes(set.id);
@@ -8478,7 +8479,7 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
               {/* 7. QUESTION LIMITS & ORDER DRAWER CONTENT */}
               {activeSetupDrawer === 'QUESTION_LIMITS' && (
                 <div className="space-y-4">
-                  {currentRoom.mcqType === 'REVISION_HUB' ? (
+                  {currentRoom?.mcqType === 'REVISION_HUB' ? (
                     <div className="p-4 rounded-2xl bg-purple-950/40 border border-purple-500/40 space-y-2.5 text-left">
                       <div className="flex items-center gap-2">
                         <span className="text-xl">⚡</span>
@@ -9021,6 +9022,14 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
 
       {/* ── DETAILED REVISION HUB MARKSHEET MODAL ── */}
       {showDetailedMarksheet && (() => {
+        const liveMcq = currentRoom?.liveMcq;
+        const questions = liveMcq?.questions || [];
+        const totalQ = liveMcq?.totalQuestions || questions.length;
+        const myScore = user?.id ? liveMcq?.scores?.[user.id] : undefined;
+        const correctCount = myScore?.correctCount ?? localBattleStats.correctCount;
+        const wrongCount = myScore?.wrongCount ?? localBattleStats.wrongCount;
+        const myAccuracy = totalQ > 0 ? Math.round((correctCount / totalQ) * 100) : 0;
+        const allAnswersMap = liveMcq?.questionAnswers || {};
         const fallbackResult: MCQResult = currentExamResult || {
           id: `study_room_${currentRoom?.id || 'exam'}_${Date.now()}`,
           userId: user?.id || 'student',
@@ -9030,10 +9039,10 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
           subjectName: currentRoom?.subject || 'Group Study',
           topic: currentRoom?.name || 'MCQ Practice',
           date: new Date().toISOString(),
-          score: myScore?.correctCount || 0,
+          score: correctCount,
           totalQuestions: totalQ,
-          correctCount: myScore?.correctCount || 0,
-          wrongCount: myScore?.wrongCount || 0,
+          correctCount,
+          wrongCount,
           totalTimeSeconds: Math.round(totalQ * (selectedTimerDuration || 20)),
           averageTimePerQuestion: selectedTimerDuration || 20,
           performanceTag: myAccuracy >= 80 ? 'EXCELLENT' : myAccuracy >= 50 ? 'GOOD' : 'BAD',

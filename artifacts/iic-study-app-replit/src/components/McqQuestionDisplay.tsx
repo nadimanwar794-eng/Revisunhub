@@ -74,11 +74,22 @@ const McqQuestionDisplay: React.FC<Props> = ({
   showTypeBadge = true,
 }) => {
   const isDark = variant === 'dark';
+  const topicPassageMatch = q.topic?.match(/(?:गद्यांश|Passage|पैसेज)\s*[:：\-]\s*([\s\S]+)$/i);
+  const passageFromTopic = topicPassageMatch ? topicPassageMatch[1].trim() : '';
+
   const detected = detectQuestionType(q);
-  const { type, config, assertionReason, matchColumns, isNegative } = detected;
+  const { config, assertionReason, matchColumns, isNegative, caseStudy } = detected;
+
+  const passageText = q.passage?.trim() || caseStudy?.passage?.trim() || passageFromTopic;
+  const isCaseStudyType = Boolean(passageText) || detected.type === 'CASE_STUDY';
+  const type = isCaseStudyType ? 'CASE_STUDY' : detected.type;
   const TypeIcon = TYPE_ICONS[type] || CheckCircle2;
 
-  const { questionHtml, statements, suffixHtml } = parseMcqQuestion(q);
+  const displayQuestion = caseStudy?.passage ? caseStudy.cleanedQuestion : q.question;
+  const questionForDisplay = displayQuestion === q.question
+    ? q
+    : { ...q, question: displayQuestion };
+  const { questionHtml, statements, suffixHtml } = parseMcqQuestion(questionForDisplay);
 
   const defaultStmtClass = isDark
     ? 'bg-slate-800/80 border-l-4 border-indigo-400 text-slate-200 rounded-xl px-3 py-2.5 mb-1.5 text-xs sm:text-sm leading-relaxed'
@@ -180,7 +191,7 @@ const McqQuestionDisplay: React.FC<Props> = ({
       {isAbove && imageElement}
 
       {/* ── TYPE 7: READING COMPREHENSION / CASE STUDY PASSAGE ── */}
-      {(q.passage || (type === 'CASE_STUDY' && q.question?.includes('गद्यांश'))) && (
+      {passageText && (
         <div
           className={`my-3 p-3.5 sm:p-4 rounded-xl border text-xs sm:text-sm ${
             isDark
@@ -193,7 +204,7 @@ const McqQuestionDisplay: React.FC<Props> = ({
             <span>📖 गद्यांश (Passage / Context):</span>
           </div>
           <div className="leading-relaxed border-l-2 border-indigo-400 pl-3 py-1 text-xs sm:text-sm font-medium whitespace-pre-wrap">
-            {q.passage || ''}
+            {passageText}
           </div>
         </div>
       )}
@@ -360,21 +371,24 @@ const McqQuestionDisplay: React.FC<Props> = ({
             <ArrowRightLeft size={13} />
             <span>घटनाओं का कालानुक्रमिक क्रम निर्धारित करें:</span>
           </div>
-          {statements.map((s, i) => (
-            <div
-              key={i}
-              className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-xs sm:text-sm font-medium leading-relaxed ${
-                isDark
-                  ? 'bg-teal-950/25 border-teal-800/50 text-slate-200'
-                  : 'bg-teal-50/60 border-teal-200 text-slate-800'
-              }`}
-            >
-              <span className="w-5 h-5 rounded-md bg-teal-600 text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
-                {i + 1}
-              </span>
-              <div className="flex-1" dangerouslySetInnerHTML={{ __html: s }} />
-            </div>
-          ))}
+          {statements.map((s, i) => {
+            const cleanText = s.replace(/^(?:(?:\(?\d+\)?|\(?[IVXivx]+\)?)[.\-:]?\s*|(?:\*|-|•|▪|◦)\s+)/i, '');
+            return (
+              <div
+                key={i}
+                className={`flex items-start gap-2.5 p-2.5 rounded-xl border text-xs sm:text-sm font-medium leading-relaxed ${
+                  isDark
+                    ? 'bg-teal-950/25 border-teal-800/50 text-slate-200'
+                    : 'bg-teal-50/60 border-teal-200 text-slate-800'
+                }`}
+              >
+                <span className="w-5 h-5 rounded-md bg-teal-600 text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                  {i + 1}
+                </span>
+                <div className="flex-1" dangerouslySetInnerHTML={{ __html: cleanText }} />
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -385,21 +399,24 @@ const McqQuestionDisplay: React.FC<Props> = ({
             <BarChart2 size={13} />
             <span>कथनों की पर्याप्तता का मूल्यांकन करें (Evaluate Data Sufficiency):</span>
           </div>
-          {statements.map((s, i) => (
-            <div
-              key={i}
-              className={`p-3 rounded-xl border text-xs sm:text-sm font-medium leading-relaxed ${
-                isDark
-                  ? 'bg-cyan-950/25 border-cyan-800/50 text-slate-200'
-                  : 'bg-cyan-50/60 border-cyan-200 text-slate-800'
-              }`}
-            >
-              <span className="font-black text-cyan-700 dark:text-cyan-300 mr-2">
-                कथन {i === 0 ? 'I' : i === 1 ? 'II' : i + 1}:
-              </span>
-              <span dangerouslySetInnerHTML={{ __html: s }} />
-            </div>
-          ))}
+          {statements.map((s, i) => {
+            const cleanText = s.replace(/^(?:(?:कथन|Statement)\s*(?:[I1]+|[IVXivx]+|\d+)\s*[:：\-.]?\s*|(?:\*|-|•|▪|◦)\s+)/i, '');
+            return (
+              <div
+                key={i}
+                className={`p-3 rounded-xl border text-xs sm:text-sm font-medium leading-relaxed ${
+                  isDark
+                    ? 'bg-cyan-950/25 border-cyan-800/50 text-slate-200'
+                    : 'bg-cyan-50/60 border-cyan-200 text-slate-800'
+                }`}
+              >
+                <span className="font-black text-cyan-700 dark:text-cyan-300 mr-2">
+                  कथन {i === 0 ? 'I' : i === 1 ? 'II' : i + 1}:
+                </span>
+                <span dangerouslySetInnerHTML={{ __html: cleanText }} />
+              </div>
+            );
+          })}
         </div>
       )}
 

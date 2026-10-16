@@ -2,9 +2,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { User, MCQItem, MCQResult, TopicItem, SystemSettings } from '../types';
-import { X, CheckCircle, ArrowRight, Loader2, BrainCircuit, AlertCircle, List, Tag, Trophy, TrendingDown, Minus, TrendingUp, Star, Calendar, ChevronRight, Tv, RotateCw, Maximize2, Minimize2, LayoutGrid, Volume2, VolumeX, Clock, Sparkles, RotateCcw, FastForward, CheckCircle2 } from 'lucide-react';
+import { X, CheckCircle, ArrowRight, Loader2, BrainCircuit, AlertCircle, List, Tag, Trophy, TrendingDown, Minus, TrendingUp, Star, Calendar, ChevronRight, ChevronLeft, Tv, RotateCw, Maximize2, Minimize2, LayoutGrid, Volume2, VolumeX, Clock, Sparkles, RotateCcw, FastForward, CheckCircle2 } from 'lucide-react';
 import { renderMathInHtml, formatExplanationHtml } from '../utils/mathUtils';
-import { getSkipDurationSeconds, formatDurationLabel, SkipEntry } from '../utils/officialMcqBank';
+import { getSkipDurationSeconds, getQuestionTimerDurationSeconds, formatDurationLabel, SkipEntry } from '../utils/officialMcqBank';
 import { rotateScreen } from '../utils/displayPrefs';
 import { getChapterData, saveUserToLive, saveTestResult, saveUserHistory, saveDemand } from '../firebase';
 import { storage } from '../utils/storage';
@@ -298,35 +298,37 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
     // ── Sync per-question timer duration whenever qIndex or round changes ──
     useEffect(() => {
         if (interleavedQuestions.length === 0) return;
-        const isAnswered = answers[qIndex] !== undefined;
-        if (isAnswered) {
-            setTodaySecondsLeft(0);
-            return;
-        }
 
         const skipEntry = todaySkipEntries[qIndex];
+        const currentQ = interleavedQuestions[qIndex];
         let duration = 30;
         if (isReattemptPhase && skipEntry) {
-            duration = getSkipDurationSeconds(skipEntry.skipCount);
+            duration = getQuestionTimerDurationSeconds(currentQ, skipEntry.skipCount);
         } else if (isReattemptPhase) {
-            duration = getSkipDurationSeconds(reattemptRound);
+            duration = getQuestionTimerDurationSeconds(currentQ, reattemptRound);
         } else {
-            duration = 30;
+            duration = getQuestionTimerDurationSeconds(currentQ, 0);
         }
         setTodaySecondsLeft(duration);
         setTodayMaxSeconds(duration);
-    }, [qIndex, isReattemptPhase, reattemptRound, interleavedQuestions.length, answers[qIndex]]);
+    }, [qIndex, isReattemptPhase, reattemptRound, interleavedQuestions.length]);
 
-    // ── Per-question countdown timer interval (30s initial, escalating ladder on re-attempt) ──
+    // ── Per-question countdown timer interval (runs continuously; auto-advances if option chosen, auto-skips if not) ──
     useEffect(() => {
         if (loading || interleavedQuestions.length === 0 || (secondChanceModal && secondChanceModal.isOpen)) return;
-        if (answers[qIndex] !== undefined) return; // already answered
 
         const interval = setInterval(() => {
             setTodaySecondsLeft(prev => {
                 if (prev <= 1) {
                     clearInterval(interval);
-                    handleTodayAutoSkip(qIndex, false);
+                    setTimeout(() => {
+                        const isOptionChosen = answers[qIndex] !== undefined;
+                        if (isOptionChosen) {
+                            handleTodayNext();
+                        } else {
+                            handleTodayAutoSkip(qIndex, false);
+                        }
+                    }, 0);
                     return 0;
                 }
                 return prev - 1;
@@ -444,7 +446,7 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
                         remainingIndexes: stillUnsolved,
                         round: 1,
                         chanceLabel: '2nd Chance',
-                        nextDuration: 60,
+                        nextDuration: getSkipDurationSeconds(1),
                     });
                 } else {
                     finishSession(answers);
@@ -505,7 +507,7 @@ export const TodayMcqSession: React.FC<Props> = ({ user, topics, onClose, onComp
                         remainingIndexes: stillUnsolved,
                         round: 1,
                         chanceLabel: '2nd Chance',
-                        nextDuration: 60,
+                        nextDuration: getSkipDurationSeconds(1),
                     });
                 } else {
                     finishSession(answers);

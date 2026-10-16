@@ -3571,7 +3571,13 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
     };
   }, []);
 
+// 1 cm invisible buffer radius around Pedro (1cm ≈ 37.8px in standard CSS units)
+// Tapping within 1 cm of Pedro intercepts all touches to Pedro only, shielding the screen behind Pedro
+// from accidental clicks or navigation while tapping or moving ("hatane pe") Pedro.
+const PEDRO_HIT_EXPANSION_PX = 38;
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
     dragStartRef.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -3580,11 +3586,14 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
     };
     setIsDragging(true);
     setHasMoved(false);
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {}
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isDragging) return;
+    e.stopPropagation();
     const deltaX = e.clientX - dragStartRef.current.startX;
     const deltaY = e.clientY - dragStartRef.current.startY;
 
@@ -3599,10 +3608,11 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
     if (!isDragging) return;
     setIsDragging(false);
     try {
-      (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
     } catch {}
 
     // Persist position and notify
@@ -3667,6 +3677,23 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
     }
   };
 
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    e.stopPropagation();
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    e.stopPropagation();
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    e.stopPropagation();
+  };
+
   if (isHidden && authWelcomePhase === 'none') {
     return null;
   }
@@ -3690,10 +3717,13 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
       <div
         style={{
           position: 'fixed',
-          left: `${position.x}px`,
-          top: `${position.y}px`,
+          left: `${position.x - PEDRO_HIT_EXPANSION_PX}px`,
+          top: `${position.y - PEDRO_HIT_EXPANSION_PX}px`,
+          padding: `${PEDRO_HIT_EXPANSION_PX}px`,
           zIndex: 99998,
           touchAction: 'none',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
           transition: isTransitioning
             ? 'left 0.95s cubic-bezier(0.34, 1.2, 0.64, 1), top 0.95s cubic-bezier(0.34, 1.2, 0.64, 1), opacity 0.4s ease'
             : isDragging
@@ -3703,19 +3733,40 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerCancel={(e) => {
+          if (isDragging) {
+            setIsDragging(false);
+            try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch {}
+          }
+        }}
+        onClick={handleClick}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         className={`group cursor-grab active:cursor-grabbing select-none ${
           isDragging ? 'scale-110 opacity-90' : 'hover:scale-105 active:scale-95'
         }`}
         title="Pedro Robot Guide — Tap karke koi bhi feature samjhein (Double tap karke top bar me bhejein)"
       >
-        {/* Floating 3D Robot Mascot */}
-        <div className="relative flex flex-col items-center justify-center">
+        {/* Invisible 1 cm circular hitzone shield overlay around Pedro */}
+        <div
+          className="absolute inset-0 rounded-full pointer-events-auto cursor-grab active:cursor-grabbing select-none"
+          aria-hidden="true"
+          style={{
+            background: 'rgba(0, 0, 0, 0.001)', // Non-zero alpha guarantees touch capture on mobile engines
+            touchAction: 'none',
+          }}
+        />
+
+        {/* Floating 3D Robot Mascot (exact coordinates preserved) */}
+        <div className="relative flex flex-col items-center justify-center pointer-events-auto">
           {/* Pedro Live Speech Bubble (when speaking while dialog is closed) */}
           {speechBubbleText && !isActive && (
             <div
               className={`absolute bottom-full mb-3 pointer-events-auto z-[99999] ${
                 position.x > (typeof window !== 'undefined' ? window.innerWidth / 2 : 200) ? 'right-0' : 'left-0'
               } w-64 max-w-[85vw] p-3 rounded-2xl bg-slate-950/95 border-2 border-purple-500/80 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-200`}
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 setSpeechBubbleText(null);
