@@ -442,16 +442,15 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
       </div>
 
       {/* ── BOTTOM CONTROL ACTION BAR ── */}
-      <div className="shrink-0 w-full px-2.5 sm:px-4 pt-2 pb-16 sm:pb-4 bg-slate-900 border-t border-slate-700/90 backdrop-blur-md z-50 shadow-[0_-12px_28px_rgba(0,0,0,0.6)]">
-        <div className="max-w-4xl w-full mx-auto flex items-center justify-between gap-1 sm:gap-2">
+      <div className="shrink-0 w-full px-3 sm:px-4 pt-2.5 pb-10 sm:pb-4 bg-slate-900 border-t border-slate-700/90 backdrop-blur-md z-50 shadow-[0_-12px_28px_rgba(0,0,0,0.6)]">
+        <div className="max-w-4xl w-full mx-auto flex items-center justify-between gap-1.5 sm:gap-2">
           {/* Left: Previous & Clear */}
-          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               disabled={currentIndex <= 0}
               onClick={handlePrev}
-              className="px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-200 text-xs sm:text-sm font-black flex items-center gap-1 border border-slate-700 cursor-pointer active:scale-95 transition-all shadow-sm shrink-0"
-              title="पिछला प्रश्न (Previous)"
+              className="px-3 sm:px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-200 text-xs sm:text-sm font-black flex items-center gap-1 border border-slate-700 cursor-pointer active:scale-95 transition-all shadow-sm shrink-0"
             >
               <ChevronLeft size={16} />
               <span>पिछला</span>
@@ -461,8 +460,7 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={handleClearResponse}
-                className="px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-[11px] font-bold border border-slate-700 cursor-pointer active:scale-95 transition-all shrink-0"
-                title="उत्तर हटाएं (Clear Selection)"
+                className="px-2 sm:px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-[11px] font-bold border border-slate-700 cursor-pointer active:scale-95 transition-all shrink-0"
               >
                 Clear
               </button>
@@ -475,16 +473,15 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
           </div>
 
           {/* Right: Submit & Next (Always Rendered & Visible) */}
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
               onClick={() => setIsSubmitConfirmOpen(true)}
-              className={`px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center gap-1 shadow-md cursor-pointer active:scale-95 transition-all shrink-0 ${
+              className={`px-2.5 sm:px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center gap-1 shadow-md cursor-pointer active:scale-95 transition-all shrink-0 ${
                 currentIndex >= questions.length - 1
                   ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/40 ring-1 ring-emerald-400/40'
                   : 'bg-slate-800/90 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30'
               }`}
-              title="टेस्ट सबमिट करें"
             >
               <Send size={13} />
               <span>सबमिट</span>
@@ -494,14 +491,9 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
               type="button"
               disabled={currentIndex >= questions.length - 1}
               onClick={handleNext}
-              className={`px-3 sm:px-5 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center gap-1 shadow-lg cursor-pointer active:scale-95 transition-all ring-1 shrink-0 ${
-                currentIndex >= questions.length - 1
-                  ? 'opacity-30 pointer-events-none bg-slate-800 text-slate-500 border border-slate-700 ring-transparent'
-                  : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white shadow-indigo-600/30 ring-indigo-400/30'
-              }`}
-              title="अगला प्रश्न (Next Question)"
+              className="px-3.5 sm:px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:opacity-30 disabled:pointer-events-none text-white text-xs sm:text-sm font-black flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 cursor-pointer active:scale-95 transition-all ring-1 ring-indigo-400/30 shrink-0"
             >
-              <span>अगला</span>
+              <span>अगला (Next)</span>
               <ChevronRight size={16} />
             </button>
           </div>

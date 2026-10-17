@@ -290,8 +290,8 @@ export function cleanMatchQuestionStem(questionText: string): string {
     if (/^(?:(?:सूची|List)[- ]*(?:I(?![I\w])|II|1|2\b)|खण्ड\s*['"‘]?[अबAB]|Khand\s*['"‘]?[अबAB])(?:\s*\([^)]*\))?$/i.test(line)) {
       continue;
     }
-    // If line starts with match item key in match area: "a. हड़प्पा" or "II. सिन्धु"
-    if (/^(?:[a-dA-D1-4IVXivx]+[\.\)\:\-]\s*)/i.test(line) && !isInstruction(line)) {
+    // If line starts with match item key in match area: "a. हड़प्पा"
+    if (/^(?:[a-dA-D1-4IVXivx][\.\)\:\-]\s*)/i.test(line) && !isInstruction(line)) {
       continue;
     }
 
@@ -467,8 +467,8 @@ export function extractMatchColumns(questionText: string, statements?: string[])
         continue;
       }
 
-      // Check item with key (supports A, B, 1, 2, I, II, III, IV)
-      const itemMatch = line.match(/^(?:\(?([a-dA-D1-4IVXivx]+)\)?[\.\:\-]?\s*)(.+)$/);
+      // Check item with key
+      const itemMatch = line.match(/^(?:\(?([a-dA-D1-4IVXivx])\)?[\.\:\-]?\s*)(.+)$/);
       if (itemMatch) {
         const key = itemMatch[1];
         let text = itemMatch[2].trim().replace(/\s*(?:कूट|Codes?)\s*[:：/]?.*$/i, '').trim();

@@ -447,7 +447,7 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg rounded-t-[32px] sm:rounded-3xl border border-indigo-500/40 bg-slate-900 text-white shadow-2xl overflow-hidden flex flex-col max-h-[92vh] sm:max-h-[88vh] animate-in slide-in-from-bottom-8 duration-250 pb-0"
+            className="w-full max-w-lg rounded-t-[32px] sm:rounded-3xl border border-indigo-500/40 bg-slate-900 text-white shadow-2xl overflow-hidden flex flex-col max-h-[84vh] sm:max-h-[88vh] animate-in slide-in-from-bottom-8 duration-250 pb-0"
           >
             {/* Top Pull Notch for Mobile Gesture Affordance */}
             <div className="w-full flex justify-center pt-3 pb-1 sm:hidden shrink-0">
@@ -605,7 +605,7 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
             </div>
 
             {/* Sticky Bottom Actions - Elevated with extra safe-area padding for mobile navigation */}
-            <div className="p-4 pt-3 pb-16 sm:pb-4 border-t border-slate-800/90 bg-slate-950/98 backdrop-blur-xl flex items-center gap-2.5 shrink-0 shadow-[0_-12px_24px_rgba(0,0,0,0.5)]">
+            <div className="p-4 pt-3 pb-10 sm:pb-4 border-t border-slate-800/90 bg-slate-950/98 backdrop-blur-xl flex items-center gap-2.5 shrink-0 shadow-[0_-12px_24px_rgba(0,0,0,0.5)]">
               <button
                 type="button"
                 onClick={() => {
