@@ -372,6 +372,16 @@ function parseSimpleFormatBlock(block: string, topic: string): Partial<MCQItem> 
         correctAnswer,
     };
 
+    // Auto-detect exam year tag like [BPSC 2022], [Bihar Police 2023], [UPPSC 2021]
+    const examYearMatch = block.match(/\[([A-Za-z\u0900-\u097F\s\.\-]{2,40}\s*(?:19\d\d|20\d\d))\]/i) ||
+                          block.match(/\[(BPSC|UPSC|UPPSC|BSSC|Bihar Police|Bihar SI|SSC|Railway|NTPC)[^\]]*\]/i);
+    if (examYearMatch) {
+        q.examYear = examYearMatch[1].trim();
+        q.pyqInspired = examYearMatch[1].trim();
+        const yearOnly = examYearMatch[1].match(/(?:19|20)\d\d/);
+        if (yearOnly) q.year = yearOnly[0];
+    }
+
     if (explanationLines.length > 0) {
         q.explanation = explanationLines.join(' ').trim();
     }
