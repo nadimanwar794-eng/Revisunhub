@@ -171,10 +171,18 @@ const McqQuestionDisplay: React.FC<Props> = ({
             🎯 {config.examTag}
           </span>
 
-          {isNegative && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black bg-rose-600 text-white animate-pulse">
-              <AlertTriangle size={11} />
-              <span>सावधान: 'नहीं' प्रकार</span>
+          {/* Year / PYQ Exam Year Badge */}
+          {(q.year || q.examYear || q.pyqInspired) && (
+            <span
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black border transition-all ${
+                isDark
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-xs'
+                  : 'bg-amber-50 text-amber-800 border-amber-300 shadow-2xs'
+              }`}
+              title={`परीक्षा वर्ष / PYQ: ${q.examYear || q.year || q.pyqInspired}`}
+            >
+              <span>📅</span>
+              <span>{q.examYear || (q.year ? `वर्ष ${q.year}` : q.pyqInspired)}</span>
             </span>
           )}
         </div>

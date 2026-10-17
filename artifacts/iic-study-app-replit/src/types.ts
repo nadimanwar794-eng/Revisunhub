@@ -1855,6 +1855,10 @@ export interface MCQItem {
   difficulty?: 'EASY' | 'MEDIUM' | 'HARD'; // Difficulty Level
   difficultyLevel?: string;
   pyqInspired?: string;
+  /** Exam year tag (e.g. "2023", "2024", 2022) */
+  year?: string | number;
+  /** Full exam year name/tag (e.g. "BPSC 2022", "Bihar Police 2023", "BSEB 2024") */
+  examYear?: string;
   /** Attached picture URL (stored directly in Telegram Cloud Vault) */
   imageUrl?: string;
   /** Custom picture size/width (e.g. 30%, 50%, 75%, 100%) set by admin */

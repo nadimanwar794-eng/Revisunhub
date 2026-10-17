@@ -3,15 +3,18 @@ import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, BarChart, Ba
 
 // PIE CHART FOR QUESTION BREAKDOWN (CORRECT, INCORRECT, SKIPPED)
 export const MarksheetPieChart: React.FC<{
-    correct: number;
-    incorrect: number;
-    skipped: number;
-}> = ({ correct, incorrect, skipped }) => {
+    correct?: number;
+    incorrect?: number;
+    skipped?: number;
+}> = ({ correct = 0, incorrect = 0, skipped = 0 }) => {
+    const safeCorrect = Number(correct) || 0;
+    const safeIncorrect = Number(incorrect) || 0;
+    const safeSkipped = Number(skipped) || 0;
 
     const data = [
-        { name: 'Correct', value: correct, color: '#22c55e' }, // green-500
-        { name: 'Incorrect', value: incorrect, color: '#ef4444' }, // red-500
-        { name: 'Skipped', value: skipped, color: '#cbd5e1' }, // slate-300
+        { name: 'Correct', value: safeCorrect, color: '#22c55e' }, // green-500
+        { name: 'Incorrect', value: safeIncorrect, color: '#ef4444' }, // red-500
+        { name: 'Skipped', value: safeSkipped, color: '#cbd5e1' }, // slate-300
     ].filter(d => d.value > 0); // Only show segments with values
 
     if (data.length === 0) return <div className="text-center text-slate-500 text-xs py-4">No data available.</div>;
@@ -46,17 +49,18 @@ export const MarksheetPieChart: React.FC<{
 
 // BAR CHART FOR TOPIC WISE PERFORMANCE
 export const MarksheetTopicBarChart: React.FC<{
-    topicAnalysis: Record<string, { correct: number, total: number, percentage: number }>;
-}> = ({ topicAnalysis }) => {
+    topicAnalysis?: Record<string, { correct?: number, total?: number, percentage?: number }>;
+}> = ({ topicAnalysis = {} }) => {
 
-    const data = Object.keys(topicAnalysis).map(topic => {
-        const stats = topicAnalysis[topic];
+    const safeAnalysis = topicAnalysis || {};
+    const data = Object.keys(safeAnalysis).map(topic => {
+        const stats = safeAnalysis[topic] || {};
         return {
             name: topic.length > 15 ? topic.substring(0, 15) + '...' : topic,
             fullName: topic,
-            percentage: stats.percentage,
-            correct: stats.correct,
-            total: stats.total
+            percentage: Number(stats.percentage) || 0,
+            correct: Number(stats.correct) || 0,
+            total: Number(stats.total) || 0
         };
     });
 

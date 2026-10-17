@@ -2,6 +2,29 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Save, Trash2, ChevronRight, ArrowLeft, Plus, BookOpen, Edit2, X, ArrowRight, Copy, Library } from 'lucide-react';
 import { parseMCQText, normalizeMcqPaste } from '../utils/mcqParser';
+import { saveMcqLesson, deleteMcqLesson, subscribeMcqLessons } from '../firebase';
+import { getLucentSubjectOptions, LUCENT_SUBJECT_OPTIONS_BASE, getClassSubjectOptions } from '../constants';
+
+const CLASSES = ['6', '7', '8', '9', '10', '11', '12', 'COMPETITION'];
+
+const DEFAULT_CLASS_SUBJECTS: Record<string, string[]> = {
+  '6': ['Science', 'Mathematics', 'Social Science', 'Hindi', 'English', 'Sanskrit'],
+  '7': ['Science', 'Mathematics', 'Social Science', 'Hindi', 'English', 'Sanskrit'],
+  '8': ['Science', 'Mathematics', 'Social Science', 'Hindi', 'English', 'Sanskrit'],
+  '9': ['Science', 'Mathematics', 'Social Science', 'Hindi', 'English', 'Sanskrit'],
+  '10': ['Science', 'Mathematics', 'Social Science', 'Hindi', 'English', 'Sanskrit'],
+  '11': ['Physics', 'Chemistry', 'Biology', 'Mathematics', 'Hindi', 'English', 'History', 'Geography', 'Economics', 'Political Science'],
+  '12': ['Physics', 'Chemistry', 'Biology', 'Mathematics', 'Hindi', 'English', 'History', 'Geography', 'Economics', 'Political Science'],
+  'COMPETITION': ['General Knowledge', 'General Science', 'Mathematics', 'Reasoning', 'Current Affairs', 'Hindi', 'English'],
+};
+
+function subjectsForClass(cls: string, settings?: any): string[] {
+  const fromSettings = settings?.syllabusConfig?.[cls]?.subjects || settings?.classSubjects?.[cls];
+  if (Array.isArray(fromSettings) && fromSettings.length > 0) {
+    return fromSettings;
+  }
+  return DEFAULT_CLASS_SUBJECTS[cls] || ['Science', 'Mathematics', 'Social Science', 'Hindi', 'English'];
+}
 
 interface Props {
   settings: any;

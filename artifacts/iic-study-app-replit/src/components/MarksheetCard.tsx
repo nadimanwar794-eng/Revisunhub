@@ -1521,13 +1521,18 @@ export const MarksheetCard: React.FC<Props> = ({
               Speed
             </p>
             <p className="text-xl font-black text-slate-800">
-              {typeof result?.averageTimePerQuestion === "number"
-                ? `${result.averageTimePerQuestion.toFixed(1)}s`
-                : typeof (result as any)?.avgTimePerQuestion === "number"
-                ? `${(result as any).avgTimePerQuestion.toFixed(1)}s`
-                : result?.totalTimeSeconds && totalQ
-                ? `${(result.totalTimeSeconds / Math.max(totalQ, 1)).toFixed(1)}s`
-                : "0.0s"}
+              {(() => {
+                const avgNum = Number(result?.averageTimePerQuestion ?? (result as any)?.avgTimePerQuestion);
+                if (typeof avgNum === "number" && !isNaN(avgNum) && avgNum > 0) {
+                  return `${avgNum.toFixed(1)}s`;
+                }
+                const totalSec = Number(result?.totalTimeSeconds);
+                const safeTotalQ = Number(totalQ) || 1;
+                if (typeof totalSec === "number" && !isNaN(totalSec) && totalSec > 0 && safeTotalQ > 0) {
+                  return `${(totalSec / safeTotalQ).toFixed(1)}s`;
+                }
+                return "0.0s";
+              })()}
             </p>
             <p className="text-[8px] text-slate-500 uppercase">per question</p>
           </div>

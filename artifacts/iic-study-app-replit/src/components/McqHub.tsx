@@ -2135,7 +2135,7 @@ export const McqHub: React.FC<McqHubProps> = ({
       {/* 1. OFFICIAL MODE VIEW */}
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {activeSubMode === 'OFFICIAL' && (
-        <div className="flex-1 flex flex-col max-w-2xl w-full mx-auto px-3 sm:px-4 py-2 gap-2 animate-in fade-in duration-150">
+        <div className="flex-1 flex flex-col max-w-2xl w-full mx-auto px-3 sm:px-4 py-2 pb-28 sm:pb-36 gap-2 animate-in fade-in duration-150">
           {/* ── Examination Action & Status Strip (Compact, Live Score Hidden, Auto-Advance Active) ── */}
           <div
             className={`flex items-center justify-between gap-2 px-2.5 py-1 rounded-xl border transition-all ${
