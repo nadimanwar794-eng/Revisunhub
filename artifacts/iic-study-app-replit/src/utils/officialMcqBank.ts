@@ -228,7 +228,41 @@ export function getOfficial100Mcqs(
       }
     }
 
+    let detectedType = item.questionType;
+    let detectedMatchColumns = item.matchColumns;
+    let detectedAssertion = item.assertion;
+    let detectedReason = item.reason;
+    let detectedPassage = item.passage;
+    let detectedNegative = item.negativeHighlight;
+
+    try {
+      const det = detectQuestionType({
+        question: finalQText,
+        options: opts,
+        statements: itemStmts,
+        questionType: detectedType,
+        matchColumns: detectedMatchColumns,
+        assertion: detectedAssertion,
+        reason: detectedReason,
+        passage: detectedPassage,
+      });
+      if (det) {
+        detectedType = detectedType || det.type;
+        if (det.matchColumns && !detectedMatchColumns) detectedMatchColumns = det.matchColumns;
+        if (det.assertionReason) {
+          if (!detectedAssertion) detectedAssertion = det.assertionReason.assertion;
+          if (!detectedReason) detectedReason = det.assertionReason.reason;
+        }
+        if (det.caseStudy?.passage && !detectedPassage) {
+          detectedPassage = det.caseStudy.passage;
+          if (det.caseStudy.cleanedQuestion) finalQText = det.caseStudy.cleanedQuestion;
+        }
+        if (det.isNegative && !detectedNegative) detectedNegative = 'true';
+      }
+    } catch {}
+
     existingPool.push({
+      id: item.id,
       question: finalQText,
       statements: itemStmts && itemStmts.length > 0 ? itemStmts : undefined,
       options: opts,
@@ -237,6 +271,18 @@ export function getOfficial100Mcqs(
       topic: item.topic || item.subject || '',
       difficultyLevel: item.difficulty || item.difficultyLevel || 'Medium',
       questionNumber: item.questionNumber,
+      questionType: detectedType,
+      assertion: detectedAssertion,
+      reason: detectedReason,
+      matchColumns: detectedMatchColumns,
+      passage: detectedPassage,
+      negativeHighlight: detectedNegative,
+      sequenceItems: item.sequenceItems,
+      dataSufficiencyStatements: item.dataSufficiencyStatements,
+      imageUrl: item.imageUrl,
+      imageWidth: item.imageWidth,
+      imageAlign: item.imageAlign,
+      imagePosition: item.imagePosition,
     });
   };
 

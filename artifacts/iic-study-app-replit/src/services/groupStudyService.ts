@@ -44,6 +44,19 @@ export interface GroupStudyMcqQuestion {
   subject?: string;
   topic?: string;
   chapterTitle?: string;
+  // ── Competition Exam Objective Question Types & Diagrams ──
+  questionType?: any;
+  assertion?: string;
+  reason?: string;
+  matchColumns?: any;
+  passage?: string;
+  negativeHighlight?: string;
+  sequenceItems?: string[];
+  dataSufficiencyStatements?: string[];
+  imageUrl?: string;
+  imageWidth?: number | string;
+  imageAlign?: 'left' | 'center' | 'right';
+  imagePosition?: 'above_question' | 'below_question' | 'after_options';
 }
 
 export interface GroupStudyHostSync {

@@ -560,9 +560,8 @@ export const MarksheetCard: React.FC<Props> = ({
     setRecommendations(uniqueRecs);
     setRecLoading(false);
   };
-
   const ITEMS_PER_PAGE = 50;
-  const percentage = Math.round((result.score / result.totalQuestions) * 100);
+  const percentage = Math.round(((result?.score || 0) / Math.max(result?.totalQuestions || 1, 1)) * 100);
   const omrData = result.omrData || [];
   const hasOMR = omrData.length > 0;
   const totalPages = Math.ceil(omrData.length / ITEMS_PER_PAGE);
@@ -1404,14 +1403,14 @@ export const MarksheetCard: React.FC<Props> = ({
   };
 
   const renderMarksheetStyle1 = (elementId = "marksheet-style-1") => {
-    const totalQ = result.totalQuestions || 1;
-    const scorePercent = Math.round((result.score / totalQ) * 100);
-    const correct = result.correctCount || 0;
+    const totalQ = result?.totalQuestions || 1;
+    const scorePercent = Math.round(((result?.score || 0) / Math.max(totalQ, 1)) * 100);
+    const correct = result?.correctCount || 0;
     const skipped =
-      result.omrData?.filter((d) => d.selected === -1).length || 0;
-    const incorrect = totalQ - correct - skipped;
+      Array.isArray(result?.omrData) ? result.omrData.filter((d) => d && d.selected === -1).length : 0;
+    const incorrect = Math.max(0, totalQ - correct - skipped);
     let tagColor = "bg-slate-100 text-slate-600";
-    switch (result.performanceTag) {
+    switch (result?.performanceTag) {
       case "EXCELLENT":
         tagColor = "bg-green-100 text-green-700";
         break;
@@ -1457,10 +1456,10 @@ export const MarksheetCard: React.FC<Props> = ({
         <div className="flex justify-between items-start border-b border-slate-100 pb-6 mb-6">
           <div>
             <h2 className="text-2xl font-black text-slate-800 tracking-tight">
-              {result.chapterTitle}
+              {result?.chapterTitle || (result as any)?.testName || "Quiz Result"}
             </h2>
             <p className="text-slate-600 font-medium mt-1">
-              {result.subjectName}
+              {result?.subjectName || "General"}
             </p>
           </div>
           <div className="text-right">
@@ -1470,7 +1469,7 @@ export const MarksheetCard: React.FC<Props> = ({
             <div
               className={`text-4xl font-black ${scorePercent >= 80 ? "text-green-600" : scorePercent >= 50 ? "text-blue-600" : "text-red-600"}`}
             >
-              {result.score}/{totalQ}
+              {result?.score ?? 0}/{totalQ}
             </div>
           </div>
         </div>
@@ -1479,21 +1478,21 @@ export const MarksheetCard: React.FC<Props> = ({
         <div className="bg-slate-50 rounded-2xl p-4 flex items-center justify-between mb-8 border border-slate-100">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-xl font-black text-blue-600 shadow-sm border border-slate-200">
-              {user.name.charAt(0)}
+              {(user?.name || "Student").charAt(0).toUpperCase()}
             </div>
             <div>
-              <p className="font-bold text-slate-800">{user.name}</p>
+              <p className="font-bold text-slate-800">{user?.name || "Student"}</p>
               <p className="text-[10px] text-slate-600 font-mono">
-                ID: {user.displayId || user.id}
+                ID: {user?.displayId || user?.id || "N/A"}
               </p>
             </div>
           </div>
           <div className="text-right">
             <p className="text-xs font-bold text-slate-600">
-              {new Date(result.date).toLocaleDateString()}
+              {result?.date ? new Date(result.date).toLocaleDateString() : new Date().toLocaleDateString()}
             </p>
             <p className="text-[10px] text-slate-500 mt-0.5">
-              {new Date(result.date).toLocaleTimeString()}
+              {result?.date ? new Date(result.date).toLocaleTimeString() : new Date().toLocaleTimeString()}
             </p>
           </div>
         </div>
@@ -1513,8 +1512,8 @@ export const MarksheetCard: React.FC<Props> = ({
               Time Taken
             </p>
             <p className="text-xl font-black text-slate-800">
-              {Math.floor(result.totalTimeSeconds / 60)}m{" "}
-              {result.totalTimeSeconds % 60}s
+              {Math.floor((result?.totalTimeSeconds || 0) / 60)}m{" "}
+              {Number(result?.totalTimeSeconds || 0) % 60}s
             </p>
           </div>
           <div className="bg-white border border-slate-200 rounded-2xl p-4 text-center shadow-sm">
@@ -1522,7 +1521,13 @@ export const MarksheetCard: React.FC<Props> = ({
               Speed
             </p>
             <p className="text-xl font-black text-slate-800">
-              {result.averageTimePerQuestion.toFixed(1)}s
+              {typeof result?.averageTimePerQuestion === "number"
+                ? `${result.averageTimePerQuestion.toFixed(1)}s`
+                : typeof (result as any)?.avgTimePerQuestion === "number"
+                ? `${(result as any).avgTimePerQuestion.toFixed(1)}s`
+                : result?.totalTimeSeconds && totalQ
+                ? `${(result.totalTimeSeconds / Math.max(totalQ, 1)).toFixed(1)}s`
+                : "0.0s"}
             </p>
             <p className="text-[8px] text-slate-500 uppercase">per question</p>
           </div>
@@ -1533,7 +1538,7 @@ export const MarksheetCard: React.FC<Props> = ({
             <span
               className={`px-3 py-1 rounded-full text-xs font-black ${tagColor}`}
             >
-              {result.performanceTag && typeof result.performanceTag === 'string' ? result.performanceTag.replace("_", " ") : "N/A"}
+              {result?.performanceTag && typeof result.performanceTag === 'string' ? result.performanceTag.replace("_", " ") : "N/A"}
             </span>
           </div>
         </div>

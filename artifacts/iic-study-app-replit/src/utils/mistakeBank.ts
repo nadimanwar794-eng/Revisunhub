@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { storage } from './storage';
+import { detectQuestionType } from './questionTypeDetector';
 
 const MISTAKE_BANK_KEY = 'nst_mistake_bank_v1';
 
@@ -18,6 +19,20 @@ export interface MistakeEntry {
   lastSeenAt: number;
   attempts: number;
   source?: string;
+  // ── All 8 Competition Question Types & Multimedia ──
+  questionType?: any;
+  statements?: string[];
+  assertion?: string;
+  reason?: string;
+  matchColumns?: any;
+  passage?: string;
+  negativeHighlight?: string;
+  sequenceItems?: string[];
+  dataSufficiencyStatements?: string[];
+  imageUrl?: string;
+  imageWidth?: number | string;
+  imageAlign?: 'left' | 'center' | 'right';
+  imagePosition?: 'above_question' | 'below_question' | 'after_options';
 }
 
 const hashQuestion = (q: string, correctAnswer: number): string => {
@@ -84,9 +99,59 @@ export const addMistakes = (
     for (const raw of newItems) {
       if (!raw.question || !Array.isArray(raw.options) || raw.options.length < 2) continue;
       const id = hashQuestion(raw.question, raw.correctAnswer);
+
+      // Auto-detect 8 competitive question types if not explicitly specified
+      let detectedType = (raw as any).questionType;
+      let detectedMatchColumns = (raw as any).matchColumns;
+      let detectedAssertion = (raw as any).assertion;
+      let detectedReason = (raw as any).reason;
+      let detectedPassage = (raw as any).passage;
+      let detectedStmts = (raw as any).statements;
+
+      if (!detectedType || !detectedMatchColumns || !detectedAssertion) {
+        try {
+          const det = detectQuestionType({
+            question: raw.question,
+            options: raw.options,
+            statements: detectedStmts,
+            questionType: detectedType,
+            matchColumns: detectedMatchColumns,
+            assertion: detectedAssertion,
+            reason: detectedReason,
+            passage: detectedPassage,
+          });
+          if (det) {
+            detectedType = detectedType || det.type;
+            if (det.matchColumns && !detectedMatchColumns) detectedMatchColumns = det.matchColumns;
+            if (det.assertionReason) {
+              if (!detectedAssertion) detectedAssertion = det.assertionReason.assertion;
+              if (!detectedReason) detectedReason = det.assertionReason.reason;
+            }
+            if (det.caseStudy?.passage && !detectedPassage) detectedPassage = det.caseStudy.passage;
+          }
+        } catch {}
+      }
+
       if (byId.has(id)) {
         const prev = byId.get(id)!;
-        byId.set(id, { ...prev, lastSeenAt: now, attempts: (prev.attempts || 0) + 1 });
+        byId.set(id, {
+          ...prev,
+          lastSeenAt: now,
+          attempts: (prev.attempts || 0) + 1,
+          questionType: detectedType || prev.questionType,
+          statements: detectedStmts || prev.statements,
+          assertion: detectedAssertion || prev.assertion,
+          reason: detectedReason || prev.reason,
+          matchColumns: detectedMatchColumns || prev.matchColumns,
+          passage: detectedPassage || prev.passage,
+          negativeHighlight: (raw as any).negativeHighlight || prev.negativeHighlight,
+          sequenceItems: (raw as any).sequenceItems || prev.sequenceItems,
+          dataSufficiencyStatements: (raw as any).dataSufficiencyStatements || prev.dataSufficiencyStatements,
+          imageUrl: (raw as any).imageUrl || prev.imageUrl,
+          imageWidth: (raw as any).imageWidth || prev.imageWidth,
+          imageAlign: (raw as any).imageAlign || prev.imageAlign,
+          imagePosition: (raw as any).imagePosition || prev.imagePosition,
+        });
       } else {
         byId.set(id, {
           id,
@@ -103,6 +168,19 @@ export const addMistakes = (
           addedAt: now,
           lastSeenAt: now,
           attempts: 1,
+          questionType: detectedType,
+          statements: detectedStmts,
+          assertion: detectedAssertion,
+          reason: detectedReason,
+          matchColumns: detectedMatchColumns,
+          passage: detectedPassage,
+          negativeHighlight: (raw as any).negativeHighlight,
+          sequenceItems: (raw as any).sequenceItems,
+          dataSufficiencyStatements: (raw as any).dataSufficiencyStatements,
+          imageUrl: (raw as any).imageUrl,
+          imageWidth: (raw as any).imageWidth,
+          imageAlign: (raw as any).imageAlign,
+          imagePosition: (raw as any).imagePosition,
         });
         added++;
       }

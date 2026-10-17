@@ -1,5 +1,6 @@
 // @ts-nocheck
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Trophy,
   Lock,
@@ -15,28 +16,27 @@ import {
   FileText,
   X,
   Zap,
-  Info,
-  Award,
-  Layers,
-  Flame,
+  ArrowRight,
+  RotateCcw,
+  BookOpen,
+  Share2,
   Check
 } from 'lucide-react';
 import {
   PracticeSetMeta,
   PRACTICE_SETS_CONFIG,
   buildPracticeSetQuestions,
-  PracticeSetResult
 } from '../utils/competitionPracticeSets';
 import { buildClassAutoPracticeSets } from '../utils/classAutoPracticeSets';
 import { subscribeMcqLessons } from '../firebase';
-import { getCurrentWeekInfo } from '../utils/setLeaderboard';
+import { isSubscriptionFromCoins } from '../utils/subscriptionUtils';
 import { CompetitionPracticeSetModal } from './CompetitionPracticeSetModal';
 import { SetLeaderboardModal } from './SetLeaderboardModal';
 import { hapticLight, hapticStrong } from '../utils/haptic';
 
 interface Props {
   user: any;
-  settings?: any;
+  settings: any;
   compMcqPracticeLessons?: any[];
   isDarkMode?: boolean;
   onOpenStore?: () => void;
@@ -52,18 +52,46 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
   onClose
 }) => {
   const [selectedSet, setSelectedSet] = useState<PracticeSetMeta | null>(null);
+  const [drawerSet, setDrawerSet] = useState<PracticeSetMeta | null>(null);
   const [activeLeaderboardSet, setActiveLeaderboardSet] = useState<PracticeSetMeta | null>(null);
-  const [activeTab, setActiveTab] = useState<'ALL' | 'CLASS_10' | 'CLASS_12' | 'BASIC' | 'ULTRA' | 'BSEB' | 'SUBJECTS'>('ALL');
-  const [showVipLockAlert, setShowVipLockAlert] = useState<{ open: boolean; title: string; requiredTier: 'BASIC' | 'ULTRA' } | null>(null);
+  const [showVipLockAlert, setShowVipLockAlert] = useState<{
+    open: boolean;
+    title: string;
+    isFromCoins?: boolean;
+    hasNoSub?: boolean;
+  } | null>(null);
   const [allLessons, setAllLessons] = useState<any[]>([]);
 
   // Weekly countdown info for banner
-  const weekInfo = useMemo(() => getCurrentWeekInfo(), []);
+  const weekCountdown = useMemo(() => {
+    const now = new Date();
+    const day = now.getDay();
+    const daysUntilSunday = (7 - day) % 7;
+    const nextSunday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilSunday, 23, 59, 59);
+    const diffMs = Math.max(0, nextSunday.getTime() - now.getTime());
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    return `${hours}h ${mins}m`;
+  }, []);
 
-  // VIP Status Check
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SUBSCRIPTION & LOCKING RULES
+  // 1. Both Basic & Ultra sets are premium (require subscription).
+  // 2. Basic subscription unlocks BOTH Bihar Police (Basic) & BSSC (Ultra) sets!
+  // 3. Subscriptions acquired with credits/coins do NOT unlock ("credit se liya hua subscription pe na milega").
+  // 4. Sets 1 & 2 of Bihar Police AND Sets 1 & 2 of BSSC are completely FREE!
+  // ─────────────────────────────────────────────────────────────────────────────
   const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUB_ADMIN';
-  const isUltraUser = isAdmin || (user?.isPremium && user?.subscriptionLevel === 'ULTRA');
-  const isBasicUser = isAdmin || isUltraUser || (user?.isPremium && user?.subscriptionLevel === 'BASIC');
+  const isFromCoins = isSubscriptionFromCoins(user);
+  
+  // Real active subscription (excluding coin/credit purchases)
+  const isSubscribedPaid = !isFromCoins && (
+    Boolean(user?.isPremium) ||
+    Boolean(user?.subscriptionLevel) ||
+    Boolean(user?.subscriptionEndDate && new Date(user.subscriptionEndDate).getTime() > Date.now())
+  );
+  
+  const hasAccessToPremiumSets = isAdmin || isSubscribedPaid;
 
   // Real-time lessons listener to automatically form Class 10 & 12 subject sets
   useEffect(() => {
@@ -73,17 +101,17 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
     return unsub;
   }, []);
 
-  // 1. Auto-generated Class 10 Subject Sets (Deterministic chunking: Set 1, Set 2...)
+  // Auto-generated Class 10 Subject Sets
   const class10Sets = useMemo(() => {
     return buildClassAutoPracticeSets('10', allLessons, settings);
   }, [allLessons, settings]);
 
-  // 2. Auto-generated Class 12 Subject Sets (Deterministic chunking: Set 1, Set 2...)
+  // Auto-generated Class 12 Subject Sets
   const class12Sets = useMemo(() => {
     return buildClassAutoPracticeSets('12', allLessons, settings);
   }, [allLessons, settings]);
 
-  // 3. Convert custom practice sets configured by Admin
+  // Convert custom practice sets configured by Admin
   const customSetsAsMeta: (PracticeSetMeta & { customQuestions?: any[]; isCustom?: boolean; isSubjectSet?: boolean })[] = (settings?.customPracticeSets || []).map((cs: any, idx: number) => ({
     id: cs.id,
     setNumber: 100 + idx,
@@ -106,7 +134,7 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
     isCustom: true
   }));
 
-  // 4. Convert subject-wise question pools into practice sets for subject-level training
+  // Convert subject-wise question pools into practice sets for subject-level training
   const subjectSetsAsMeta: (PracticeSetMeta & { customQuestions?: any[]; isCustom?: boolean; isSubjectSet?: boolean })[] = (settings?.subjectMcqPools || []).map((pool: any, idx: number) => ({
     id: pool.id,
     setNumber: 200 + idx,
@@ -129,196 +157,143 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
   }));
 
   // Combine all available sets
-  const allAvailableSets = [
+  const allAvailableSets = useMemo(() => [
     ...PRACTICE_SETS_CONFIG,
     ...customSetsAsMeta,
     ...subjectSetsAsMeta,
     ...class10Sets,
     ...class12Sets
-  ];
+  ], [customSetsAsMeta, subjectSetsAsMeta, class10Sets, class12Sets]);
 
-  // Filtering by active tab
-  const filteredSets = allAvailableSets.filter(s => {
-    if (activeTab === 'ALL') return true;
-    if (activeTab === 'CLASS_10') return (s as any).classLevel === '10';
-    if (activeTab === 'CLASS_12') return (s as any).classLevel === '12';
-    if (activeTab === 'SUBJECTS') return (s as any).isSubjectSet;
-    if (activeTab === 'BSEB') {
-      const txt = ((s.targetExam || '') + ' ' + (s.title || '') + ' ' + (s.description || '')).toLowerCase();
-      return (s as any).isClassSet || txt.includes('bseb') || txt.includes('board') || txt.includes('बिहार बोर्ड');
+  // Check if a specific set is free for all users:
+  // - Bihar Police (Basic) Set 1 & Set 2 are FREE!
+  // - BSSC (Ultra) Set 1 & Set 2 are FREE!
+  // - Class 10 & 12 Board sets are FREE!
+  const isSetFree = (meta?: PracticeSetMeta | null) => {
+    if (!meta) return true;
+    if ((meta as any).isClassSet) return true;
+    if ((meta as any).isSubjectSet) return true;
+
+    // Bihar Police: Set 1 & Set 2 free
+    if (meta.type === 'BASIC' && (meta.setNumber === 1 || meta.setNumber === 2)) {
+      return true;
     }
-    if (activeTab === 'BASIC') {
-      return s.type === 'BASIC' && !(s as any).isSubjectSet && !(s as any).isClassSet;
+
+    // BSSC / SSC: Set 1 & Set 2 free
+    if (meta.type === 'ULTRA' && (meta.setNumber === 1 || meta.setNumber === 2)) {
+      return true;
     }
-    if (activeTab === 'ULTRA') {
-      return s.type === 'ULTRA' && !(s as any).isSubjectSet && !(s as any).isClassSet;
-    }
-    return true;
-  });
+
+    return false;
+  };
+
+  // Check if a set is locked for the current student
+  const checkSetLocked = (meta?: PracticeSetMeta | null): boolean => {
+    if (!meta) return false;
+    if (isAdmin) return false;
+    if (isSetFree(meta)) return false;
+
+    // Set 3+ requires subscription. Basic subscription unlocks both Basic & Ultra sets.
+    // Credit-acquired subscriptions do NOT unlock.
+    return !hasAccessToPremiumSets;
+  };
 
   const handleStartSet = (meta: PracticeSetMeta) => {
     hapticLight();
 
-    // Class 10 & 12 board sets are open to all students for fair statewide leaderboard participation
-    if ((meta as any).isClassSet) {
-      setSelectedSet(meta);
+    if (checkSetLocked(meta)) {
+      hapticStrong();
+      setShowVipLockAlert({
+        open: true,
+        title: meta.title,
+        isFromCoins: isFromCoins,
+        hasNoSub: !user?.isPremium
+      });
       return;
     }
 
-    // Check VIP permission for Competition Mock Sets
-    if (meta.type === 'BASIC') {
-      if (!isBasicUser) {
-        hapticStrong();
-        setShowVipLockAlert({
-          open: true,
-          title: meta.title,
-          requiredTier: 'BASIC'
-        });
-        return;
-      }
-    } else if (meta.type === 'ULTRA') {
-      if (!isUltraUser) {
-        hapticStrong();
-        setShowVipLockAlert({
-          open: true,
-          title: meta.title,
-          requiredTier: 'ULTRA'
-        });
-        return;
-      }
-    }
-
-    // Unlocked -> Launch
+    // Unlocked -> Launch Modal
     setSelectedSet(meta);
+    setDrawerSet(null);
+  };
+
+  const handleOpenDrawer = (meta: PracticeSetMeta) => {
+    hapticLight();
+    setDrawerSet(meta);
   };
 
   return (
-    <div className="space-y-4">
-      {/* ── HEADER BANNER ── */}
-      <div className="p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-blue-900/40 via-indigo-900/50 to-slate-900/70 border border-indigo-500/30 shadow-lg relative overflow-hidden">
-        <div className="flex items-start justify-between gap-3 relative z-10">
-          <div>
-            <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                🎯 Exam Practice & Weekly Leaderboard
-              </span>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                <Clock size={11} />
-                <span>रीसेट: {weekInfo.formattedCountdown}</span>
-              </span>
-            </div>
-            <h2 className="text-lg sm:text-xl font-black text-white">
-              प्रैक्टिस सेट व साप्ताहिक रैंक हब
-            </h2>
-            <p className="text-xs text-slate-300 mt-1 max-w-xl leading-relaxed">
-              बिहार पुलिस, BSSC तथा <strong>कक्षा 10वीं व 12वीं विषयवार ऑटो-जनरेटेड सेट्स</strong>। सभी विद्यार्थियों के लिए समान प्रश्न पत्र और प्रत्येक सेट का <strong>साप्ताहिक लाइव लीडरबोर्ड</strong>!
-            </p>
-          </div>
-          <div className="text-3xl sm:text-4xl shrink-0 select-none">
-            📝
-          </div>
-        </div>
+    <div className="space-y-4 max-w-5xl w-full mx-auto">
+      {/* ── ULTRA-PREMIUM HEADER HERO BANNER (Clean, Uncluttered, No Search/Sub-Filters) ── */}
+      <div className="relative rounded-3xl p-4 sm:p-5 bg-gradient-to-br from-slate-900 via-indigo-950/60 to-slate-900 border border-indigo-500/30 shadow-2xl overflow-hidden backdrop-blur-xl">
+        {/* Subtle Ambient Radial Glows */}
+        <div className="absolute -top-24 -right-24 w-72 h-72 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-24 -left-24 w-72 h-72 bg-blue-500/15 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Category Tabs */}
-        <div className="flex items-center gap-1.5 mt-4 pt-3 border-t border-indigo-500/20 flex-wrap text-xs">
-          <button
-            type="button"
-            onClick={() => setActiveTab('ALL')}
-            className={`px-3 py-1.5 rounded-xl font-black transition-all cursor-pointer ${
-              activeTab === 'ALL'
-                ? 'bg-indigo-600 text-white shadow-sm'
-                : 'bg-slate-800/80 text-slate-300 hover:text-white border border-slate-700'
-            }`}
-          >
-            सभी सेट्स ({allAvailableSets.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('CLASS_10')}
-            className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'CLASS_10'
-                ? 'bg-emerald-600 text-white shadow-sm'
-                : 'bg-slate-800/80 text-slate-300 hover:text-white border border-slate-700'
-            }`}
-          >
-            <span>🔟 10वीं बोर्ड ({class10Sets.length})</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('CLASS_12')}
-            className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'CLASS_12'
-                ? 'bg-teal-600 text-white shadow-sm'
-                : 'bg-slate-800/80 text-slate-300 hover:text-white border border-slate-700'
-            }`}
-          >
-            <span>🎓 12वीं बोर्ड ({class12Sets.length})</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('BASIC')}
-            className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'BASIC'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-slate-800/80 text-slate-300 hover:text-white border border-slate-700'
-            }`}
-          >
-            <span>👮 बिहार पुलिस</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('ULTRA')}
-            className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'ULTRA'
-                ? 'bg-amber-600 text-white shadow-sm'
-                : 'bg-slate-800/80 text-slate-300 hover:text-white border border-slate-700'
-            }`}
-          >
-            <span>🏛️ BSSC / SSC</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('BSEB')}
-            className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'BSEB'
-                ? 'bg-orange-600 text-white shadow-sm'
-                : 'bg-slate-800/80 text-slate-300 hover:text-white border border-slate-700'
-            }`}
-          >
-            <span>🟠 BSEB बोर्ड</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('SUBJECTS')}
-            className={`px-3 py-1.5 rounded-xl font-black transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'SUBJECTS'
-                ? 'bg-purple-600 text-white shadow-sm'
-                : 'bg-slate-800/80 text-slate-300 hover:text-white border border-slate-700'
-            }`}
-          >
-            <span>📚 सामान्य विषय ({subjectSetsAsMeta.length})</span>
-          </button>
+        <div className="relative z-10 space-y-2">
+          {/* Top Micro Badges */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>सेट 1 व 2 सभी के लिए मुफ़्त (Free)</span>
+            </span>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+              <Clock size={11} />
+              <span>साप्ताहिक रैंक रीसेट: {weekCountdown}</span>
+            </span>
+          </div>
+
+          <h1 className="text-lg sm:text-xl font-black text-white tracking-tight leading-snug">
+            प्रैक्टिस सेट्स व साप्ताहिक रैंक हब
+          </h1>
+          <p className="text-xs text-slate-300 leading-relaxed">
+            बिहार पुलिस (100 Qs) व BSSC (150 Qs) के सेट 1 व 2 सभी विद्यार्थियों के लिए बिल्कुल मुफ़्त हैं। बेसिक सब्सक्रिप्शन लेने पर आगे के सभी बिहार पुलिस व BSSC अल्ट्रा सेट्स भी अनलॉक हो जाएंगे।
+          </p>
+
+          {/* Quick Key Highlights */}
+          <div className="flex items-center gap-2.5 text-[11px] text-slate-400 pt-1 flex-wrap font-medium">
+            <span className="flex items-center gap-1 text-emerald-300 font-bold">
+              <CheckCircle2 size={13} className="text-emerald-400" />
+              <span>2 बिहार पुलिस + 2 BSSC मुफ़्त</span>
+            </span>
+            <span className="text-slate-600">·</span>
+            <span className="flex items-center gap-1 text-indigo-300 font-bold">
+              <Sparkles size={13} className="text-indigo-400" />
+              <span>बेसिक सब्सक्रिप्शन में अल्ट्रा सेट्स शामिल</span>
+            </span>
+            <span className="text-slate-600">·</span>
+            <span className="flex items-center gap-1 text-amber-300 font-bold">
+              <Trophy size={13} className="text-amber-400" />
+              <span>साप्ताहिक लाइव रैंक</span>
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* ── SETS GRID ── */}
+      {/* ── SETS GRID (ELEVATED PREMIUM CARDS) ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-        {filteredSets.map(meta => {
+        {allAvailableSets.map(meta => {
           const isBasic = meta.type === 'BASIC';
           const isClassSet = Boolean((meta as any).isClassSet);
           const isSubject = Boolean((meta as any).isSubjectSet);
-          const isLocked = isClassSet ? false : (isBasic ? !isBasicUser : !isUltraUser);
+          const isFree = isSetFree(meta);
+          const isLocked = checkSetLocked(meta);
 
           return (
             <div
               key={meta.id}
-              className={`p-4 rounded-2xl border transition-all text-left relative overflow-hidden group shadow-md ${
+              onClick={() => handleOpenDrawer(meta)}
+              className={`p-4 rounded-2xl border transition-all text-left relative overflow-hidden group cursor-pointer shadow-md hover:shadow-xl hover:-translate-y-0.5 ${
                 isLocked
-                  ? 'bg-slate-800/40 border-slate-700/60 opacity-90'
-                  : 'bg-slate-800/80 border-slate-700 hover:border-indigo-500/60'
+                  ? 'bg-slate-900/70 border-slate-800/80 hover:border-slate-700'
+                  : isClassSet
+                  ? 'bg-gradient-to-br from-slate-900/90 via-emerald-950/20 to-slate-900/90 border-slate-800 hover:border-emerald-500/50'
+                  : isBasic
+                  ? 'bg-gradient-to-br from-slate-900/90 via-blue-950/25 to-slate-900/90 border-slate-800 hover:border-blue-500/50'
+                  : 'bg-gradient-to-br from-slate-900/90 via-amber-950/25 to-slate-900/90 border-slate-800 hover:border-amber-500/50'
               }`}
             >
-              {/* Type Chip & Lock Icon */}
+              {/* Top Pill / Badge row */}
               <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {isClassSet ? (
@@ -330,94 +305,97 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
                     <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-teal-500/20 text-teal-300 border border-teal-500/30">
                       📚 विषय-वार टेस्ट
                     </span>
-                  ) : (meta as any).isCustom ? (
-                    <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                      ✨ फुल मॉक टेस्ट
+                  ) : (
+                    <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider ${
+                      isBasic
+                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    }`}>
+                      {isBasic ? 'बिहार पुलिस · 100 Qs' : 'BSSC / SSC · 150 Qs'}
                     </span>
-                  ) : null}
+                  )}
 
-                  <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider ${
-                    isClassSet
-                      ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
-                      : isBasic
-                      ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                  }`}>
+                  <span className="text-[10px] text-slate-400 font-medium">
                     {isClassSet
                       ? `${(meta as any).subjectLabel || 'बोर्ड'} स्पेशल`
-                      : isBasic
-                      ? 'बिहार पुलिस · Basic Set'
-                      : 'BSSC / SSC · Ultra Set'}
+                      : (meta.targetExam || 'प्रतियोगिता परीक्षा')}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-1">
-                  {isLocked ? (
-                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 text-[10px] font-black border border-amber-500/30">
-                      <Lock size={11} />
-                      <span>{isBasic ? 'Basic VIP' : 'Ultra VIP'}</span>
-                    </span>
-                  ) : (
+                <div className="flex items-center gap-1 shrink-0">
+                  {isFree ? (
                     <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[10px] font-black border border-emerald-500/30">
                       <Unlock size={11} />
-                      <span>Unlocked</span>
+                      <span>मुफ़्त (Free)</span>
+                    </span>
+                  ) : isLocked ? (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 text-[10px] font-black border border-amber-500/30">
+                      <Lock size={11} />
+                      <span>प्रीमियम सेट</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 text-[10px] font-black border border-emerald-500/30">
+                      <Unlock size={11} />
+                      <span>अनलॉक्ड (VIP)</span>
                     </span>
                   )}
                 </div>
               </div>
 
               {/* Title & Description */}
-              <h3 className="text-sm sm:text-base font-black text-white group-hover:text-indigo-300 transition-colors">
+              <h3 className="text-sm sm:text-base font-black text-white group-hover:text-indigo-300 transition-colors line-clamp-1">
                 {meta.title}
               </h3>
-              <p className="text-xs text-slate-300 mt-1 line-clamp-2 leading-relaxed">
+              <p className="text-xs text-slate-300/80 mt-1 line-clamp-2 leading-relaxed">
                 {meta.description}
               </p>
 
-              {/* Badges Info */}
-              <div className="flex items-center flex-wrap gap-2 mt-3 pt-2.5 border-t border-slate-700/50 text-[11px] font-semibold text-slate-300">
-                <span className="flex items-center gap-1 bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-700/60">
+              {/* Unboxed Metadata (Zero-pill discipline) */}
+              <div className="flex items-center flex-wrap gap-2 mt-3 pt-2.5 border-t border-slate-800/80 text-[11px] font-medium text-slate-300">
+                <span className="flex items-center gap-1 text-slate-300">
                   <Clock size={12} className="text-indigo-400" />
                   <span>{meta.durationMinutes} Min</span>
                 </span>
-                <span className="flex items-center gap-1 bg-slate-900/60 px-2 py-0.5 rounded-md border border-slate-700/60">
+                <span className="text-slate-600">·</span>
+                <span className="flex items-center gap-1 text-slate-300">
                   <FileText size={12} className="text-indigo-400" />
-                  <span>{meta.totalQuestions} Questions</span>
+                  <span>{meta.totalQuestions} प्रश्न</span>
                 </span>
+                <span className="text-slate-600">·</span>
                 {meta.negativeMarking ? (
-                  <span className="bg-rose-500/10 text-rose-300 px-2 py-0.5 rounded-md border border-rose-500/20">
+                  <span className="text-rose-400 font-bold">
                     -0.25 Negative
                   </span>
                 ) : (
-                  <span className="bg-emerald-500/10 text-emerald-300 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                  <span className="text-emerald-400 font-bold">
                     No Negative
                   </span>
                 )}
-                {isClassSet && (
-                  <span className="bg-teal-500/10 text-teal-300 px-2 py-0.5 rounded-md border border-teal-500/20">
-                    सभी का समान सेट
-                  </span>
-                )}
+                <span className="text-slate-600">·</span>
+                <span className="text-amber-300/90 font-medium">
+                  🏆 साप्ताहिक रैंक
+                </span>
               </div>
 
-              {/* Distribution Preview */}
+              {/* Section mini badges */}
               <div className="mt-2.5 flex items-center gap-1.5 flex-wrap text-[10px] text-slate-400 font-bold">
                 {meta.sections.map(s => (
-                  <span key={s.id} className="bg-slate-700/30 px-1.5 py-0.5 rounded">
+                  <span key={s.id} className="bg-slate-800/80 border border-slate-700/60 px-1.5 py-0.5 rounded">
                     {s.icon} {s.hindiName.split(' ')[0]}: {s.targetCount}Q
                   </span>
                 ))}
               </div>
 
               {/* Action Buttons: Leaderboard & Start Test */}
-              <div className="mt-3.5 pt-2.5 border-t border-slate-700/50 flex items-center gap-2">
+              <div className="mt-3.5 pt-2.5 border-t border-slate-800/80 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     hapticLight();
                     setActiveLeaderboardSet(meta);
                   }}
-                  className="py-2.5 px-3 rounded-xl bg-slate-900/90 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs font-black flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shrink-0"
+                  className="py-2.5 px-3 rounded-xl bg-slate-950/80 hover:bg-slate-800 text-amber-300 border border-amber-500/30 text-xs font-black flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shrink-0"
                 >
                   <Trophy size={13} className="text-amber-400" />
                   <span>लीडरबोर्ड</span>
@@ -425,26 +403,29 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
 
                 <button
                   type="button"
-                  onClick={() => handleStartSet(meta)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenDrawer(meta);
+                  }}
                   className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all shadow-md active:scale-95 cursor-pointer ${
                     isLocked
-                      ? 'bg-slate-700/80 hover:bg-slate-700 text-amber-300 border border-amber-500/30'
-                      : isClassSet
-                      ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:opacity-95 text-white'
+                      ? 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30'
+                      : isFree
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-900/30'
                       : isBasic
-                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white'
-                      : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white'
+                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-900/30'
+                      : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-amber-900/30'
                   }`}
                 >
                   {isLocked ? (
                     <>
                       <Lock size={13} />
-                      <span>Unlock VIP</span>
+                      <span>अनलॉक VIP</span>
                     </>
                   ) : (
                     <>
                       <Play size={13} className="fill-current" />
-                      <span>टेस्ट शुरू करें</span>
+                      <span>{isFree ? 'मुफ़्त टेस्ट शुरू करें' : 'टेस्ट शुरू करें'}</span>
                       <ChevronRight size={14} />
                     </>
                   )}
@@ -455,9 +436,222 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
         })}
       </div>
 
+      {/* ═══════════════════════════════════════════════════════════════════════ */}
+      {/* ── ULTRA-PREMIUM TEST LAUNCH DRAWER (BOTTOM SHEET) ──                  */}
+      {/* ═══════════════════════════════════════════════════════════════════════ */}
+      {drawerSet && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in duration-200"
+          style={{ zIndex: 9999999 }}
+          onClick={() => setDrawerSet(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-t-[32px] sm:rounded-3xl border border-indigo-500/40 bg-slate-900 text-white shadow-2xl overflow-hidden flex flex-col max-h-[84vh] sm:max-h-[88vh] animate-in slide-in-from-bottom-8 duration-250 pb-0"
+          >
+            {/* Top Pull Notch for Mobile Gesture Affordance */}
+            <div className="w-full flex justify-center pt-3 pb-1 sm:hidden shrink-0">
+              <div className="w-12 h-1.5 rounded-full bg-slate-600" />
+            </div>
+
+            {/* Drawer Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-start justify-between gap-3 shrink-0">
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                    isSetFree(drawerSet)
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : drawerSet.type === 'ULTRA'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                  }`}>
+                    {isSetFree(drawerSet)
+                      ? '🟢 मुफ़्त सेट (Set 1 & 2)'
+                      : drawerSet.type === 'ULTRA'
+                      ? 'ULTRA MOCK SET'
+                      : 'BASIC MOCK SET'}
+                  </span>
+                  <span className="text-xs text-slate-400 font-medium">
+                    {drawerSet.targetExam}
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-white leading-tight">
+                  {drawerSet.title}
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setDrawerSet(null)}
+                className="p-2 rounded-full bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer shrink-0"
+                title="बंद करें"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Scrollable Drawer Body with ample bottom padding */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-4 no-scrollbar flex-1 pb-10">
+              {/* Key Specs Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+                <div className="p-2.5 rounded-2xl bg-slate-800/60 border border-slate-700/60">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">समय सीमा</div>
+                  <div className="text-sm sm:text-base font-black text-white mt-0.5 flex items-center justify-center gap-1">
+                    <Clock size={14} className="text-indigo-400" />
+                    <span>{drawerSet.durationMinutes} Min</span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-2xl bg-slate-800/60 border border-slate-700/60">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">कुल प्रश्न</div>
+                  <div className="text-sm sm:text-base font-black text-white mt-0.5 flex items-center justify-center gap-1">
+                    <FileText size={14} className="text-indigo-400" />
+                    <span>{drawerSet.totalQuestions} Qs</span>
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-2xl bg-slate-800/60 border border-slate-700/60">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">नेगेटिव अंक</div>
+                  <div className="text-sm sm:text-base font-black mt-0.5">
+                    {drawerSet.negativeMarking ? (
+                      <span className="text-rose-400">-0.25 Mark</span>
+                    ) : (
+                      <span className="text-emerald-400">शून्य (0)</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-2.5 rounded-2xl bg-slate-800/60 border border-slate-700/60">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">साप्ताहिक रैंक</div>
+                  <div className="text-sm sm:text-base font-black text-amber-300 mt-0.5 flex items-center justify-center gap-1">
+                    <Trophy size={14} className="text-amber-400" />
+                    <span>Live State</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div className="p-3.5 rounded-2xl bg-slate-800/40 border border-slate-800 text-xs text-slate-300 leading-relaxed">
+                {drawerSet.description}
+              </div>
+
+              {/* Section Breakdown */}
+              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-white flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-indigo-400" />
+                    <span>विषयवार प्रश्नों का विवरण (Syllabus Split)</span>
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    कुल {drawerSet.totalQuestions} प्रश्न
+                  </span>
+                </div>
+
+                {/* Progress bar visualizing distribution */}
+                <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden flex">
+                  {drawerSet.sections.map((sec, idx) => {
+                    const pct = Math.round((sec.targetCount / drawerSet.totalQuestions) * 100);
+                    const colors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500'];
+                    return (
+                      <div
+                        key={sec.id}
+                        style={{ width: `${pct}%` }}
+                        className={`${colors[idx % colors.length]} transition-all`}
+                        title={`${sec.name}: ${sec.targetCount} प्रश्न (${pct}%)`}
+                      />
+                    );
+                  })}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  {drawerSet.sections.map(sec => (
+                    <div
+                      key={sec.id}
+                      className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-900/90 border border-slate-800 text-xs"
+                    >
+                      <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                        <span>{sec.icon}</span>
+                        <span>{sec.hindiName}</span>
+                      </span>
+                      <span className="font-black text-indigo-300">
+                        {sec.targetCount} प्रश्न
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Guidelines & Rules Checklist */}
+              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2 text-xs">
+                <h4 className="font-black text-white flex items-center gap-1.5">
+                  <ShieldCheck size={14} className="text-emerald-400" />
+                  <span>महत्वपूर्ण परीक्षा निर्देश (Guidelines):</span>
+                </h4>
+                <ul className="space-y-1.5 text-slate-300 text-[11px] leading-relaxed">
+                  <li className="flex items-start gap-1.5">
+                    <Check size={13} className="text-emerald-400 shrink-0 mt-0.5" />
+                    <span>टेस्ट शुरू करते ही टाइमर चालू हो जाएगा, समय समाप्त होने पर टेस्ट स्वतः सबमिट हो जाएगा।</span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <Check size={13} className="text-emerald-400 shrink-0 mt-0.5" />
+                    <span>सभी विद्यार्थियों के लिए समान प्रश्न पत्र रहेगा ताकि साप्ताहिक रैंकिंग निष्पक्ष रहे।</span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <Check size={13} className="text-emerald-400 shrink-0 mt-0.5" />
+                    <span>सबमिट करने के बाद आपकी रैंक, मार्क्स व सम्पूर्ण हल व्याख्या सहित उपलब्ध होगी।</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Sticky Bottom Actions - Elevated with extra safe-area padding for mobile navigation */}
+            <div className="p-4 pt-3 pb-10 sm:pb-4 border-t border-slate-800/90 bg-slate-950/98 backdrop-blur-xl flex items-center gap-2.5 shrink-0 shadow-[0_-12px_24px_rgba(0,0,0,0.5)]">
+              <button
+                type="button"
+                onClick={() => {
+                  hapticLight();
+                  setActiveLeaderboardSet(drawerSet);
+                }}
+                className="py-3 px-3.5 sm:px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40 text-xs font-black flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shrink-0 shadow-md"
+              >
+                <Trophy size={14} className="text-amber-400" />
+                <span>साप्ताहिक रैंक</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleStartSet(drawerSet)}
+                className={`flex-1 py-3 px-4 rounded-xl text-xs sm:text-sm font-black flex items-center justify-center gap-2 transition-all shadow-xl active:scale-95 cursor-pointer ${
+                  checkSetLocked(drawerSet)
+                    ? 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-amber-900/50'
+                    : 'bg-gradient-to-r from-indigo-600 via-blue-600 to-indigo-600 hover:from-indigo-500 hover:to-blue-500 text-white shadow-indigo-600/50 ring-2 ring-indigo-400/40'
+                }`}
+              >
+                {checkSetLocked(drawerSet) ? (
+                  <>
+                    <Lock size={15} />
+                    <span>अनलॉक करने के लिए सब्सक्रिप्शन लें</span>
+                  </>
+                ) : (
+                  <>
+                    <Play size={15} className="fill-current" />
+                    <span>{isSetFree(drawerSet) ? 'मुफ़्त टेस्ट शुरू करें' : 'अभी टेस्ट शुरू करें'}</span>
+                    <ArrowRight size={15} />
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* ── VIP LOCK PROMPT MODAL ── */}
-      {showVipLockAlert?.open && (
-        <div className="fixed inset-0 z-[1000005] flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in duration-150">
+      {showVipLockAlert?.open && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150"
+          style={{ zIndex: 9999999 }}
+        >
           <div className="w-full max-w-sm rounded-3xl bg-slate-900 border border-slate-700 p-5 sm:p-6 shadow-2xl text-center space-y-4 animate-in zoom-in-95 duration-150">
             <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-300 flex items-center justify-center mx-auto text-2xl shadow-lg">
               🔒
@@ -465,32 +659,40 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
 
             <div className="space-y-1">
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                VIP Exclusive Feature
+                प्रीमियम प्रैक्टिस सेट
               </span>
               <h3 className="text-base sm:text-lg font-black text-white mt-1">
-                प्रैक्टिस सेट लॉक है!
+                {showVipLockAlert.title}
               </h3>
               <p className="text-xs text-slate-300 leading-relaxed">
-                <strong>{showVipLockAlert.title}</strong> को एक्सेस करने के लिए <strong>{showVipLockAlert.requiredTier} VIP</strong> सब्सक्रिप्शन की आवश्यकता है।
+                {showVipLockAlert.isFromCoins ? (
+                  <>
+                    ⚠️ आपने <strong className="text-amber-300">क्रेडिट्स (Coins)</strong> से सब्सक्रिप्शन लिया है। प्रैक्टिस सेट्स केवल <strong>डायरेक्ट मुख्य सब्सक्रिप्शन</strong> पर उपलब्ध हैं।
+                  </>
+                ) : (
+                  <>
+                    बिहार पुलिस व BSSC के सेट 1 व 2 सभी के लिए मुफ़्त हैं। सेट 3 और आगे के सभी सेट्स अनलॉक करने के लिए सब्सक्रिप्शन आवश्यक है।
+                  </>
+                )}
               </p>
             </div>
 
             <div className="p-3 rounded-2xl bg-slate-800/80 border border-slate-700 text-left text-xs space-y-1.5 text-slate-300">
               <div className="font-bold text-white flex items-center gap-1.5">
                 <Sparkles size={13} className="text-amber-400" />
-                <span>VIP प्रैक्टिस सेट के फायदे:</span>
+                <span>सब्सक्रिप्शन के विशेष फायदे:</span>
               </div>
               <div className="flex items-center gap-1.5 text-[11px]">
                 <Check size={12} className="text-emerald-400" />
-                <span>बिहार पुलिस व BSSC के 100/150 प्रश्नों के मॉडल पेपर्स</span>
+                <span>बेसिक सब्सक्रिप्शन में बिहार पुलिस + BSSC अल्ट्रा सेट्स दोनों शामिल</span>
               </div>
               <div className="flex items-center gap-1.5 text-[11px]">
                 <Check size={12} className="text-emerald-400" />
-                <span>60 मिनट व 120 मिनट का रियल एग्जाम टाइमर</span>
+                <span>60 व 120 मिनट का रियल एग्जाम टाइमर एवं निगेटिव मार्किंग</span>
               </div>
               <div className="flex items-center gap-1.5 text-[11px]">
                 <Check size={12} className="text-emerald-400" />
-                <span>साप्ताहिक रैंकिंग व सम्पूर्ण हल व्याख्या सहित</span>
+                <span>राज्य स्तरीय साप्ताहिक रैंक एवं संपूर्ण व्याख्या</span>
               </div>
             </div>
 
@@ -498,9 +700,9 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={() => setShowVipLockAlert(null)}
-                className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-black border border-slate-700"
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 hover:text-white text-xs font-black border border-slate-700 cursor-pointer"
               >
-                Close
+                बंद करें
               </button>
               {onOpenStore && (
                 <button
@@ -509,14 +711,15 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
                     setShowVipLockAlert(null);
                     onOpenStore();
                   }}
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black shadow-md active:scale-95 transition-all"
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-black shadow-md active:scale-95 transition-all cursor-pointer"
                 >
-                  Store / Upgrade
+                  स्टोर / अपग्रेड करें
                 </button>
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ── TEST MODAL LAUNCHER ── */}
@@ -538,12 +741,14 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
                   customMcqs: user?.customMcqs || []
                 })
           }
-          isDarkMode={isDarkMode}
           onClose={() => setSelectedSet(null)}
+          onSaveResult={(res) => {
+            // Callback for result handling
+          }}
         />
       )}
 
-      {/* ── DEDICATED SET LEADERBOARD MODAL ── */}
+      {/* ── SET LEADERBOARD MODAL ── */}
       {activeLeaderboardSet && (
         <SetLeaderboardModal
           setId={activeLeaderboardSet.id}
@@ -551,13 +756,8 @@ export const CompetitionPracticeSetLauncher: React.FC<Props> = ({
           targetExam={activeLeaderboardSet.targetExam}
           maxMarks={activeLeaderboardSet.totalQuestions * (activeLeaderboardSet.marksPerQuestion || 1)}
           user={user}
-          isOpen={!!activeLeaderboardSet}
+          isOpen={Boolean(activeLeaderboardSet)}
           onClose={() => setActiveLeaderboardSet(null)}
-          onStartSet={() => {
-            const s = activeLeaderboardSet;
-            setActiveLeaderboardSet(null);
-            handleStartSet(s);
-          }}
         />
       )}
     </div>

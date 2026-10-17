@@ -1,5 +1,5 @@
-// @ts-nocheck
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Clock,
@@ -32,6 +32,7 @@ import {
 import { saveSetLeaderboardScore } from '../utils/setLeaderboard';
 import { hapticLight, hapticMedium, hapticStrong } from '../utils/haptic';
 import { playSoundClick, playSoundCorrect, playSoundWrong, playSoundVictory } from '../utils/soundEffects';
+import { renderMathInHtml, formatExplanationHtml } from '../utils/mathUtils';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import { SetLeaderboardModal } from './SetLeaderboardModal';
 
@@ -205,8 +206,11 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
   const unattemptedCount = questions.length - attemptedCount;
   const reviewCount = markedForReview.size;
 
-  return (
-    <div className="fixed inset-0 z-[999999] flex flex-col bg-slate-900 text-slate-100 select-none overflow-hidden font-sans">
+  const modalContent = (
+    <div
+      className="fixed inset-0 w-full h-[100dvh] max-h-[100dvh] flex flex-col bg-slate-900 text-slate-100 select-none overflow-hidden font-sans"
+      style={{ zIndex: 9999999 }}
+    >
       {/* ── TOP APP BAR ── */}
       <div className="shrink-0 flex items-center justify-between px-3 sm:px-4 py-2.5 bg-slate-800/95 border-b border-slate-700/80 shadow-md backdrop-blur-md">
         <div className="flex items-center gap-2 min-w-0">
@@ -317,7 +321,7 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
       </div>
 
       {/* ── MAIN QUESTION CONTAINER ── */}
-      <div className="flex-1 overflow-y-auto p-3 sm:p-5 max-w-4xl w-full mx-auto pb-24">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-5 max-w-4xl w-full mx-auto pb-8">
         {currentQ ? (
           <div className="space-y-4">
             {/* Header tags for Question */}
@@ -397,9 +401,10 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
                     }`}>
                       {letter}
                     </span>
-                    <span className="text-xs sm:text-sm font-medium leading-relaxed flex-1">
-                      {opt}
-                    </span>
+                    <span
+                      className="text-xs sm:text-sm font-medium leading-relaxed flex-1 break-words"
+                      dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }}
+                    />
                     {isReviewMode && oIdx === currentQ.correctAnswer && (
                       <CheckCircle2 size={16} className="text-emerald-400 shrink-0 mt-0.5" />
                     )}
@@ -413,14 +418,15 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
 
             {/* Explanation in Review Mode */}
             {isReviewMode && currentQ.explanation && (
-              <div className="p-4 rounded-xl bg-slate-800/90 border border-indigo-500/30 text-xs sm:text-sm text-slate-300 space-y-1 animate-in fade-in duration-200">
+              <div className="p-4 rounded-xl bg-slate-800/90 border border-indigo-500/30 text-xs sm:text-sm text-slate-300 space-y-1.5 animate-in fade-in duration-200">
                 <div className="font-black text-indigo-400 flex items-center gap-1.5">
                   <Info size={14} />
                   <span>व्याख्या (Explanation):</span>
                 </div>
-                <p className="leading-relaxed text-slate-300">
-                  {currentQ.explanation}
-                </p>
+                <div
+                  className="leading-relaxed text-slate-300"
+                  dangerouslySetInnerHTML={{ __html: formatExplanationHtml(currentQ.explanation) }}
+                />
               </div>
             )}
           </div>
@@ -430,42 +436,58 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
       </div>
 
       {/* ── BOTTOM CONTROL ACTION BAR ── */}
-      <div className="shrink-0 fixed bottom-0 left-0 right-0 p-3 bg-slate-800/95 border-t border-slate-700/80 backdrop-blur-md z-40">
-        <div className="max-w-4xl mx-auto flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+      <div className="shrink-0 w-full px-3 sm:px-4 pt-2.5 pb-10 sm:pb-4 bg-slate-900 border-t border-slate-700/90 backdrop-blur-md z-50 shadow-[0_-12px_28px_rgba(0,0,0,0.6)]">
+        <div className="max-w-4xl w-full mx-auto flex items-center justify-between gap-1.5 sm:gap-2">
+          {/* Left: Previous & Clear */}
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
               disabled={currentIndex <= 0}
               onClick={handlePrev}
-              className="px-3 sm:px-4 py-2 rounded-xl bg-slate-700/80 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-200 text-xs font-black flex items-center gap-1 border border-slate-600"
+              className="px-3 sm:px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-200 text-xs sm:text-sm font-black flex items-center gap-1 border border-slate-700 cursor-pointer active:scale-95 transition-all shadow-sm shrink-0"
             >
               <ChevronLeft size={16} />
-              <span>Prev</span>
+              <span>पिछला</span>
             </button>
 
             {answers[currentIndex] !== undefined && !isReviewMode && (
               <button
                 type="button"
                 onClick={handleClearResponse}
-                className="px-2.5 py-2 rounded-xl bg-slate-700/40 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-[11px] font-bold border border-slate-700"
+                className="px-2 sm:px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-[11px] font-bold border border-slate-700 cursor-pointer active:scale-95 transition-all shrink-0"
               >
                 Clear
               </button>
             )}
           </div>
 
-          <div className="text-center text-[11px] text-slate-400 font-bold hidden sm:block">
-            Attempted: <span className="text-emerald-400">{attemptedCount}</span> / {questions.length}
+          {/* Center: Progress Count */}
+          <div className="text-center text-[11px] text-slate-400 font-bold shrink-0 hidden xs:block">
+            हल: <span className="text-emerald-400 font-black">{attemptedCount}</span>/{questions.length}
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Right: Submit & Next (Always Rendered & Visible) */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsSubmitConfirmOpen(true)}
+              className={`px-2.5 sm:px-4 py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center gap-1 shadow-md cursor-pointer active:scale-95 transition-all shrink-0 ${
+                currentIndex >= questions.length - 1
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/40 ring-1 ring-emerald-400/40'
+                  : 'bg-slate-800/90 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30'
+              }`}
+            >
+              <Send size={13} />
+              <span>सबमिट</span>
+            </button>
+
             <button
               type="button"
               disabled={currentIndex >= questions.length - 1}
               onClick={handleNext}
-              className="px-3 sm:px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-30 disabled:pointer-events-none text-white text-xs font-black flex items-center gap-1 shadow-sm"
+              className="px-3.5 sm:px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:opacity-30 disabled:pointer-events-none text-white text-xs sm:text-sm font-black flex items-center gap-1.5 shadow-lg shadow-indigo-600/30 cursor-pointer active:scale-95 transition-all ring-1 ring-indigo-400/30 shrink-0"
             >
-              <span>Next</span>
+              <span>अगला (Next)</span>
               <ChevronRight size={16} />
             </button>
           </div>
@@ -771,4 +793,6 @@ export const CompetitionPracticeSetModal: React.FC<Props> = ({
       )}
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 };

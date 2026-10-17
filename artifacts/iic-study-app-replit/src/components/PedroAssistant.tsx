@@ -3300,11 +3300,17 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
 
   const [isDragging, setIsDragging] = useState(false);
   const [hasMoved, setHasMoved] = useState(false);
-  // User request: "pedro bhi agar na hoga screen pe to aayega agar hoga to koi baat nahi aur pedro ko bhagana ho to pedro pe abhi ke jaisa tap karna hoga 2 baar"
+  // Persist dismissed state: if Pedro was dismissed by user, do not auto-reappear
   const [isHidden, setIsHidden] = useState<boolean>(() => {
     if (hidden) return true;
+    if (typeof window !== 'undefined') {
+      try {
+        if (localStorage.getItem('nst_pedro_hidden') === 'true') return true;
+      } catch {}
+    }
     return false;
   });
+  const [isDismissing, setIsDismissing] = useState(false);
   const singleTapTimerRef = useRef<any>(null);
   const lastTapRef = useRef<number>(0);
   const [speechBubbleText, setSpeechBubbleText] = useState<string | null>(null);
@@ -3474,7 +3480,17 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
   }, [position, isHidden, isActive, retirePhase]);
 
   useEffect(() => {
-    setIsHidden(hidden);
+    if (hidden) {
+      setIsHidden(true);
+      return;
+    }
+    try {
+      if (localStorage.getItem('nst_pedro_hidden') === 'true') {
+        setIsHidden(true);
+        return;
+      }
+    } catch {}
+    setIsHidden(false);
   }, [hidden]);
 
   // Keep home position in sync when user isn't in demonstration mode or dragging
@@ -3576,8 +3592,36 @@ export const FloatingPedroWidget: React.FC<FloatingPedroWidgetProps> = ({
 // from accidental clicks or navigation while tapping or moving ("hatane pe") Pedro.
 const PEDRO_HIT_EXPANSION_PX = 38;
 
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handleDismissPedro = useCallback((e?: React.SyntheticEvent | Event) => {
+    if (e) {
+      e.stopPropagation();
+      if ((e as any).cancelable && (e as any).preventDefault) {
+        (e as any).preventDefault();
+      }
+    }
+    if (singleTapTimerRef.current) {
+      clearTimeout(singleTapTimerRef.current);
+      singleTapTimerRef.current = null;
+    }
+    setIsDismissing(true);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nst_pedro_hidden', 'true');
+      window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: true } }));
+      playSoftChime();
+      pedroSpeak('Pedro paused.', { rate: 1.2, showBubble: false });
+    }
+    // Delay unmounting by 180ms to safely consume any pending synthetic touch/click events in browser event queue
+    setTimeout(() => {
+      setIsHidden(true);
+      setIsDismissing(false);
+    }, 180);
+  }, []);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
+    if (e.cancelable && e.pointerType === 'touch') {
+      e.preventDefault();
+    }
     dragStartRef.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -3587,13 +3631,16 @@ const PEDRO_HIT_EXPANSION_PX = 38;
     setIsDragging(true);
     setHasMoved(false);
     try {
-      e.currentTarget.setPointerCapture?.(e.pointerId);
+      (e.currentTarget as any)?.setPointerCapture?.(e.pointerId);
     } catch {}
   };
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerMove = (e: React.PointerEvent) => {
     if (!isDragging) return;
     e.stopPropagation();
+    if (e.cancelable && e.pointerType === 'touch') {
+      e.preventDefault();
+    }
     const deltaX = e.clientX - dragStartRef.current.startX;
     const deltaY = e.clientY - dragStartRef.current.startY;
 
@@ -3607,12 +3654,15 @@ const PEDRO_HIT_EXPANSION_PX = 38;
     setPosition({ x: newX, y: newY });
   };
 
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handlePointerUp = (e: React.PointerEvent) => {
     e.stopPropagation();
+    if (e.cancelable && e.pointerType === 'touch') {
+      e.preventDefault();
+    }
     if (!isDragging) return;
     setIsDragging(false);
     try {
-      e.currentTarget.releasePointerCapture?.(e.pointerId);
+      (e.currentTarget as any)?.releasePointerCapture?.(e.pointerId);
     } catch {}
 
     // Persist position and notify
@@ -3630,17 +3680,7 @@ const PEDRO_HIT_EXPANSION_PX = 38;
       // Double tap detected (within 380ms): Bhaga do Pedro ko!
       if (timeSinceLastTap < 380) {
         lastTapRef.current = 0;
-        if (singleTapTimerRef.current) {
-          clearTimeout(singleTapTimerRef.current);
-          singleTapTimerRef.current = null;
-        }
-        setIsHidden(true);
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('nst_pedro_hidden', 'true');
-          window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: true } }));
-          playSoftChime();
-          pedroSpeak('Pedro paused.', { rate: 1.2, showBubble: false });
-        }
+        handleDismissPedro(e);
         return;
       }
 
@@ -3684,17 +3724,26 @@ const PEDRO_HIT_EXPANSION_PX = 38;
 
   const handleTouchStart = (e: React.TouchEvent) => {
     e.stopPropagation();
+    if (e.cancelable) {
+      e.preventDefault();
+    }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
     e.stopPropagation();
+    if (e.cancelable) {
+      e.preventDefault();
+    }
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     e.stopPropagation();
+    if (e.cancelable) {
+      e.preventDefault();
+    }
   };
 
-  if (isHidden && authWelcomePhase === 'none') {
+  if (isHidden && authWelcomePhase === 'none' && !isDismissing) {
     return null;
   }
 
@@ -3724,7 +3773,11 @@ const PEDRO_HIT_EXPANSION_PX = 38;
           touchAction: 'none',
           userSelect: 'none',
           WebkitUserSelect: 'none',
-          transition: isTransitioning
+          opacity: isDismissing ? 0 : 1,
+          pointerEvents: isDismissing ? 'none' : 'auto',
+          transition: isDismissing
+            ? 'opacity 0.15s ease'
+            : isTransitioning
             ? 'left 0.95s cubic-bezier(0.34, 1.2, 0.64, 1), top 0.95s cubic-bezier(0.34, 1.2, 0.64, 1), opacity 0.4s ease'
             : isDragging
             ? 'none'
@@ -3736,7 +3789,7 @@ const PEDRO_HIT_EXPANSION_PX = 38;
         onPointerCancel={(e) => {
           if (isDragging) {
             setIsDragging(false);
-            try { e.currentTarget.releasePointerCapture?.(e.pointerId); } catch {}
+            try { (e.currentTarget as any)?.releasePointerCapture?.(e.pointerId); } catch {}
           }
         }}
         onClick={handleClick}
@@ -3746,20 +3799,30 @@ const PEDRO_HIT_EXPANSION_PX = 38;
         className={`group cursor-grab active:cursor-grabbing select-none ${
           isDragging ? 'scale-110 opacity-90' : 'hover:scale-105 active:scale-95'
         }`}
-        title="Pedro Robot Guide — Tap karke koi bhi feature samjhein (Double tap karke top bar me bhejein)"
+        title="Pedro Robot Guide — Tap karke koi bhi feature samjhein (Double tap karke bhagayein)"
       >
-        {/* Invisible 1 cm circular hitzone shield overlay around Pedro */}
-        <div
-          className="absolute inset-0 rounded-full pointer-events-auto cursor-grab active:cursor-grabbing select-none"
-          aria-hidden="true"
+        {/* Invisible 1 cm circular radius button behind Pedro: User request: pedro ke pichhe invisivial 1 cm ke radias me button bana do taki thira idhar udhar tab pe niche ki chijhe open na ho */}
+        <button
+          type="button"
+          aria-label="Pedro Touch Shield"
+          title="Pedro Touch Shield"
+          className="absolute inset-0 rounded-full border-0 outline-none select-none cursor-grab active:cursor-grabbing pointer-events-auto"
           style={{
-            background: 'rgba(0, 0, 0, 0.001)', // Non-zero alpha guarantees touch capture on mobile engines
+            background: 'rgba(0, 0, 0, 0.001)', // Non-zero alpha guarantees touch capture on all mobile web engines
             touchAction: 'none',
+            zIndex: 1,
           }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onClick={handleClick}
         />
 
         {/* Floating 3D Robot Mascot (exact coordinates preserved) */}
-        <div className="relative flex flex-col items-center justify-center pointer-events-auto">
+        <div className="relative z-10 flex flex-col items-center justify-center pointer-events-auto">
           {/* Pedro Live Speech Bubble (when speaking while dialog is closed) */}
           {speechBubbleText && !isActive && (
             <div

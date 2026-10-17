@@ -64,6 +64,7 @@ import { loadRoutineData, saveRoutineData } from '../utils/routineStorage';
 import McqQuestionDisplay from './McqQuestionDisplay';
 import { extractStatements } from '../utils/mcqParser';
 import { getMcqStatements } from '../utils/mcqStructure';
+import { CompetitionPracticeSetLauncher } from './CompetitionPracticeSetLauncher';
 
 export interface McqHubProps {
   user: User;
@@ -71,7 +72,9 @@ export interface McqHubProps {
   onBack?: () => void;
   isDarkMode?: boolean;
   initialMcqDraft?: { question: string; statements?: string[]; options: [string, string, string, string] | string[]; correctAnswer: number; explanation?: string };
-  initialMode?: 'OFFICIAL' | 'BATTLES';
+  initialMode?: 'OFFICIAL' | 'BATTLES' | 'PRACTICE_SETS';
+  compMcqPracticeLessons?: any[];
+  onOpenStore?: () => void;
 }
 
 export interface BattleMcqItem {
@@ -89,6 +92,19 @@ export interface BattleMcqItem {
   explanation: string;
   upvotes?: number;
   votes?: Record<string, number>; // userId -> optionIndex
+  // ── Competition Exam Objective Question Types Fields ──
+  questionType?: any;
+  assertion?: string;
+  reason?: string;
+  matchColumns?: any;
+  passage?: string;
+  sequenceItems?: string[];
+  dataSufficiencyStatements?: string[];
+  negativeHighlight?: string;
+  imageUrl?: string;
+  imageWidth?: number | string;
+  imageAlign?: 'left' | 'center' | 'right';
+  imagePosition?: 'above_question' | 'below_question' | 'after_options';
 }
 
 const AVAILABLE_CLASSES = [
@@ -124,11 +140,19 @@ export const McqHub: React.FC<McqHubProps> = ({
   isDarkMode = false,
   initialMcqDraft,
   initialMode,
+  compMcqPracticeLessons,
+  onOpenStore,
 }) => {
-  // Top 2 main mode buttons: 'OFFICIAL' vs 'BATTLES'
-  const [activeSubMode, setActiveSubMode] = useState<'OFFICIAL' | 'BATTLES'>(
+  // Top 3 main mode buttons: 'OFFICIAL' vs 'PRACTICE_SETS' vs 'BATTLES'
+  const [activeSubMode, setActiveSubMode] = useState<'OFFICIAL' | 'BATTLES' | 'PRACTICE_SETS'>(
     initialMode || (initialMcqDraft ? 'BATTLES' : 'OFFICIAL')
   );
+
+  useEffect(() => {
+    if (initialMode) {
+      setActiveSubMode(initialMode);
+    }
+  }, [initialMode]);
 
   // Sound toggle
   const [soundOn, setSoundOn] = useState<boolean>(() => isSoundEnabled());
@@ -1145,6 +1169,18 @@ export const McqHub: React.FC<McqHubProps> = ({
                     explanation: md.explanation || '',
                     upvotes: msgData.upvotes || 0,
                     votes: msgData.votes || {},
+                    questionType: md.questionType || msgData.questionType,
+                    assertion: md.assertion || msgData.assertion,
+                    reason: md.reason || msgData.reason,
+                    matchColumns: md.matchColumns || msgData.matchColumns,
+                    passage: md.passage || msgData.passage,
+                    negativeHighlight: md.negativeHighlight || msgData.negativeHighlight,
+                    sequenceItems: md.sequenceItems || msgData.sequenceItems,
+                    dataSufficiencyStatements: md.dataSufficiencyStatements || msgData.dataSufficiencyStatements,
+                    imageUrl: md.imageUrl || msgData.imageUrl,
+                    imageWidth: md.imageWidth || msgData.imageWidth,
+                    imageAlign: md.imageAlign || msgData.imageAlign,
+                    imagePosition: md.imagePosition || msgData.imagePosition,
                   });
                 }
               }
@@ -1186,6 +1222,18 @@ export const McqHub: React.FC<McqHubProps> = ({
                         explanation: bData.explanation || '',
                         upvotes: bData.upvotes || 0,
                         votes: bData.votes || {},
+                        questionType: bData.questionType || bData.mcqData?.questionType,
+                        assertion: bData.assertion || bData.mcqData?.assertion,
+                        reason: bData.reason || bData.mcqData?.reason,
+                        matchColumns: bData.matchColumns || bData.mcqData?.matchColumns,
+                        passage: bData.passage || bData.mcqData?.passage,
+                        negativeHighlight: bData.negativeHighlight || bData.mcqData?.negativeHighlight,
+                        sequenceItems: bData.sequenceItems || bData.mcqData?.sequenceItems,
+                        dataSufficiencyStatements: bData.dataSufficiencyStatements || bData.mcqData?.dataSufficiencyStatements,
+                        imageUrl: bData.imageUrl || bData.mcqData?.imageUrl,
+                        imageWidth: bData.imageWidth || bData.mcqData?.imageWidth,
+                        imageAlign: bData.imageAlign || bData.mcqData?.imageAlign,
+                        imagePosition: bData.imagePosition || bData.mcqData?.imagePosition,
                       });
                     }
                   }
@@ -1766,7 +1814,7 @@ export const McqHub: React.FC<McqHubProps> = ({
           <ArrowLeft size={17} />
         </button>
 
-        {/* Center: Top 2 Main Mode Buttons spanning full top bar */}
+        {/* Center: Top 3 Main Mode Buttons spanning full top bar */}
         <div className="flex-1 flex items-center p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 min-w-0">
           <button
             id="mcq-tab-official"
@@ -1782,7 +1830,24 @@ export const McqHub: React.FC<McqHubProps> = ({
             }`}
           >
             <Sparkles size={13} className={activeSubMode === 'OFFICIAL' ? 'text-amber-300' : 'text-blue-500'} />
-            <span className="truncate">Official 100 MCQs</span>
+            <span className="truncate">Daily 100</span>
+          </button>
+
+          <button
+            id="mcq-tab-practice-sets"
+            type="button"
+            onClick={() => {
+              setActiveSubMode('PRACTICE_SETS');
+              if (soundOn) playSoundClick();
+            }}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg font-black text-xs transition-all cursor-pointer truncate ${
+              activeSubMode === 'PRACTICE_SETS'
+                ? 'bg-amber-500 text-slate-950 shadow-xs'
+                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <Trophy size={13} className={activeSubMode === 'PRACTICE_SETS' ? 'text-slate-950' : 'text-amber-500'} />
+            <span className="truncate">Practice Sets</span>
           </button>
 
           <button
@@ -1799,7 +1864,7 @@ export const McqHub: React.FC<McqHubProps> = ({
             }`}
           >
             <Swords size={13} className={activeSubMode === 'BATTLES' ? 'text-amber-300' : 'text-purple-500'} />
-            <span className="truncate">MCQ Battle</span>
+            <span className="truncate">Battle</span>
             {battleList.length > 0 && (
               <span
                 className={`text-[10px] font-black px-1.5 py-0.2 rounded-full shrink-0 ${
@@ -1967,6 +2032,35 @@ export const McqHub: React.FC<McqHubProps> = ({
                 className={`w-6.5 h-6.5 rounded-lg border flex items-center justify-center transition-all active:scale-95 cursor-pointer ${
                   soundOn
                     ? 'bg-indigo-50 border-indigo-200 text-indigo-600 dark:bg-indigo-950/50 dark:border-indigo-800 dark:text-indigo-400'
+                    : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800 dark:border-slate-700'
+                }`}
+                title={soundOn ? 'Sound Mute' : 'Sound On'}
+              >
+                {soundOn ? <Volume2 size={13} /> : <VolumeX size={13} />}
+              </button>
+            </div>
+          </>
+        ) : activeSubMode === 'PRACTICE_SETS' ? (
+          <>
+            {/* Left: Practice Sets badge */}
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              <span className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400 font-black text-xs border border-amber-500/30">
+                <Trophy size={13} className="shrink-0" />
+                <span>प्रैक्टिस सेट्स व वीकली टेस्ट</span>
+              </span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium hidden sm:inline truncate">
+                10वीं, 12वीं बोर्ड व प्रतियोगिता सेट्स
+              </span>
+            </div>
+
+            {/* Right: Sound toggle */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={toggleSound}
+                className={`w-6.5 h-6.5 rounded-lg border flex items-center justify-center transition-all active:scale-95 cursor-pointer ${
+                  soundOn
+                    ? 'bg-amber-50 border-amber-200 text-amber-600 dark:bg-amber-950/50 dark:border-amber-800 dark:text-amber-400'
                     : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800 dark:border-slate-700'
                 }`}
                 title={soundOn ? 'Sound Mute' : 'Sound On'}
@@ -2745,7 +2839,22 @@ export const McqHub: React.FC<McqHubProps> = ({
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════════ */}
-      {/* 2. MCQ BATTLES VIEW */}
+      {/* 2. PRACTICE SETS VIEW (Moved from Home Page)                           */}
+      {/* ═══════════════════════════════════════════════════════════════════════ */}
+      {activeSubMode === 'PRACTICE_SETS' && (
+        <div className="flex-1 flex flex-col max-w-4xl w-full mx-auto px-2 sm:px-4 py-2 pb-24 gap-3 animate-in fade-in duration-150">
+          <CompetitionPracticeSetLauncher
+            user={user}
+            settings={settings}
+            compMcqPracticeLessons={compMcqPracticeLessons}
+            isDarkMode={isDarkMode}
+            onOpenStore={onOpenStore}
+          />
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════════ */}
+      {/* 3. MCQ BATTLES VIEW */}
       {/* ═══════════════════════════════════════════════════════════════════════ */}
       {activeSubMode === 'BATTLES' && (
         <div className="flex-1 flex flex-col max-w-2xl w-full mx-auto px-3 sm:px-4 py-2 pb-28 sm:pb-36 gap-2 animate-in fade-in duration-150">

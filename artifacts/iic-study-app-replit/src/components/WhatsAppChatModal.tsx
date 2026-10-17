@@ -2279,10 +2279,27 @@ export const WhatsAppChatModal: React.FC<Props> = ({
     return () => unsub();
   }, [user?.id, effectiveUserId, allMyUserIdsKey]);
 
-  // Redundant detection tracking refs
+  // Redundant detection tracking refs (persisted in localStorage to avoid repeated alerts)
   const prevFriendIdsRef = useRef<Set<string>>(new Set());
   const isFriendsFirstMountRef = useRef<boolean>(true);
-  const notifiedFriendAcceptedIdsRef = useRef<Set<string>>(new Set());
+  const notifiedFriendAcceptedIdsRef = useRef<Set<string>>((() => {
+    try {
+      const raw = localStorage.getItem(`nsta_notified_faccepted_${effectiveUserId || user?.id}`);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) return new Set(arr);
+      }
+    } catch {}
+    return new Set();
+  })());
+
+  const markFriendAcceptedNotified = (fid: string) => {
+    try {
+      notifiedFriendAcceptedIdsRef.current.add(fid);
+      const arr = Array.from(notifiedFriendAcceptedIdsRef.current).slice(-200);
+      localStorage.setItem(`nsta_notified_faccepted_${effectiveUserId || user?.id}`, JSON.stringify(arr));
+    } catch {}
+  };
 
   // Subscribe to Friend Request Accepted events (Real-time alert for the sender!)
   useEffect(() => {
@@ -2292,7 +2309,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
         if (!event?.friend) return;
         const acceptedFriend = event.friend;
         if (notifiedFriendAcceptedIdsRef.current.has(acceptedFriend.id)) return;
-        notifiedFriendAcceptedIdsRef.current.add(acceptedFriend.id);
+        markFriendAcceptedNotified(acceptedFriend.id);
 
         // 1. Immediately update friends list in React state
         setFriends((prev) => {
@@ -2332,7 +2349,7 @@ export const WhatsAppChatModal: React.FC<Props> = ({
 
     friends.forEach((f) => {
       if (!prevFriendIdsRef.current.has(f.id) && !notifiedFriendAcceptedIdsRef.current.has(f.id)) {
-        notifiedFriendAcceptedIdsRef.current.add(f.id);
+        markFriendAcceptedNotified(f.id);
         const wasInSent = sentRequests.some((r) => isSameUser(r.toId, f.id));
         if (wasInSent) {
           setNewAcceptedFriend(f);

@@ -1755,40 +1755,108 @@ export const StudentDashboard: React.FC<Props> = ({
     return () => unsub();
   }, []);
 
-  // --- REAL-TIME FRIEND REQUESTS LISTENER & MOBILE NOTIFICATION ---
+  // --- REAL-TIME FRIEND REQUESTS LISTENER & MOBILE NOTIFICATION (SHOWN ONLY ONCE) ---
   const [incomingFriendRequestsCount, setIncomingFriendRequestsCount] = useState<number>(0);
   const knownIncomingReqIdsRef = useRef<Set<string>>(new Set());
-  const isFirstReqCheckRef = useRef<boolean>(true);
+  const initialReqSyncDoneRef = useRef<boolean>(false);
 
   useEffect(() => {
     if (!user?.id) return;
+
+    // Load persisted notified request keys so the same notification is NEVER shown twice
+    const getNotifiedKeys = (): Set<string> => {
+      const set = new Set<string>();
+      try {
+        const raw = localStorage.getItem(`nsta_notified_freqs_${user.id}`);
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) arr.forEach((k: string) => set.add(k));
+        }
+      } catch {}
+      try {
+        const globalRaw = localStorage.getItem('nsta_notified_freqs_global');
+        if (globalRaw) {
+          const gArr = JSON.parse(globalRaw);
+          if (Array.isArray(gArr)) gArr.forEach((k: string) => set.add(k));
+        }
+      } catch {}
+      return set;
+    };
+
+    const markKeyNotified = (key: string) => {
+      try {
+        const set = getNotifiedKeys();
+        set.add(key);
+        const arr = Array.from(set).slice(-300); // keep recent 300 keys
+        localStorage.setItem(`nsta_notified_freqs_${user.id}`, JSON.stringify(arr));
+        localStorage.setItem('nsta_notified_freqs_global', JSON.stringify(arr));
+      } catch {}
+    };
+
     const unsub = subscribeToFriendRequests(user.id, (reqs) => {
       const pendingReqs = (reqs || []).filter((r) => r.status === 'PENDING');
       setIncomingFriendRequestsCount(pendingReqs.length);
 
-      // On initial load, record all existing IDs so we don't spam notifications
-      if (isFirstReqCheckRef.current) {
-        isFirstReqCheckRef.current = false;
-        pendingReqs.forEach((r) => knownIncomingReqIdsRef.current.add(r.id || `${r.fromId}_${r.toId}`));
+      const alreadyNotified = getNotifiedKeys();
+
+      // On initial sync, record all existing pending requests as known/notified
+      // so opening or refreshing the app never triggers repeated notifications
+      if (!initialReqSyncDoneRef.current) {
+        initialReqSyncDoneRef.current = true;
+        pendingReqs.forEach((r) => {
+          const key1 = r.id || `${r.fromId}_${r.toId}`;
+          const key2 = `${r.fromId}_${user.id}`;
+          const key3 = r.fromId;
+          knownIncomingReqIdsRef.current.add(key1);
+          knownIncomingReqIdsRef.current.add(key2);
+          if (key3) knownIncomingReqIdsRef.current.add(key3);
+          markKeyNotified(key1);
+          markKeyNotified(key2);
+          if (key3) markKeyNotified(key3);
+        });
         return;
       }
 
-      // Check for newly arrived friend request
+      // Check for newly arrived friend request (in real time)
       pendingReqs.forEach((req) => {
         const reqKey = req.id || `${req.fromId}_${req.toId}`;
-        if (!knownIncomingReqIdsRef.current.has(reqKey)) {
+        const altKey = `${req.fromId}_${user.id}`;
+        const senderKey = req.fromId;
+
+        const isKnown =
+          knownIncomingReqIdsRef.current.has(reqKey) ||
+          knownIncomingReqIdsRef.current.has(altKey) ||
+          (senderKey && knownIncomingReqIdsRef.current.has(senderKey)) ||
+          alreadyNotified.has(reqKey) ||
+          alreadyNotified.has(altKey) ||
+          (senderKey && alreadyNotified.has(senderKey));
+
+        if (!isKnown) {
+          // Immediately mark all keys so it can NEVER notify again
           knownIncomingReqIdsRef.current.add(reqKey);
-          const senderName = req.fromName || 'Ek student';
-          // Dispatch system notification & sound/vibration to mobile
-          dispatchSmartNotification({
-            title: '🤝 Nayi Friend Request!',
-            body: `${senderName} ne aapko Nsta Messenger par friend request bheji hai.`,
-            category: 'FRIEND_REQUEST',
-            url: '/',
-            senderId: req.fromId,
-          });
-          // Show toast alert
-          showAlert(`🤝 ${senderName} ne aapko friend request bheji hai!`, 'SUCCESS');
+          knownIncomingReqIdsRef.current.add(altKey);
+          if (senderKey) knownIncomingReqIdsRef.current.add(senderKey);
+          markKeyNotified(reqKey);
+          markKeyNotified(altKey);
+          if (senderKey) markKeyNotified(senderKey);
+
+          // Only trigger popup/chime if the request was created in real-time (< 2 minutes ago)
+          const reqTime = req.timestamp || (req as any).createdAt || 0;
+          const isFresh = reqTime > 0 ? (Date.now() - reqTime < 120000) : true;
+
+          if (isFresh) {
+            const senderName = req.fromName || 'Ek student';
+            // Dispatch system notification & sound/vibration to mobile (exactly once)
+            dispatchSmartNotification({
+              title: '🤝 Nayi Friend Request!',
+              body: `${senderName} ne aapko Nsta Messenger par friend request bheji hai.`,
+              category: 'FRIEND_REQUEST',
+              url: '/',
+              senderId: req.fromId,
+            });
+            // Show toast alert (exactly once)
+            showAlert(`🤝 ${senderName} ne aapko friend request bheji hai!`, 'SUCCESS');
+          }
         }
       });
     }, [(user as any).uid, user.displayId, user.mobile, user.email].filter(Boolean));
@@ -2030,7 +2098,7 @@ export const StudentDashboard: React.FC<Props> = ({
       const expiresAt = new Date(Date.now() + expiryHours * 60 * 60 * 1000).toISOString();
       const rewardMsg: any = {
         id: `mcq-prize-${Date.now()}`,
-        text: `🎯 MCQ Prize! You solved ${total} MCQs today and scored ${pct.toFixed(0)}%!\n\n${applicableRule.label}`,
+        text: `🎯 MCQ Prize! You solved ${total} MCQs today and scored ${(pct || 0).toFixed(0)}%!\n\n${applicableRule.label}`,
         date: new Date().toISOString(),
         read: false,
         type: 'REWARD',
@@ -3040,15 +3108,22 @@ export const StudentDashboard: React.FC<Props> = ({
   const [showUserGuide, setShowUserGuide] = useState(false);
   const [showPedro, setShowPedro] = useState(false);
   const [showPedro3DViewer, setShowPedro3DViewer] = useState(false);
-  // User request: Pedro agar screen pe na ho to aayega (default awake & on screen)
-  const [isPedroHidden, setIsPedroHidden] = useState<boolean>(false);
+  // Persist Pedro hidden state so once dismissed by user, Pedro stays hidden and does not auto-reappear
+  const [isPedroHidden, setIsPedroHidden] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('nst_pedro_hidden') === 'true';
+      } catch {}
+    }
+    return false;
+  });
 
   useEffect(() => {
-    // Pedro auto-presence on dashboard load
-    setIsPedroHidden(false);
+    // Keep Pedro hidden if previously dismissed by student
     try {
-      localStorage.removeItem('nst_pedro_hidden');
-      localStorage.removeItem('nst_pedro_sleeping');
+      if (localStorage.getItem('nst_pedro_hidden') === 'true') {
+        setIsPedroHidden(true);
+      }
     } catch {}
   }, []);
 
@@ -4043,16 +4118,9 @@ export const StudentDashboard: React.FC<Props> = ({
     const shouldAutoHideChrome =
       inPlayer && syllabusMode !== 'COMPETITION' && !isCompetitionHomeworkOpen;
     setIsTopBarHidden(competitionNotesOpen || shouldAutoHideChrome);
-    if (isCompetitionHomeworkOpen || (syllabusMode === 'COMPETITION' && inPlayer)) {
+    const isPedroDismissed = typeof window !== 'undefined' && localStorage.getItem('nst_pedro_hidden') === 'true';
+    if (!isPedroDismissed && (isCompetitionHomeworkOpen || (syllabusMode === 'COMPETITION' && inPlayer))) {
       setIsPedroHidden(false);
-      try {
-        localStorage.removeItem('nst_pedro_hidden');
-        localStorage.removeItem('nst_pedro_sleeping');
-        window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', {
-          detail: { isHidden: false, isSleeping: false },
-        }));
-        window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
-      } catch {}
     } else if (syllabusMode === 'COMPETITION') {
       setIsLandscapeUiHidden(false);
     }
@@ -5494,16 +5562,7 @@ export const StudentDashboard: React.FC<Props> = ({
         } else {
           toggleImmersiveStudyMode();
         }
-
-        // Keep the Pedro control available after either long-press action.
-        setIsPedroHidden(false);
-        try {
-          if (typeof window !== 'undefined') {
-            localStorage.removeItem('nst_pedro_hidden');
-            window.dispatchEvent(new CustomEvent('nst-pedro-hidden-change', { detail: { isHidden: false, isSleeping: false } }));
-            window.dispatchEvent(new CustomEvent('nst-restore-pedro'));
-          }
-        } catch (_) {}
+        // Long press opens wheel or immersive mode without forcing Pedro to reappear
       }, holdDuration);
     };
 
@@ -10107,6 +10166,8 @@ export const StudentDashboard: React.FC<Props> = ({
             user={user}
             settings={settings}
             isDarkMode={isDarkMode}
+            compMcqPracticeLessons={compMcqPracticeLessons}
+            onOpenStore={() => onTabChange('STORE' as any)}
             onBack={goBack}
           />
         </div>
@@ -12338,6 +12399,19 @@ export const StudentDashboard: React.FC<Props> = ({
                               classLevel: user.classLevel || '',
                               board: user.board || '',
                               source: 'MCQ',
+                              questionType: (cq as any).questionType,
+                              statements: (cq as any).statements,
+                              assertion: (cq as any).assertion,
+                              reason: (cq as any).reason,
+                              matchColumns: (cq as any).matchColumns,
+                              passage: (cq as any).passage,
+                              negativeHighlight: (cq as any).negativeHighlight,
+                              sequenceItems: (cq as any).sequenceItems,
+                              dataSufficiencyStatements: (cq as any).dataSufficiencyStatements,
+                              imageUrl: (cq as any).imageUrl,
+                              imageWidth: (cq as any).imageWidth,
+                              imageAlign: (cq as any).imageAlign,
+                              imagePosition: (cq as any).imagePosition,
                             }]);
                           } catch {}
                         }
@@ -14450,122 +14524,7 @@ export const StudentDashboard: React.FC<Props> = ({
                     document.body
                   )}
 
-                  {/* ── 2. PRACTICE SET CARD (COMPETITION MCQ PRACTICE EXTRACTED TO HOME PAGE) ── */}
-                  <div id="home-practice-set-card" className="w-full">
-                    <div
-                      className="nst-card-animated w-full relative overflow-hidden rounded-2xl text-left transition-all group"
-                      style={getHomeCardStyle(
-                        settings?.homePracticeCard3D,
-                        settings?.homePracticeCardBg,
-                        settings?.homePracticeCardBorder
-                      )}
-                    >
-                      <div className="p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0 pr-1">
-                            <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-                              <span
-                                className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0"
-                                style={{
-                                  background: `${themePrimary}18`,
-                                  color: themePrimary,
-                                  border: `1px solid ${themePrimary}35`,
-                                }}
-                              >
-                                {isCompetitionSelected ? 'Mock Drill · Bihar Police & BSSC' : 'Interactive Drill · Live MCQs'}
-                              </span>
-                              <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-emerald-500 text-white shadow-xs">
-                                ⚡ High Yield
-                              </span>
-                              {isCompetitionSelected && (
-                                <span
-                                  className="px-1.5 py-0.2 rounded-full text-[9px] font-black"
-                                  style={{
-                                    background: `${themePrimary}18`,
-                                    color: themePrimary,
-                                    border: `1px solid ${themePrimary}35`,
-                                  }}
-                                >
-                                  🎯 बिहार पुलिस & BSSC
-                                </span>
-                              )}
-                            </div>
-                            <h3 className="text-[20px] sm:text-[23px] font-black leading-tight mb-1.5" style={{ color: isDarkMode ? '#f8fafc' : tierTheme.textPrimary || '#1e293b' }}>
-                              {isCompetitionSelected ? 'प्रैक्टिस सेट (बिहार पुलिस & BSSC)' : 'Practice Set'}
-                            </h3>
-                            <div className="flex items-center flex-wrap gap-1.5">
-                              {isCompetitionSelected ? (
-                                <>
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                    👮 Basic Set (60 Min · No Neg)
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                    🏛️ Ultra Set (120 Min · -0.25 Neg)
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                    🧠 100/150 Questions
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                    🏆 Real Exam Scorecard
-                                  </span>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                    🧠 {compMcqPracticeLessons.length > 0 ? `${compMcqPracticeLessons.length} Practice Sets` : '10+ Practice Sets'}
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                    🎯 Topic-wise & Mixed
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                    ⚡ Speed & Accuracy
-                                  </span>
-                                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold" style={{ background: themeChipBg, border: `1px solid ${themeChipBorder}`, color: themeChipText }}>
-                                    🏆 Leaderboard & Review
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                          <div className="text-[44px] sm:text-[50px] leading-none shrink-0 select-none group-hover:scale-105 transition-transform pt-0.5">
-                            📝
-                          </div>
-                        </div>
-
-                        {/* Standard unified bottom button */}
-                        <div className="mt-3.5 pt-2.5 border-t w-full" style={{ borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              hapticStrong();
-                              setShowPracticeSetsModal(true);
-                            }}
-                            className="w-full py-2.5 px-4 rounded-xl text-xs font-black shadow-md flex items-center justify-center gap-2 transition-all hover:opacity-95 active:scale-[0.99] cursor-pointer text-white"
-                            style={{
-                              background: themeBtnGrad,
-                              color: '#ffffff',
-                              boxShadow: `0 4px 14px ${themePrimary}35`
-                            }}
-                          >
-                            <Sparkles size={14} className="shrink-0" />
-                            <span>{isCompetitionSelected ? '🎯 Start Practice Set (बिहार पुलिस & BSSC)' : '🎯 Practice Sets & Leaderboard (10वीं/12वीं & All)'}</span>
-                            {isCompetitionSelected && (
-                              !_isBasicUser && !_isUltraUser && !_isAdminUser ? (
-                                <span className="px-1.5 py-0.2 rounded-md bg-black/25 text-amber-200 text-[10px] font-black border border-amber-400/30 shrink-0">
-                                  🔒 VIP Sets
-                                </span>
-                              ) : (
-                                <span className="px-1.5 py-0.2 rounded-md bg-white/20 text-white text-[10px] font-black border border-white/25 shrink-0">
-                                  ⭐ Open
-                                </span>
-                              )
-                            )}
-                            <span className="group-hover:translate-x-0.5 transition-transform ml-auto">→</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  {/* Practice Set card moved to MCQ Hub */}
 
                   {/* ── 3. DAILY CHALLENGE, LIVE STUDY ROOM, REVISION HUB & MY MISTAKES (HOME PAGE) ── */}
                   {(isHomeSectionVisible('home_revision_hub', settings) || isHomeSectionVisible('home_my_routine', settings) || isHomeSectionVisible('home_promo_banners', settings)) && (
@@ -20630,6 +20589,19 @@ export const StudentDashboard: React.FC<Props> = ({
                                   classLevel: user.classLevel,
                                   board: user.board,
                                   source: 'CHALLENGE',
+                                  questionType: (mcq as any).questionType,
+                                  statements: (mcq as any).statements,
+                                  assertion: (mcq as any).assertion,
+                                  reason: (mcq as any).reason,
+                                  matchColumns: (mcq as any).matchColumns,
+                                  passage: (mcq as any).passage,
+                                  negativeHighlight: (mcq as any).negativeHighlight,
+                                  sequenceItems: (mcq as any).sequenceItems,
+                                  dataSufficiencyStatements: (mcq as any).dataSufficiencyStatements,
+                                  imageUrl: (mcq as any).imageUrl,
+                                  imageWidth: (mcq as any).imageWidth,
+                                  imageAlign: (mcq as any).imageAlign,
+                                  imagePosition: (mcq as any).imagePosition,
                                 }]);
                               }
                             } catch (err) { console.warn('mistakeBank update failed:', err); }
@@ -22646,8 +22618,8 @@ export const StudentDashboard: React.FC<Props> = ({
                                       >
                                         <div className="flex items-start justify-between gap-4 mb-4">
                                           <div className="text-sm font-bold text-slate-800 flex-1">
-                                            <span className="mr-1">{idx + 1}.</span>
-                                            <McqQuestionDisplay q={mcq as any} questionClassName="inline" />
+                                            <span className="inline-block mr-1 font-black text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md mb-1.5">{idx + 1}.</span>
+                                            <McqQuestionDisplay q={mcq as any} questionClassName="text-sm font-bold text-slate-800 leading-snug" />
                                           </div>
                                           <button
                                             onClick={(e) => {
@@ -23466,6 +23438,8 @@ export const StudentDashboard: React.FC<Props> = ({
             user={user}
             settings={settings}
             isDarkMode={isDarkMode}
+            compMcqPracticeLessons={compMcqPracticeLessons}
+            onOpenStore={() => onTabChange('STORE' as any)}
             onBack={() => {
               setShowChat(false);
             }}
@@ -27647,6 +27621,19 @@ RULES:
                               classLevel: user.classLevel || '',
                               board: user.board || '',
                               source: 'Competition',
+                              questionType: (cq as any).questionType,
+                              statements: (cq as any).statements,
+                              assertion: (cq as any).assertion,
+                              reason: (cq as any).reason,
+                              matchColumns: (cq as any).matchColumns,
+                              passage: (cq as any).passage,
+                              negativeHighlight: (cq as any).negativeHighlight,
+                              sequenceItems: (cq as any).sequenceItems,
+                              dataSufficiencyStatements: (cq as any).dataSufficiencyStatements,
+                              imageUrl: (cq as any).imageUrl,
+                              imageWidth: (cq as any).imageWidth,
+                              imageAlign: (cq as any).imageAlign,
+                              imagePosition: (cq as any).imagePosition,
                             }]);
                           } catch {}
                         }

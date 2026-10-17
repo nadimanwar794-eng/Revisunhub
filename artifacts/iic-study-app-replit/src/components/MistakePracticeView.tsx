@@ -312,9 +312,9 @@ export const MistakePracticeView: React.FC<Props> = ({ mistakes, onClose, onComp
                   key={oi}
                   onClick={() => handleSelect(oi)}
                   disabled={revealed}
-                  className={`w-full text-left rounded-2xl border-2 p-3.5 flex items-center gap-3 transition-all duration-200 active:scale-[0.98] shadow-sm ${base}`}
+                  className={`w-full text-left rounded-2xl border-2 p-3.5 flex items-start sm:items-center gap-3 transition-all duration-200 active:scale-[0.98] shadow-sm ${base}`}
                 >
-                  <span className={`shrink-0 w-8 h-8 rounded-full font-black text-sm flex items-center justify-center transition-all ${
+                  <span className={`shrink-0 w-8 h-8 rounded-full font-black text-sm flex items-center justify-center transition-all mt-0.5 sm:mt-0 ${
                     revealed && isCorrectOpt ? 'bg-emerald-500 text-white scale-110' :
                     revealed && isSelected   ? 'bg-rose-500 text-white' :
                     isSelected               ? 'bg-indigo-500 text-white' :
@@ -322,7 +322,7 @@ export const MistakePracticeView: React.FC<Props> = ({ mistakes, onClose, onComp
                   }`}>
                     {revealed && isCorrectOpt ? <Check size={14} /> : String.fromCharCode(65 + oi)}
                   </span>
-                  <span className="text-sm text-slate-800 leading-snug flex-1" dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} />
+                  <span className="text-sm text-slate-800 leading-snug flex-1 break-words" dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }} />
                 </button>
               );
             })}

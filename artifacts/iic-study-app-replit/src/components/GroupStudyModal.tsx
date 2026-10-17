@@ -156,11 +156,13 @@ import { auth, getChapterData, saveUserToLive, subscribeMcqLessons, saveTestResu
 import { STATIC_SYLLABUS, ADMIN_EMAIL, LUCENT_SUBJECT_OPTIONS_BASE, getLucentSubjectOptions } from '../constants';
 import { parseMCQText, extractStatements } from '../utils/mcqParser';
 import { parseMcqQuestion } from '../utils/mcqRender';
+import McqQuestionDisplay from './McqQuestionDisplay';
+import { detectQuestionType } from '../utils/questionTypeDetector';
 import { type MCQResult } from '../types';
 import { notifyStudyRoomInviteInBackground, notifyStudyRoomChallengeInBackground } from './NotificationManager';
 import { MarksheetCard } from './MarksheetCard';
 
-// Normalize any raw MCQ question to GroupStudyMcqQuestion format
+// Normalize any raw MCQ question to GroupStudyMcqQuestion format with all 8 competition types
 function parseQuestionToGroupMcq(q: any): GroupStudyMcqQuestion | null {
   if (!q) return null;
   let questionText = String(q.question || q.title || q.prompt || '').trim();
@@ -217,7 +219,42 @@ function parseQuestionToGroupMcq(q: any): GroupStudyMcqQuestion | null {
     } catch {}
   }
 
+  // ── Auto-Detect All 8 Competition Question Types ──
+  let detectedType = q.questionType;
+  let detectedMatchColumns = q.matchColumns;
+  let detectedAssertion = q.assertion;
+  let detectedReason = q.reason;
+  let detectedPassage = q.passage;
+  let detectedNegative = q.negativeHighlight;
+
+  try {
+    const det = detectQuestionType({
+      question: questionText,
+      options: rawOptions,
+      statements,
+      questionType: detectedType,
+      matchColumns: detectedMatchColumns,
+      assertion: detectedAssertion,
+      reason: detectedReason,
+      passage: detectedPassage,
+    });
+    if (det) {
+      detectedType = detectedType || det.type;
+      if (det.matchColumns && !detectedMatchColumns) detectedMatchColumns = det.matchColumns;
+      if (det.assertionReason) {
+        if (!detectedAssertion) detectedAssertion = det.assertionReason.assertion;
+        if (!detectedReason) detectedReason = det.assertionReason.reason;
+      }
+      if (det.caseStudy?.passage && !detectedPassage) {
+        detectedPassage = det.caseStudy.passage;
+        if (det.caseStudy.cleanedQuestion) questionText = det.caseStudy.cleanedQuestion;
+      }
+      if (det.isNegative && !detectedNegative) detectedNegative = 'true';
+    }
+  } catch {}
+
   return {
+    id: q.id,
     question: questionText,
     ...(statements && statements.length > 0 ? { statements } : {}),
     options: rawOptions.slice(0, 4),
@@ -226,6 +263,18 @@ function parseQuestionToGroupMcq(q: any): GroupStudyMcqQuestion | null {
     topic: String(q.topic || q.chapterTitle || q.chapter || q.subtopic || '').trim(),
     chapterTitle: String(q.chapterTitle || q.chapter || '').trim(),
     subject: String(q.subject || '').trim(),
+    questionType: detectedType,
+    assertion: detectedAssertion,
+    reason: detectedReason,
+    matchColumns: detectedMatchColumns,
+    passage: detectedPassage,
+    negativeHighlight: detectedNegative,
+    sequenceItems: q.sequenceItems,
+    dataSufficiencyStatements: q.dataSufficiencyStatements,
+    imageUrl: q.imageUrl,
+    imageWidth: q.imageWidth,
+    imageAlign: q.imageAlign,
+    imagePosition: q.imagePosition,
   };
 }
 
@@ -5610,64 +5659,21 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                     </span>
                                   </div>
 
-                                  {(() => {
-                                    const parsed = parseMcqQuestion(q as any);
-                                    const hasStatements = parsed.statements && parsed.statements.length > 0;
-                                    return (
-                                      <>
-                                        <h4
-                                          className={`font-black text-white leading-relaxed ${
-                                            isProjector
-                                              ? 'text-lg sm:text-2xl tracking-wide text-cyan-50'
-                                              : 'text-base sm:text-lg'
-                                          }`}
-                                          dangerouslySetInnerHTML={{
-                                            __html: parsed.questionHtml || q.question,
-                                          }}
-                                        />
-
-                                        {/* Render numbered statements for statement-based MCQs */}
-                                        {hasStatements && (
-                                          <div className="mt-3 space-y-2">
-                                            {parsed.statements.map((stmtHtml, sIdx) => (
-                                              <div
-                                                key={`live_stmt_${sIdx}`}
-                                                className={`p-2.5 sm:p-3 rounded-xl border flex items-start gap-2.5 leading-relaxed text-xs sm:text-sm font-semibold transition ${
-                                                  isProjector
-                                                    ? 'bg-slate-900/90 border-cyan-500/40 text-cyan-100 shadow-sm'
-                                                    : 'bg-slate-900/80 border-indigo-500/40 text-indigo-100 shadow-sm'
-                                                }`}
-                                              >
-                                                <span
-                                                  className={`w-6 h-6 rounded-lg font-black text-xs flex items-center justify-center shrink-0 mt-0.5 border ${
-                                                    isProjector
-                                                      ? 'bg-cyan-950 text-cyan-300 border-cyan-500/50'
-                                                      : 'bg-indigo-950 text-indigo-300 border-indigo-500/40'
-                                                  }`}
-                                                >
-                                                  {sIdx + 1}
-                                                </span>
-                                                <div
-                                                  className="flex-1 select-text"
-                                                  dangerouslySetInnerHTML={{ __html: stmtHtml }}
-                                                />
-                                              </div>
-                                            ))}
-                                          </div>
-                                        )}
-
-                                        {/* Render closing suffix line if present */}
-                                        {parsed.suffixHtml && (
-                                          <div
-                                            className={`mt-2 font-bold italic ${
-                                              isProjector ? 'text-cyan-300 text-sm sm:text-base' : 'text-amber-300 text-xs sm:text-sm'
-                                            }`}
-                                            dangerouslySetInnerHTML={{ __html: parsed.suffixHtml }}
-                                          />
-                                        )}
-                                      </>
-                                    );
-                                  })()}
+                                  <div className="mt-1 mb-2">
+                                    <McqQuestionDisplay
+                                      q={{
+                                        ...q,
+                                        correctAnswer: (q as any).correctAnswer ?? (q as any).correctIndex ?? 0,
+                                      } as any}
+                                      variant="dark"
+                                      showTypeBadge={true}
+                                      questionClassName={
+                                        isProjector
+                                          ? 'text-lg sm:text-2xl font-black text-cyan-50 leading-relaxed'
+                                          : 'text-base sm:text-lg font-bold text-white leading-relaxed'
+                                      }
+                                    />
+                                  </div>
                                 </div>
 
                                 {/* Options Grid */}
@@ -5698,10 +5704,10 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                         key={`battle_opt_${optIdx}`}
                                         onClick={() => handleSelectOption(optIdx)}
                                         disabled={(!isSelfPaced && hasAnsweredCurrentQ) || isReveal}
-                                        className={`p-3.5 sm:p-4 rounded-2xl border text-left font-bold flex items-center gap-3 transition active:scale-95 disabled:cursor-not-allowed cursor-pointer ${btnStyle}`}
+                                        className={`p-3.5 sm:p-4 rounded-2xl border text-left font-bold flex items-start sm:items-center gap-3 transition active:scale-95 disabled:cursor-not-allowed cursor-pointer ${btnStyle}`}
                                       >
                                         <span
-                                          className={`w-7 h-7 rounded-lg flex items-center justify-center font-black shrink-0 ${
+                                          className={`w-7 h-7 rounded-lg flex items-center justify-center font-black shrink-0 mt-0.5 sm:mt-0 ${
                                             isProjector
                                               ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/40 text-sm'
                                               : 'bg-slate-950/70 text-slate-300 text-xs'
@@ -5709,9 +5715,12 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                         >
                                           {String.fromCharCode(65 + optIdx)}
                                         </span>
-                                        <span className="flex-1 leading-snug">{opt}</span>
+                                        <span
+                                          className="flex-1 leading-snug break-words"
+                                          dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }}
+                                        />
                                         {isReveal && optIdx === q.correctIndex && (
-                                          <Check size={18} className="text-emerald-400 shrink-0" />
+                                          <Check size={18} className="text-emerald-400 shrink-0 mt-0.5 sm:mt-0" />
                                         )}
                                       </button>
                                     );
@@ -6370,36 +6379,17 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                     {/* Expanded Detail View of Question */}
                                     {isExpanded && (
                                       <div className="pt-2 border-t border-slate-700/60 space-y-2 text-xs">
-                                        {/* Statement rendering if question has statements */}
-                                        {(() => {
-                                          const parsedRev = parseMcqQuestion(questionItem as any);
-                                          const hasRevStmts = parsedRev.statements && parsedRev.statements.length > 0;
-                                          if (!hasRevStmts) return null;
-                                          return (
-                                            <div className="space-y-1.5 mb-2 bg-slate-950/40 p-2.5 rounded-lg border border-slate-800">
-                                              {parsedRev.statements.map((sHtml, sIdx) => (
-                                                <div
-                                                  key={`rev_stmt_${sIdx}`}
-                                                  className="flex items-start gap-2 text-xs text-slate-200"
-                                                >
-                                                  <span className="w-4 h-4 rounded bg-indigo-900/80 text-indigo-300 font-black text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                                                    {sIdx + 1}
-                                                  </span>
-                                                  <div
-                                                    className="flex-1"
-                                                    dangerouslySetInnerHTML={{ __html: sHtml }}
-                                                  />
-                                                </div>
-                                              ))}
-                                              {parsedRev.suffixHtml && (
-                                                <p
-                                                  className="text-[11px] font-bold text-amber-300/90 italic pt-1"
-                                                  dangerouslySetInnerHTML={{ __html: parsedRev.suffixHtml }}
-                                                />
-                                              )}
-                                            </div>
-                                          );
-                                        })()}
+                                        <div className="mb-2">
+                                          <McqQuestionDisplay
+                                            q={{
+                                              ...questionItem,
+                                              correctAnswer: (questionItem as any).correctAnswer ?? (questionItem as any).correctIndex ?? 0,
+                                            } as any}
+                                            variant="dark"
+                                            showTypeBadge={true}
+                                            questionClassName="text-xs sm:text-sm font-bold text-white leading-relaxed"
+                                          />
+                                        </div>
 
                                         <div className="space-y-1">
                                           {questionItem.options.map((optText, optI) => {
@@ -6417,11 +6407,14 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                                     : 'bg-slate-900/60 text-slate-400'
                                                 }`}
                                               >
-                                                <div className="flex items-center gap-2">
-                                                  <span className="w-5 h-5 rounded bg-slate-950/60 text-[10px] flex items-center justify-center font-black">
+                                                <div className="flex items-start sm:items-center gap-2 flex-1 min-w-0">
+                                                  <span className="w-5 h-5 rounded bg-slate-950/60 text-[10px] flex items-center justify-center font-black shrink-0 mt-0.5 sm:mt-0">
                                                     {String.fromCharCode(65 + optI)}
                                                   </span>
-                                                  <span>{optText}</span>
+                                                  <span
+                                                    className="break-words leading-relaxed flex-1"
+                                                    dangerouslySetInnerHTML={{ __html: renderMathInHtml(optText) }}
+                                                  />
                                                 </div>
                                                 <div className="text-[10px] font-black flex items-center gap-1">
                                                   {isCorrectOpt && (
@@ -7692,9 +7685,17 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                             </span>
                           </div>
 
-                          <p className="text-xs font-bold text-slate-100 leading-relaxed">
-                            {item.q.question}
-                          </p>
+                          <div className="my-1">
+                            <McqQuestionDisplay
+                              q={{
+                                ...item.q,
+                                correctAnswer: (item.q as any).correctAnswer ?? (item.q as any).correctIndex ?? 0,
+                              } as any}
+                              variant="dark"
+                              showTypeBadge={true}
+                              questionClassName="text-xs font-bold text-slate-100 leading-relaxed"
+                            />
+                          </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 mt-2.5">
                             {item.q.options.map((opt, optIdx) => {
@@ -7711,8 +7712,11 @@ Aao dekhte hain kisme kitna hai dum! 🏆`;
                                   <span className="w-4 h-4 rounded bg-slate-800 text-[9px] font-mono flex items-center justify-center font-bold shrink-0">
                                     {String.fromCharCode(65 + optIdx)}
                                   </span>
-                                  <span className="truncate">{opt}</span>
-                                  {isCorrect && <span className="ml-auto text-[10px] text-emerald-400 font-bold">✓ Sahi</span>}
+                                  <span
+                                    className="break-words flex-1 leading-snug"
+                                    dangerouslySetInnerHTML={{ __html: renderMathInHtml(opt) }}
+                                  />
+                                  {isCorrect && <span className="ml-auto text-[10px] text-emerald-400 font-bold shrink-0">✓ Sahi</span>}
                                 </div>
                               );
                             })}
