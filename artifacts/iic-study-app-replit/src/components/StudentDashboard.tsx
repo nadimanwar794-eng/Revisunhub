@@ -18468,6 +18468,229 @@ export const StudentDashboard: React.FC<Props> = ({
     );
   };
 
+  const getCurrentSwipeTabIndex = useCallback(() => {
+    if (showMyRoutine) return 1;
+    if (showChat && chatMode === 'COMMUNITY') return 2;
+    if (showChat && chatMode === 'MCQ') return 3;
+    if (currentLogicalTab === 'PROFILE' || activeTab === 'PROFILE') return 4;
+    if (!showStarredPage && !showChat && !showRevisionHubScreen && !showUpdatesPage && !showMyRoutine && !showDailyEventPage && !showProgressDashboard && (currentLogicalTab === 'HOME' || activeTab === 'HOME' || (activeTab as string) === 'DASHBOARD' || !activeTab)) return 0;
+    return -1;
+  }, [showMyRoutine, showChat, chatMode, currentLogicalTab, activeTab, showStarredPage, showRevisionHubScreen, showUpdatesPage, showDailyEventPage, showProgressDashboard]);
+
+  const handleSwitchToTabByIndex = useCallback((targetIndex: number) => {
+    try { stopSpeech(); } catch (_) {}
+    setSpeakingId(null);
+    setFlashcardMcqs(null);
+    setHwActiveHwId(null);
+    setHwImmersive(false);
+    setLucentNoteViewer(null);
+    setLucentImmersive(false);
+    setIsLandscapeUiHidden(false);
+    setIsTopBarHidden(false);
+    setShowWhatsAppChatModal(false);
+    if (showCommunityStarsPage) {
+      try { stopProfileStarRead(); } catch (_) {}
+      setShowCommunityStarsPage(false);
+    }
+
+    if (targetIndex === 0) {
+      // HOME
+      setForceShowBottomNav(true);
+      setShowMyRoutine(false);
+      setShowChat(false);
+      setShowStarredPage(false);
+      setShowUpdatesPage(false);
+      setShowDailyEventPage(false);
+      setShowRevisionHubScreen(false);
+      setShowProgressDashboard(false);
+      window.scrollTo({ top: 0, behavior: 'instant' as any });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      hapticMedium();
+      onTabChange('HOME');
+      setCurrentLogicalTab('HOME');
+    } else if (targetIndex === 1) {
+      // ROUTINE
+      if (contentViewStep === "PLAYER") {
+        setContentViewStep("CHAPTER");
+      }
+      setShowChat(false);
+      setShowStarredPage(false);
+      setShowUpdatesPage(false);
+      setShowDailyEventPage(false);
+      setShowRevisionHubScreen(false);
+      window.scrollTo({ top: 0, behavior: 'instant' as any });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      hapticMedium();
+      setShowMyRoutine(true);
+    } else if (targetIndex === 2) {
+      // COMMUNITY
+      if (contentViewStep === "PLAYER") {
+        setContentViewStep("CHAPTER");
+      }
+      setShowCompareView(false);
+      setShowRevisionHubScreen(false);
+      setShowUpdatesPage(false);
+      setShowMyRoutine(false);
+      setShowDailyEventPage(false);
+      setShowStarredPage(false);
+      setCurrentLogicalTab("COMMUNITY_SUPPORT" as any);
+      setChatMode('COMMUNITY');
+      setShowChat(true);
+      hapticMedium();
+    } else if (targetIndex === 3) {
+      // MCQ
+      if (contentViewStep === "PLAYER") {
+        setContentViewStep("CHAPTER");
+      }
+      setShowCompareView(false);
+      setShowRevisionHubScreen(false);
+      setShowUpdatesPage(false);
+      setShowMyRoutine(false);
+      setShowDailyEventPage(false);
+      setShowStarredPage(false);
+      setCurrentLogicalTab("COMMUNITY_SUPPORT" as any);
+      setChatMode('MCQ');
+      setShowChat(true);
+      hapticMedium();
+    } else if (targetIndex === 4) {
+      // PROFILE
+      setShowMyRoutine(false);
+      setShowChat(false);
+      setShowStarredPage(false);
+      setShowUpdatesPage(false);
+      setShowDailyEventPage(false);
+      setShowRevisionHubScreen(false);
+      setShowProgressDashboard(false);
+      window.scrollTo({ top: 0, behavior: 'instant' as any });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      hapticMedium();
+      onTabChange('PROFILE');
+      setCurrentLogicalTab('PROFILE');
+    }
+  }, [contentViewStep, onTabChange, showCommunityStarsPage]);
+
+  // Window-level swipe gesture listener to seamlessly swipe left/right between tabs like WhatsApp
+  useEffect(() => {
+    let startX = 0;
+    let startY = 0;
+    let startTime = 0;
+    let startTarget: EventTarget | null = null;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) {
+        startTime = 0;
+        return;
+      }
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      startTime = Date.now();
+      startTarget = e.target;
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!startTime) return;
+      const dt = Date.now() - startTime;
+      startTime = 0;
+      if (dt > 650) return;
+
+      const targetEl = startTarget as HTMLElement | null;
+      if (targetEl) {
+        if (
+          targetEl.closest(
+            'input, textarea, select, [contenteditable="true"], canvas, [data-no-swipe], [data-no-topbar-swipe], .no-swipe, .carousel, .embla, [role="slider"], [role="dialog"], audio, video'
+          )
+        ) {
+          return;
+        }
+        const scrollContainer = targetEl.closest(
+          '.overflow-x-auto, [style*="overflow-x: auto"], [style*="overflow-x: scroll"]'
+        );
+        if (scrollContainer && scrollContainer.scrollWidth > scrollContainer.clientWidth + 10) {
+          return;
+        }
+      }
+
+      if (
+        isDocFullscreen ||
+        showPhotoFullscreen ||
+        showScorePanel ||
+        showStudyModeModal ||
+        showNameChangeModal ||
+        showContentCodeModal ||
+        showPedroVipExpiryModal ||
+        showCoachingPicker ||
+        Boolean(premiumUpgradeModal) ||
+        showStreakPopup ||
+        showExpiryPopup ||
+        Boolean(pageResumePrompt) ||
+        Boolean(coinGate) ||
+        (contentViewStep === 'PLAYER' && selectedChapter) ||
+        lucentNoteViewer ||
+        hwActiveHwId ||
+        flashcardMcqs ||
+        compMcqSession ||
+        showWhatsAppChatModal
+      ) {
+        return;
+      }
+
+      const touch = e.changedTouches[0];
+      if (!touch) return;
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+
+      // Horizontal swipe threshold: min 50px, dx at least 1.7x dy
+      if (Math.abs(dx) >= 50 && Math.abs(dx) > 1.7 * Math.abs(dy)) {
+        const curIdx = getCurrentSwipeTabIndex();
+        if (curIdx === -1) return;
+        if (dx < 0) {
+          // Swiped Left -> Next Tab
+          if (curIdx < 4) {
+            handleSwitchToTabByIndex(curIdx + 1);
+          }
+        } else {
+          // Swiped Right -> Previous Tab
+          if (curIdx > 0) {
+            handleSwitchToTabByIndex(curIdx - 1);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('touchstart', onTouchStart, { passive: true });
+    window.addEventListener('touchend', onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+  }, [
+    getCurrentSwipeTabIndex,
+    handleSwitchToTabByIndex,
+    isDocFullscreen,
+    showPhotoFullscreen,
+    showScorePanel,
+    showStudyModeModal,
+    showNameChangeModal,
+    showContentCodeModal,
+    showPedroVipExpiryModal,
+    showCoachingPicker,
+    premiumUpgradeModal,
+    showStreakPopup,
+    showExpiryPopup,
+    pageResumePrompt,
+    coinGate,
+    contentViewStep,
+    selectedChapter,
+    lucentNoteViewer,
+    hwActiveHwId,
+    flashcardMcqs,
+    compMcqSession,
+    showWhatsAppChatModal,
+  ]);
+
   return (
   <ThemeProvider theme={_extendedTheme}>
     <div

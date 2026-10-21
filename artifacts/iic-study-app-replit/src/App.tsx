@@ -1322,12 +1322,33 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const isBenign = (e: any) => {
+      const msg = String(e?.message || e?.reason?.message || e?.reason || e || '').toLowerCase();
+      return (
+        msg.includes('permission denied') ||
+        msg.includes('permission-denied') ||
+        msg.includes('permission_denied') ||
+        msg.includes('script error') ||
+        msg.includes('network') ||
+        msg.includes('offline') ||
+        msg.includes('quota')
+      );
+    };
+
     const handleWindowError = (event: ErrorEvent) => {
+      if (isBenign(event.error || event.message)) {
+        event.preventDefault();
+        return;
+      }
       logErrorToFirebase(event.error || new Error(event.message || 'Unknown runtime error'), {
         type: 'runtime',
       }).catch(() => {});
     };
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      if (isBenign(event.reason)) {
+        event.preventDefault();
+        return;
+      }
       const err = event.reason instanceof Error ? event.reason : new Error(String(event.reason ?? 'Unhandled Promise Rejection'));
       logErrorToFirebase(err, { type: 'promise' }).catch(() => {});
     };

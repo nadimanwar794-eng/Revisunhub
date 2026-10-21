@@ -40,7 +40,10 @@ console.error = (...args: any[]) => {
     (text.includes('@firebase/auth') && text.includes('internal assertion failed')) ||
     (text.includes('@firebase/firestore') && (text.includes('offline') || text.includes('10 seconds'))) ||
     text.includes('failed to reload') ||
-    (text.includes('[vite]') && (text.includes('reload') || text.includes('hmr') || text.includes('connecting')))
+    (text.includes('[vite]') && (text.includes('reload') || text.includes('hmr') || text.includes('connecting'))) ||
+    text.includes('permission denied') ||
+    text.includes('permission-denied') ||
+    text.includes('permission_denied')
   ) {
     console.warn('[IIC Notice]', ...args);
     return;
@@ -61,6 +64,11 @@ const isBenignError = (reason: any): boolean => {
     code === 'NetworkError' ||
     code === 'QuotaExceededError' ||
     code === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    code === 'permission-denied' ||
+    code === 'PERMISSION_DENIED' ||
+    msg.includes('permission denied') ||
+    msg.includes('permission-denied') ||
+    msg.includes('permission_denied') ||
     msg.includes('script error') ||
     msg === 'script error.' ||
     msg === 'script error' ||
@@ -91,7 +99,9 @@ console.error = function (...args: any[]) {
     _isLoggingConsoleError = true;
     for (const arg of args) {
       if (arg instanceof Error) {
-        logErrorToFirebase(arg, { type: 'runtime' }).catch(() => {});
+        if (!isBenignError(arg)) {
+          logErrorToFirebase(arg, { type: 'runtime' }).catch(() => {});
+        }
         break;
       } else if (typeof arg === 'string' && (arg.toLowerCase().includes('error') || arg.toLowerCase().includes('failed') || arg.toLowerCase().includes('uncaught'))) {
         if (!isBenignError(arg)) {

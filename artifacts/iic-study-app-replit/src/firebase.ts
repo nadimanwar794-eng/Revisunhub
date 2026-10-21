@@ -62,6 +62,15 @@ if (typeof window !== 'undefined') {
       console.warn('[IIC] Firestore operating in offline cache mode.');
       return true;
     }
+    if (
+      msg.toLowerCase().includes('permission denied') ||
+      msg.toLowerCase().includes('permission-denied') ||
+      msg.includes('PERMISSION_DENIED')
+    ) {
+      event.preventDefault();
+      console.warn('[IIC] Suppressed non-fatal permission denied error (using local/fallback store):', msg);
+      return true;
+    }
     return false;
   };
 
@@ -1342,23 +1351,31 @@ export const subscribeToUsers = (callback: (users: any[]) => void) => {
           callback(users);
       } else {
           // Fallback to RTDB if Firestore is empty (migration scenario)
-          const usersRef = ref(rtdb, 'users');
-          onValue(usersRef, (snap) => {
-             const data = snap.val();
-             const userList = data ? Object.values(data) : [];
-             callback(userList);
-          }, { onlyOnce: true });
+          try {
+            const usersRef = ref(rtdb, 'users');
+            onValue(usersRef, (snap) => {
+               const data = snap.val();
+               const userList = data ? Object.values(data) : [];
+               callback(userList);
+            }, (rtdbErr) => {
+               console.warn('[firebase] RTDB users fallback warning:', rtdbErr?.code || rtdbErr);
+            }, { onlyOnce: true });
+          } catch {}
       }
     },
     (err) => {
       console.warn('[firebase] subscribeToUsers error:', err?.code || err);
       // Fallback to RTDB on permission-denied or offline
-      const usersRef = ref(rtdb, 'users');
-      onValue(usersRef, (snap) => {
-         const data = snap.val();
-         const userList = data ? Object.values(data) : [];
-         callback(userList);
-      }, { onlyOnce: true });
+      try {
+        const usersRef = ref(rtdb, 'users');
+        onValue(usersRef, (snap) => {
+           const data = snap.val();
+           const userList = data ? Object.values(data) : [];
+           callback(userList);
+        }, (rtdbErr) => {
+           console.warn('[firebase] RTDB users fallback warning:', rtdbErr?.code || rtdbErr);
+        }, { onlyOnce: true });
+      } catch {}
     }
   );
 };
@@ -1384,11 +1401,15 @@ export const getUsersPage = async (
     };
   } catch {
     // Fallback to RTDB
-    const usersRef = ref(rtdb, 'users');
-    const snap = await get(usersRef);
-    const data = snap.val();
-    const all: any[] = data ? Object.values(data) : [];
-    return { users: all, lastDoc: null, hasMore: false };
+    try {
+      const usersRef = ref(rtdb, 'users');
+      const snap = await get(usersRef);
+      const data = snap.val();
+      const all: any[] = data ? Object.values(data) : [];
+      return { users: all, lastDoc: null, hasMore: false };
+    } catch {
+      return { users: [], lastDoc: null, hasMore: false };
+    }
   }
 };
 
@@ -1409,6 +1430,10 @@ export const subscribeToRecentUsers = (callback: (users: any[]) => void) => {
 };
 
 export const subscribeToUser = (userId: string, callback: (user: any) => void) => {
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+        return () => {};
+    }
+    const cleanUid = userId.trim();
     // Listen to both stores. Firestore is the canonical profile store, while RTDB
     // is the account-state mirror and fresh-device fallback. Keeping both active
     // avoids a cached Firestore snapshot hiding a newer balance from RTDB.
@@ -1437,114 +1462,139 @@ export const subscribeToUser = (userId: string, callback: (user: any) => void) =
         callback(combined);
     };
 
-    const unsubRtdb = onValue(ref(rtdb, `users/${userId}`), (snap) => {
-        if (snap.exists()) {
-            latestRtdbCore = snap.val();
-            emitCombined();
-        }
-    }, (error: any) => {
-        console.warn('[IIC] subscribeToUser RTDB error:', error?.code || error);
-    });
-
-    const unsubFirestore = onSnapshot(
-        doc(db, "users", userId),
-        (docSnap) => {
-            if (docSnap.exists()) {
-                latestCore = docSnap.data();
+    let unsubRtdb: (() => void) = () => {};
+    try {
+        unsubRtdb = onValue(ref(rtdb, `users/${cleanUid}`), (snap) => {
+            if (snap && typeof snap.exists === 'function' && snap.exists()) {
+                latestRtdbCore = snap.val();
                 emitCombined();
-            } else {
-                // Only treat as deleted when we have an active Firebase Auth session.
-                // Without a session, Firestore returns a non-existent snapshot due to
-                // permission-denied — NOT because the document was truly deleted.
-                if (auth.currentUser) {
-                    callback(null); // genuinely deleted by admin → force logout
-                }
-                // No auth session → permission-denied masquerading as missing doc → ignore
             }
-        },
-        (error) => {
-            // RTDB stays active regardless of Firestore permission/cache state.
-            // Any Firestore error must not log the user out or hide account data.
-            if (error.code !== 'permission-denied') {
-                console.warn('[IIC] subscribeToUser Firestore error:', error.code);
+        }, (error: any) => {
+            // RTDB permission-denied is benign during login or guest mode
+            if (!error?.message?.toLowerCase().includes('permission denied') && error?.code !== 'PERMISSION_DENIED') {
+                console.warn('[IIC] subscribeToUser RTDB notice:', error?.code || error);
             }
-        }
-    );
+        });
+    } catch {
+        unsubRtdb = () => {};
+    }
 
-    // Account state and bulky data live separately from the profile document.
-    // Listening here prevents a stale local cache from winning over a credit,
-    // subscription, reward, or redemption update made in another device/tab.
-    unsubUserData = onSnapshot(
-        doc(db, "user_data", userId),
-        (dataSnap) => {
-            latestUserData = dataSnap.exists() ? dataSnap.data() : null;
-            emitCombined();
-        },
-        (error) => {
-            if (error.code !== 'permission-denied') {
-                console.warn('[IIC] subscribeToUser user_data error:', error.code);
+    let unsubFirestore: (() => void) = () => {};
+    try {
+        unsubFirestore = onSnapshot(
+            doc(db, "users", cleanUid),
+            (docSnap) => {
+                if (docSnap.exists()) {
+                    latestCore = docSnap.data();
+                    emitCombined();
+                } else {
+                    if (auth.currentUser) {
+                        callback(null); // genuinely deleted by admin -> force logout
+                    }
+                }
+            },
+            (error) => {
+                if (error.code !== 'permission-denied') {
+                    console.warn('[IIC] subscribeToUser Firestore error:', error.code);
+                }
             }
-        },
-    );
+        );
+    } catch {
+        unsubFirestore = () => {};
+    }
+
+    try {
+        unsubUserData = onSnapshot(
+            doc(db, "user_data", cleanUid),
+            (dataSnap) => {
+                latestUserData = dataSnap.exists() ? dataSnap.data() : null;
+                emitCombined();
+            },
+            (error) => {
+                if (error.code !== 'permission-denied') {
+                    console.warn('[IIC] subscribeToUser user_data error:', error.code);
+                }
+            },
+        );
+    } catch {
+        unsubUserData = null;
+    }
 
     return () => {
-        unsubFirestore();
-        unsubRtdb();
-        if (unsubUserData) unsubUserData();
+        try { unsubFirestore(); } catch {}
+        try { unsubRtdb(); } catch {}
+        try { if (unsubUserData) unsubUserData(); } catch {}
     };
 };
 
 export const getUserData = async (userId: string) => {
+    if (!userId || typeof userId !== 'string' || !userId.trim()) return null;
+    const cleanUid = userId.trim();
     try {
         let coreData: any = null;
 
         // Firestore is the canonical read for account data. RTDB remains the
         // fallback required by the app's recovery login on a fresh device.
         try {
-            const docSnap = await getDoc(doc(db, "users", userId));
+            const docSnap = await getDoc(doc(db, "users", cleanUid));
             if (docSnap.exists()) coreData = docSnap.data();
         } catch {
             // Firestore can be unavailable before Firebase Auth is restored.
         }
         if (!coreData) {
-            const snap = await get(ref(rtdb, `users/${userId}`));
-            if (snap.exists()) coreData = snap.val();
+            try {
+                const rtdbRef = ref(rtdb, `users/${cleanUid}`);
+                const snap = await get(rtdbRef).catch(() => null);
+                if (snap && typeof snap.exists === 'function' && snap.exists()) coreData = snap.val();
+            } catch {
+                // RTDB may reject with permission denied if user is not yet logged in or rules require auth
+            }
         }
 
         if (coreData) {
              // Fetch segregated bulky data
-             const bulkySnap = await getDoc(doc(db, "user_data", userId)).catch(() => null);
-             if (bulkySnap && bulkySnap.exists()) {
-                  return { ...coreData, ...bulkySnap.data() };
-             }
+             try {
+                 const bulkySnap = await getDoc(doc(db, "user_data", cleanUid)).catch(() => null);
+                 if (bulkySnap && bulkySnap.exists()) {
+                      return { ...coreData, ...bulkySnap.data() };
+                 }
+             } catch {}
              return coreData;
         }
 
         return null;
-    } catch (e) { console.error(e); return null; }
+    } catch (e: any) {
+        // Do not escalate permission errors or network timeouts to console.error
+        const msg = String(e?.message || e || '').toLowerCase();
+        if (!msg.includes('permission denied') && !msg.includes('permission-denied') && e?.code !== 'PERMISSION_DENIED') {
+            console.warn('[IIC Notice] getUserData read:', e?.message || e);
+        }
+        return null;
+    }
 };
 
 // Login-time read that bypasses a device's persistent Firestore cache. The
 // normal getUserData helper intentionally supports offline cache; authentication
 // must not use that cache to initialize a new device with an old credit balance.
 export const getFreshUserData = async (userId: string) => {
-    if (!userId) return null;
+    if (!userId || typeof userId !== 'string' || !userId.trim()) return null;
+    const cleanUid = userId.trim();
     try {
         let coreData: any = null;
         let rtdbData: any = null;
         try {
-            const docSnap = await getDocFromServer(doc(db, "users", userId));
+            const docSnap = await getDocFromServer(doc(db, "users", cleanUid));
             if (docSnap.exists()) coreData = docSnap.data();
         } catch {
             // RTDB / local cache is used when Firestore is offline or unauthenticated.
             try {
-                const cacheSnap = await getDoc(doc(db, "users", userId));
+                const cacheSnap = await getDoc(doc(db, "users", cleanUid));
                 if (cacheSnap.exists()) coreData = cacheSnap.data();
             } catch {}
             if (!coreData) {
                 try {
-                    const snap = await get(ref(rtdb, `users/${userId}`));
-                    if (snap.exists()) coreData = snap.val();
+                    const snap = await get(ref(rtdb, `users/${cleanUid}`)).catch(() => null);
+                    if (snap && typeof snap.exists === 'function' && snap.exists()) coreData = snap.val();
                 } catch {}
             }
         }
@@ -1555,8 +1605,8 @@ export const getFreshUserData = async (userId: string) => {
         // covers the case where the profile is available from Firestore but
         // user_data is temporarily blocked or unavailable.
         try {
-            const snap = await get(ref(rtdb, `users/${userId}`));
-            if (snap.exists()) rtdbData = snap.val();
+            const snap = await get(ref(rtdb, `users/${cleanUid}`)).catch(() => null);
+            if (snap && typeof snap.exists === 'function' && snap.exists()) rtdbData = snap.val();
         } catch {}
 
         let accountData: any = null;
