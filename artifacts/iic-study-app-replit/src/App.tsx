@@ -28,6 +28,7 @@ import { fetchChapters, fetchLessonContent } from './services/groq';
 import { AppLoadingScreen } from './components/AppLoadingScreen';
 import { SubjectSelection } from './components/SubjectSelection';
 import { StreamSelection } from './components/StreamSelection';
+import { SlidePageTransition } from './components/SlidePageTransition';
 // Resilient dynamic module loader with auto-retry loop for transient network / dev-server hiccups
 function lazyWithRetry<T extends React.ComponentType<any>>(
   factory: () => Promise<{ default: T }>,
@@ -360,6 +361,8 @@ const App: React.FC = () => {
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, []);
+
+  const [appViewDirection, setAppViewDirection] = useState<'forward' | 'backward'>('forward');
 
   const [state, setState] = useState<AppState>({
     user: null,
@@ -2454,11 +2457,13 @@ const App: React.FC = () => {
   };
 
   const handleStreamSelect = (stream: Stream) => {
+      setAppViewDirection('forward');
       updateUserProfile({ stream });
       setState(prev => ({ ...prev, selectedStream: stream, view: 'SUBJECTS' }));
   };
 
   const handleSubjectSelect = async (subject: Subject) => {
+    setAppViewDirection('forward');
     setState(prev => ({ ...prev, selectedSubject: subject, loading: true }));
     try {
       if (state.selectedClass && state.selectedBoard) {
@@ -2501,6 +2506,7 @@ const App: React.FC = () => {
 
   const handleContentGeneration = async (type: ContentType, count?: number, forcePay: boolean = false, specificContent?: any) => {
     setShowPremiumModal(false);
+    setAppViewDirection('forward');
     setLoadingContentType(type);
     if (!tempSelectedChapter || !state.user) return;
 
@@ -3305,6 +3311,7 @@ const App: React.FC = () => {
   };
 
   const goBack = () => {
+    setAppViewDirection('backward');
     if (document.fullscreenElement) {
         document.exitFullscreen().catch(err => console.log(err));
     }
@@ -3754,8 +3761,14 @@ const App: React.FC = () => {
                       </Suspense>
                     </ErrorBoundary>
                 ) : (
-                    (!['ADMIN_DASHBOARD', 'ADMIN', 'SCHOOL_ECOSYSTEM', 'COACHING_ECOSYSTEM', 'STREAMS', 'SUBJECTS', 'CHAPTERS', 'LESSON', 'UPDATES', 'REVISION_HUB'].includes(state.view as string)) && (
-                        <>
+                  !['ADMIN_DASHBOARD', 'ADMIN', 'SCHOOL_ECOSYSTEM', 'COACHING_ECOSYSTEM'].includes(state.view as string) && (
+                    <SlidePageTransition
+                      pageKey={state.view}
+                      direction={appViewDirection}
+                      onSwipeRight={state.view !== 'STUDENT_DASHBOARD' ? goBack : undefined}
+                    >
+                      {(!['STREAMS', 'SUBJECTS', 'CHAPTERS', 'LESSON', 'UPDATES', 'REVISION_HUB'].includes(state.view as string)) && (
+                        <div>
                         {maintenanceState?.config?.active && state.user?.role !== 'ADMIN' && state.user?.role !== 'SUB_ADMIN' && (
                           <MaintenanceBanner
                             title={maintenanceState.config.title || 'System Maintenance'}
@@ -3798,7 +3811,10 @@ const App: React.FC = () => {
                                 activeTab={studentTab} 
                                 onTabChange={setStudentTab} 
                                 setFullScreen={setIsFullScreen}
-                                onNavigate={(v) => setState(prev => ({...prev, view: v}))}
+                                onNavigate={(v) => {
+                                  setAppViewDirection('forward');
+                                  setState(prev => ({...prev, view: v}));
+                                }}
                                 isImpersonating={!!state.originalAdmin}
                                 onNavigateToChapter={handleNavigateToChapterFromHistory}
                                 isDarkMode={darkMode}
@@ -3836,9 +3852,8 @@ const App: React.FC = () => {
                             />
                           </Suspense>
                         </ErrorBoundary>
-                        </>
-                    )
-                )}
+                        </div>
+                    )}
 
                 {showDailyRankCard && state.user && (
                     <DailyChallengeRankCard
@@ -3850,6 +3865,7 @@ const App: React.FC = () => {
                         onClose={() => setShowDailyRankCard(false)}
                         onStartTodayChallenge={() => {
                             setShowDailyRankCard(false);
+                            setAppViewDirection('forward');
                             setState(prev => ({ ...prev, view: 'UPDATES' }));
                         }}
                     />
@@ -4016,7 +4032,10 @@ const App: React.FC = () => {
                         onBack={goBack}
                         onOpenMessenger={() => {}}
                         onOpenStudyRoom={() => {}}
-                        onOpenRevisionHub={() => setState(prev => ({ ...prev, view: 'REVISION_HUB' as any }))}
+                        onOpenRevisionHub={() => {
+                          setAppViewDirection('forward');
+                          setState(prev => ({ ...prev, view: 'REVISION_HUB' as any }));
+                        }}
                         appName={state.settings?.appName}
                       />
                     </Suspense>
@@ -4035,6 +4054,9 @@ const App: React.FC = () => {
                       />
                     </Suspense>
                   </ErrorBoundary>
+                )}
+                    </SlidePageTransition>
+                  )
                 )}
             </>
             </ErrorBoundary>

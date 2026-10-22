@@ -694,19 +694,27 @@ export const SuperAdminPanel: React.FC<Props> = ({ adminUid, onBack }) => {
   const [createError, setCreateError] = useState<string | null>(null);
 
   const createSchool = async () => {
-    if (!form.name.trim() || !form.email.trim()) return;
+    const cleanName = (form.name || "").trim();
+    if (!cleanName) {
+      setCreateError("Kripya School ka Naam (School Name) enter karein.");
+      return;
+    }
     setSaving(true);
     setCreateError(null);
     try {
       const id = generateId();
+      const schoolCode = (form.code.trim() || cleanName.slice(0, 6)).toUpperCase().replace(/[^A-Z0-9]/g, "_");
+      const cleanEmail = form.email.trim() || `${schoolCode.toLowerCase()}@school.internal`;
+      const cleanAdminEmail = form.adminEmail.trim() || cleanEmail;
+
       const school: School = {
         id,
-        name: form.name,
-        code: form.code || form.name.slice(0, 6).toUpperCase().replace(/\s/g, "_"),
-        email: form.email,
-        adminEmail: form.adminEmail || form.email,
-        phone: form.phone,
-        address: form.address,
+        name: cleanName,
+        code: schoolCode,
+        email: cleanEmail,
+        adminEmail: cleanAdminEmail,
+        phone: form.phone.trim(),
+        address: form.address.trim(),
         subscription: { ...sub, monthlyAmount: calcAmount(sub) },
         active: true,
         createdAt: new Date().toISOString(),
@@ -714,7 +722,9 @@ export const SuperAdminPanel: React.FC<Props> = ({ adminUid, onBack }) => {
         totalStudents: 0,
         totalTeachers: 0,
       };
+
       await saveSchool(school);
+      setSchools(prev => [school, ...prev.filter(s => s.id !== school.id)]);
       setForm({ name: "", code: "", email: "", adminEmail: "", phone: "", address: "" });
       setSub({ ...defaultSub });
       setView("dashboard");
@@ -792,8 +802,11 @@ export const SuperAdminPanel: React.FC<Props> = ({ adminUid, onBack }) => {
         <div className="bg-white dark:bg-slate-800 border-b dark:border-slate-700 px-4 py-3 flex items-center gap-3">
           <button onClick={() => setView("dashboard")} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"><X className="w-5 h-5" /></button>
           <h2 className="flex-1 font-bold text-slate-800 dark:text-white">Add New School</h2>
-          <button onClick={createSchool} disabled={saving || !form.name.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-60">
+          <button
+            onClick={createSchool}
+            disabled={saving || !form.name.trim()}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold disabled:opacity-50 cursor-pointer flex items-center gap-1.5 transition-all shadow-sm"
+          >
             {saving ? "Creating..." : "Create"}
           </button>
         </div>
@@ -807,12 +820,12 @@ export const SuperAdminPanel: React.FC<Props> = ({ adminUid, onBack }) => {
           <div className="bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm space-y-3">
             <h3 className="font-semibold text-slate-700 dark:text-slate-200">School Details</h3>
             {([
-              ["name",       "School Name *",            "text"],
-              ["code",       "School Code (auto)",        "text"],
-              ["email",      "School Email *",            "email"],
-              ["adminEmail", "Admin Email",               "email"],
-              ["phone",      "Phone Number",              "tel"],
-              ["address",    "Address",                   "text"],
+              ["name",       "School Name *",                   "text"],
+              ["code",       "School Code (e.g. DPS_01 / auto)", "text"],
+              ["email",      "School Email (optional)",          "email"],
+              ["adminEmail", "Admin Email (optional)",           "email"],
+              ["phone",      "Phone Number",                     "tel"],
+              ["address",    "Address",                          "text"],
             ] as const).map(([k, lbl, t]) => (
               <div key={k}>
                 <label className="text-xs text-slate-500 mb-1 block">{lbl}</label>
@@ -830,6 +843,14 @@ export const SuperAdminPanel: React.FC<Props> = ({ adminUid, onBack }) => {
             value={sub}
             onChange={s => setSub({ ...s, monthlyAmount: calcAmount(s) })}
           />
+
+          <button
+            onClick={createSchool}
+            disabled={saving || !form.name.trim()}
+            className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-base font-bold shadow-md hover:shadow-lg disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 transition-all"
+          >
+            {saving ? "School Create Ho Raha Hai..." : "🏫 Create & Save School Now"}
+          </button>
         </div>
       </div>
     );

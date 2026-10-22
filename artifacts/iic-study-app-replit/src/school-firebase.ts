@@ -3,7 +3,20 @@ import {
   collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
   query, where, orderBy, onSnapshot, Timestamp, writeBatch
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { ref, set, get, onValue, update, remove } from "firebase/database";
+import { db, rtdb } from "./firebase";
+
+const withTimeout = <T>(promise: Promise<T>, ms = 3000, fallbackVal?: T): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve, reject) =>
+      setTimeout(() => {
+        if (fallbackVal !== undefined) resolve(fallbackVal);
+        else reject(new Error(`Operation timed out after ${ms}ms`));
+      }, ms)
+    )
+  ]);
+};
 
 const sanitizeForFirestore = (obj: any): any => {
   if (obj === null || obj === undefined) return null;
@@ -24,118 +37,424 @@ import type {
 const col = (path: string) => collection(db, path);
 const d = (path: string) => doc(db, path);
 
+// ── SCHOOLS LOCAL CACHE ───────────────────────────────────────────────────────
+const LOCAL_SCHOOLS_KEY = "nst_schools_local_cache";
+
+export const getLocalSchools = (): School[] => {
+  try {
+    const raw = localStorage.getItem(LOCAL_SCHOOLS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+export const setLocalSchools = (schools: School[]) => {
+  try {
+    localStorage.setItem(LOCAL_SCHOOLS_KEY, JSON.stringify(schools));
+  } catch {}
+};
+
 // ── SCHOOLS ──────────────────────────────────────────────────────────────────
 
 export const saveSchool = async (school: School) => {
-  await setDoc(d(`schools/${school.id}`), sanitizeForFirestore(school));
+  const sanitized = sanitizeForFirestore(school);
+
+  // 1. Instantly store in local cache so UI is responsive in 0ms
+  const current = getLocalSchools();
+  const next = [sanitized, ...current.filter((s: any) => s.id !== school.id)];
+  setLocalSchools(next);
+
+  // 2. Fast dual-save to RTDB (realtime websocket, fast & reliable)
+  if (rtdb) {
+    try {
+      await withTimeout(set(ref(rtdb, `schools/${school.id}`), sanitized), 2500);
+    } catch (e) {
+      console.warn("[school-firebase] RTDB saveSchool:", e);
+    }
+  }
+
+  // 3. Save to Firestore with timeout so operation never hangs
+  if (db) {
+    try {
+      await withTimeout(setDoc(d(`schools/${school.id}`), sanitized), 3000);
+    } catch (e) {
+      console.warn("[school-firebase] Firestore saveSchool timed out or offline:", e);
+    }
+  }
+
+  return sanitized;
 };
 
 export const getSchool = async (schoolId: string): Promise<School | null> => {
-  const snap = await getDoc(d(`schools/${schoolId}`));
-  return snap.exists() ? (snap.data() as School) : null;
+  const local = getLocalSchools().find(s => s.id === schoolId);
+  if (local) return local;
+
+  if (rtdb) {
+    try {
+      const snap = await withTimeout(get(ref(rtdb, `schools/${schoolId}`)), 2000);
+      const val = (snap as any)?.val?.();
+      if (val) return val as School;
+    } catch {}
+  }
+
+  if (db) {
+    try {
+      const snap = await withTimeout(getDoc(d(`schools/${schoolId}`)), 2500);
+      if (snap.exists()) return snap.data() as School;
+    } catch {}
+  }
+
+  return null;
 };
 
 export const getAllSchools = async (): Promise<School[]> => {
-  const snap = await getDocs(col("schools"));
-  return snap.docs.map(d => d.data() as School);
+  const local = getLocalSchools();
+
+  if (rtdb) {
+    try {
+      const snap = await withTimeout(get(ref(rtdb, "schools")), 2000);
+      const val = (snap as any)?.val?.();
+      if (val && typeof val === "object") {
+        const list: School[] = Object.values(val);
+        if (list.length > 0) {
+          setLocalSchools(list);
+          return list;
+        }
+      }
+    } catch {}
+  }
+
+  if (db) {
+    try {
+      const snap = await withTimeout(getDocs(col("schools")), 2500);
+      const list = (snap as any).docs.map((d: any) => d.data() as School);
+      if (list.length > 0) {
+        setLocalSchools(list);
+        return list;
+      }
+    } catch {}
+  }
+
+  return local;
 };
 
-export const subscribeToSchool = (schoolId: string, cb: (s: School | null) => void) =>
-  onSnapshot(
-    d(`schools/${schoolId}`),
-    snap => cb(snap.exists() ? snap.data() as School : null),
-    err => { console.warn(`[school-firebase] subscribeToSchool error:`, err?.code || err); cb(null); }
-  );
+export const subscribeToSchool = (schoolId: string, cb: (s: School | null) => void) => {
+  const local = getLocalSchools().find(s => s.id === schoolId);
+  if (local) cb(local);
+
+  let rtdbUnsub: any = null;
+  if (rtdb) {
+    try {
+      rtdbUnsub = onValue(ref(rtdb, `schools/${schoolId}`), snap => {
+        const val = snap.val();
+        if (val) cb(val as School);
+      });
+    } catch {}
+  }
+
+  let fsUnsub: any = null;
+  if (db) {
+    try {
+      fsUnsub = onSnapshot(
+        d(`schools/${schoolId}`),
+        snap => cb(snap.exists() ? snap.data() as School : null),
+        err => { console.warn(`[school-firebase] subscribeToSchool error:`, err?.code || err); }
+      );
+    } catch {}
+  }
+
+  return () => {
+    if (typeof fsUnsub === "function") fsUnsub();
+    if (typeof rtdbUnsub === "function") rtdbUnsub();
+  };
+};
 
 export const subscribeToAllSchools = (
   cb: (schools: School[]) => void,
   onError?: (err: Error) => void
-) =>
-  onSnapshot(
-    col("schools"),
-    snap => cb(snap.docs.map(d => d.data() as School)),
-    err => {
-      console.warn(`[school-firebase] subscribeToAllSchools error:`, err?.code || err);
-      cb([]);
-      onError?.(err);
-    }
-  );
+) => {
+  // Deliver local cache first so UI is immediately populated
+  const local = getLocalSchools();
+  if (local.length > 0) {
+    cb(local);
+  }
+
+  let rtdbUnsub: any = null;
+  if (rtdb) {
+    try {
+      rtdbUnsub = onValue(
+        ref(rtdb, "schools"),
+        snap => {
+          const val = snap.val();
+          if (val && typeof val === "object") {
+            const list: School[] = Object.values(val);
+            if (list.length > 0) {
+              setLocalSchools(list);
+              cb(list);
+            }
+          }
+        },
+        err => console.warn(`[school-firebase] RTDB subscribeToAllSchools error:`, err)
+      );
+    } catch {}
+  }
+
+  let fsUnsub: any = null;
+  if (db) {
+    try {
+      fsUnsub = onSnapshot(
+        col("schools"),
+        snap => {
+          if (!snap.empty) {
+            const list = snap.docs.map(d => d.data() as School);
+            setLocalSchools(list);
+            cb(list);
+          }
+        },
+        err => {
+          console.warn(`[school-firebase] subscribeToAllSchools Firestore error:`, err?.code || err);
+          const current = getLocalSchools();
+          if (current.length > 0) cb(current);
+          onError?.(err);
+        }
+      );
+    } catch {}
+  }
+
+  return () => {
+    if (typeof fsUnsub === "function") fsUnsub();
+    if (typeof rtdbUnsub === "function") rtdbUnsub();
+  };
+};
 
 export const updateSchool = async (schoolId: string, data: Partial<School>) => {
-  await updateDoc(d(`schools/${schoolId}`), sanitizeForFirestore(data));
+  const sanitized = sanitizeForFirestore(data);
+
+  // Local cache
+  const current = getLocalSchools();
+  const next = current.map(s => s.id === schoolId ? { ...s, ...sanitized } : s);
+  setLocalSchools(next);
+
+  // RTDB
+  if (rtdb) {
+    try {
+      await withTimeout(update(ref(rtdb, `schools/${schoolId}`), sanitized), 2500);
+    } catch {}
+  }
+
+  // Firestore
+  if (db) {
+    try {
+      await withTimeout(updateDoc(d(`schools/${schoolId}`), sanitized), 3000);
+    } catch {}
+  }
 };
 
 export const lockSchool = async (schoolId: string, locked: boolean) => {
-  await updateDoc(d(`schools/${schoolId}`), { locked });
+  await updateSchool(schoolId, { locked });
 };
 
 export const deleteSchool = async (schoolId: string) => {
-  await deleteDoc(d(`schools/${schoolId}`));
+  const current = getLocalSchools();
+  setLocalSchools(current.filter(s => s.id !== schoolId));
+
+  if (rtdb) {
+    try {
+      await withTimeout(remove(ref(rtdb, `schools/${schoolId}`)), 2000);
+    } catch {}
+  }
+
+  if (db) {
+    try {
+      await withTimeout(deleteDoc(d(`schools/${schoolId}`)), 2500);
+    } catch {}
+  }
 };
 
 // ── SESSIONS ─────────────────────────────────────────────────────────────────
 
 export const saveSession = async (session: SchoolSession) => {
-  await setDoc(d(`schools/${session.schoolId}/sessions/${session.id}`), sanitizeForFirestore(session));
+  const sanitized = sanitizeForFirestore(session);
+  if (rtdb) {
+    try { await withTimeout(set(ref(rtdb, `schools/${session.schoolId}/sessions/${session.id}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(setDoc(d(`schools/${session.schoolId}/sessions/${session.id}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const getSessions = async (schoolId: string): Promise<SchoolSession[]> => {
-  const snap = await getDocs(col(`schools/${schoolId}/sessions`));
-  return snap.docs.map(d => d.data() as SchoolSession);
+  if (rtdb) {
+    try {
+      const snap = await withTimeout(get(ref(rtdb, `schools/${schoolId}/sessions`)), 2000);
+      const val = (snap as any)?.val?.();
+      if (val && typeof val === "object") return Object.values(val);
+    } catch {}
+  }
+  try {
+    const snap = await withTimeout(getDocs(col(`schools/${schoolId}/sessions`)), 2500);
+    return (snap as any).docs.map((doc: any) => doc.data() as SchoolSession);
+  } catch {
+    return [];
+  }
 };
 
-export const subscribeToSessions = (schoolId: string, cb: (sessions: SchoolSession[]) => void) =>
-  onSnapshot(
-    col(`schools/${schoolId}/sessions`),
-    snap => cb(snap.docs.map(d => d.data() as SchoolSession)),
-    err => { console.warn(`[school-firebase] subscribeToSessions error:`, err?.code || err); cb([]); }
-  );
+export const subscribeToSessions = (schoolId: string, cb: (sessions: SchoolSession[]) => void) => {
+  let rtdbUnsub: any = null;
+  if (rtdb) {
+    try {
+      rtdbUnsub = onValue(ref(rtdb, `schools/${schoolId}/sessions`), snap => {
+        const val = snap.val();
+        if (val && typeof val === "object") cb(Object.values(val));
+      });
+    } catch {}
+  }
+  let fsUnsub: any = null;
+  if (db) {
+    try {
+      fsUnsub = onSnapshot(
+        col(`schools/${schoolId}/sessions`),
+        snap => cb(snap.docs.map(doc => doc.data() as SchoolSession)),
+        err => { console.warn(`[school-firebase] subscribeToSessions error:`, err?.code || err); }
+      );
+    } catch {}
+  }
+  return () => {
+    if (typeof fsUnsub === "function") fsUnsub();
+    if (typeof rtdbUnsub === "function") rtdbUnsub();
+  };
+};
 
 export const updateSession = async (schoolId: string, sessionId: string, data: Partial<SchoolSession>) => {
-  await updateDoc(d(`schools/${schoolId}/sessions/${sessionId}`), sanitizeForFirestore(data));
+  const sanitized = sanitizeForFirestore(data);
+  if (rtdb) {
+    try { await withTimeout(update(ref(rtdb, `schools/${schoolId}/sessions/${sessionId}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(updateDoc(d(`schools/${schoolId}/sessions/${sessionId}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const deleteSession = async (schoolId: string, sessionId: string) => {
-  await deleteDoc(d(`schools/${schoolId}/sessions/${sessionId}`));
+  if (rtdb) {
+    try { await withTimeout(remove(ref(rtdb, `schools/${schoolId}/sessions/${sessionId}`)), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(deleteDoc(d(`schools/${schoolId}/sessions/${sessionId}`)), 2500); } catch {}
+  }
 };
 
 // ── CLASSES ──────────────────────────────────────────────────────────────────
 
 export const saveClass = async (cls: SchoolClass) => {
-  await setDoc(d(`schools/${cls.schoolId}/classes/${cls.id}`), sanitizeForFirestore(cls));
+  const sanitized = sanitizeForFirestore(cls);
+  if (rtdb) {
+    try { await withTimeout(set(ref(rtdb, `schools/${cls.schoolId}/classes/${cls.id}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(setDoc(d(`schools/${cls.schoolId}/classes/${cls.id}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const getClasses = async (schoolId: string, sessionId?: string): Promise<SchoolClass[]> => {
-  const snap = await getDocs(col(`schools/${schoolId}/classes`));
-  const all = snap.docs.map(d => d.data() as SchoolClass);
-  return sessionId ? all.filter(c => c.sessionId === sessionId) : all;
+  if (rtdb) {
+    try {
+      const snap = await withTimeout(get(ref(rtdb, `schools/${schoolId}/classes`)), 2000);
+      const val = (snap as any)?.val?.();
+      if (val && typeof val === "object") {
+        const all: SchoolClass[] = Object.values(val);
+        return sessionId ? all.filter(c => c.sessionId === sessionId) : all;
+      }
+    } catch {}
+  }
+  try {
+    const snap = await withTimeout(getDocs(col(`schools/${schoolId}/classes`)), 2500);
+    const all = (snap as any).docs.map((doc: any) => doc.data() as SchoolClass);
+    return sessionId ? all.filter((c: any) => c.sessionId === sessionId) : all;
+  } catch {
+    return [];
+  }
 };
 
-export const subscribeToClasses = (schoolId: string, sessionId: string, cb: (classes: SchoolClass[]) => void) =>
-  onSnapshot(
-    query(col(`schools/${schoolId}/classes`), where("sessionId", "==", sessionId)),
-    snap => cb(snap.docs.map(d => d.data() as SchoolClass)),
-    err => { console.warn(`[school-firebase] subscribeToClasses error:`, err?.code || err); cb([]); }
-  );
+export const subscribeToClasses = (schoolId: string, sessionId: string, cb: (classes: SchoolClass[]) => void) => {
+  let rtdbUnsub: any = null;
+  if (rtdb) {
+    try {
+      rtdbUnsub = onValue(ref(rtdb, `schools/${schoolId}/classes`), snap => {
+        const val = snap.val();
+        if (val && typeof val === "object") {
+          const all: SchoolClass[] = Object.values(val);
+          cb(all.filter(c => c.sessionId === sessionId));
+        }
+      });
+    } catch {}
+  }
+  let fsUnsub: any = null;
+  if (db) {
+    try {
+      fsUnsub = onSnapshot(
+        query(col(`schools/${schoolId}/classes`), where("sessionId", "==", sessionId)),
+        snap => cb(snap.docs.map(doc => doc.data() as SchoolClass)),
+        err => { console.warn(`[school-firebase] subscribeToClasses error:`, err?.code || err); }
+      );
+    } catch {}
+  }
+  return () => {
+    if (typeof fsUnsub === "function") fsUnsub();
+    if (typeof rtdbUnsub === "function") rtdbUnsub();
+  };
+};
 
 export const updateClass = async (schoolId: string, classId: string, data: Partial<SchoolClass>) => {
-  await updateDoc(d(`schools/${schoolId}/classes/${classId}`), sanitizeForFirestore(data));
+  const sanitized = sanitizeForFirestore(data);
+  if (rtdb) {
+    try { await withTimeout(update(ref(rtdb, `schools/${schoolId}/classes/${classId}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(updateDoc(d(`schools/${schoolId}/classes/${classId}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const deleteClass = async (schoolId: string, classId: string) => {
-  await deleteDoc(d(`schools/${schoolId}/classes/${classId}`));
+  if (rtdb) {
+    try { await withTimeout(remove(ref(rtdb, `schools/${schoolId}/classes/${classId}`)), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(deleteDoc(d(`schools/${schoolId}/classes/${classId}`)), 2500); } catch {}
+  }
 };
 
 // ── SUBJECTS ─────────────────────────────────────────────────────────────────
 
 export const saveSubject = async (subject: SchoolSubject) => {
-  await setDoc(d(`schools/${subject.schoolId}/subjects/${subject.id}`), sanitizeForFirestore(subject));
+  const sanitized = sanitizeForFirestore(subject);
+  if (rtdb) {
+    try { await withTimeout(set(ref(rtdb, `schools/${subject.schoolId}/subjects/${subject.id}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(setDoc(d(`schools/${subject.schoolId}/subjects/${subject.id}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const getSubjects = async (schoolId: string, classId?: string): Promise<SchoolSubject[]> => {
-  const snap = await getDocs(col(`schools/${schoolId}/subjects`));
-  const all = snap.docs.map(d => d.data() as SchoolSubject);
-  return classId ? all.filter(s => s.classId === classId) : all;
+  if (rtdb) {
+    try {
+      const snap = await withTimeout(get(ref(rtdb, `schools/${schoolId}/subjects`)), 2000);
+      const val = (snap as any)?.val?.();
+      if (val && typeof val === "object") {
+        const all: SchoolSubject[] = Object.values(val);
+        return classId ? all.filter(s => s.classId === classId) : all;
+      }
+    } catch {}
+  }
+  try {
+    const snap = await withTimeout(getDocs(col(`schools/${schoolId}/subjects`)), 2500);
+    const all = (snap as any).docs.map((doc: any) => doc.data() as SchoolSubject);
+    return classId ? all.filter((s: any) => s.classId === classId) : all;
+  } catch {
+    return [];
+  }
 };
 
 export const subscribeToSubjects = (schoolId: string, classId: string, cb: (subjects: SchoolSubject[]) => void) =>
@@ -146,22 +465,34 @@ export const subscribeToSubjects = (schoolId: string, classId: string, cb: (subj
   );
 
 export const deleteSubject = async (schoolId: string, subjectId: string) => {
-  await deleteDoc(d(`schools/${schoolId}/subjects/${subjectId}`));
+  if (rtdb) {
+    try { await withTimeout(remove(ref(rtdb, `schools/${schoolId}/subjects/${subjectId}`)), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(deleteDoc(d(`schools/${schoolId}/subjects/${subjectId}`)), 2500); } catch {}
+  }
 };
 
 // ── LESSONS ──────────────────────────────────────────────────────────────────
 
 export const saveLesson = async (lesson: SchoolLesson) => {
-  await setDoc(
-    d(`schools/${lesson.schoolId}/lessons/${lesson.id}`),
-    sanitizeForFirestore(lesson)
-  );
+  const sanitized = sanitizeForFirestore(lesson);
+  if (rtdb) {
+    try { await withTimeout(set(ref(rtdb, `schools/${lesson.schoolId}/lessons/${lesson.id}`), sanitized), 2500); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(setDoc(d(`schools/${lesson.schoolId}/lessons/${lesson.id}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const getLessons = async (schoolId: string, subjectId?: string): Promise<SchoolLesson[]> => {
-  const snap = await getDocs(col(`schools/${schoolId}/lessons`));
-  const all = snap.docs.map(d => d.data() as SchoolLesson);
-  return subjectId ? all.filter(l => l.subjectId === subjectId) : all;
+  try {
+    const snap = await withTimeout(getDocs(col(`schools/${schoolId}/lessons`)), 2500);
+    const all = (snap as any).docs.map((doc: any) => doc.data() as SchoolLesson);
+    return subjectId ? all.filter((l: any) => l.subjectId === subjectId) : all;
+  } catch {
+    return [];
+  }
 };
 
 export const subscribeToLessons = (schoolId: string, subjectId: string, cb: (lessons: SchoolLesson[]) => void) =>
@@ -172,22 +503,43 @@ export const subscribeToLessons = (schoolId: string, subjectId: string, cb: (les
   );
 
 export const updateLesson = async (schoolId: string, lessonId: string, data: Partial<SchoolLesson>) => {
-  await updateDoc(d(`schools/${schoolId}/lessons/${lessonId}`), sanitizeForFirestore(data));
+  const sanitized = sanitizeForFirestore(data);
+  if (rtdb) {
+    try { await withTimeout(update(ref(rtdb, `schools/${schoolId}/lessons/${lessonId}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(updateDoc(d(`schools/${schoolId}/lessons/${lessonId}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const deleteLesson = async (schoolId: string, lessonId: string) => {
-  await deleteDoc(d(`schools/${schoolId}/lessons/${lessonId}`));
+  if (rtdb) {
+    try { await withTimeout(remove(ref(rtdb, `schools/${schoolId}/lessons/${lessonId}`)), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(deleteDoc(d(`schools/${schoolId}/lessons/${lessonId}`)), 2500); } catch {}
+  }
 };
 
 // ── TEACHERS ─────────────────────────────────────────────────────────────────
 
 export const saveTeacher = async (teacher: SchoolTeacher) => {
-  await setDoc(d(`schools/${teacher.schoolId}/teachers/${teacher.id}`), sanitizeForFirestore(teacher));
+  const sanitized = sanitizeForFirestore(teacher);
+  if (rtdb) {
+    try { await withTimeout(set(ref(rtdb, `schools/${teacher.schoolId}/teachers/${teacher.id}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(setDoc(d(`schools/${teacher.schoolId}/teachers/${teacher.id}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const getTeachers = async (schoolId: string): Promise<SchoolTeacher[]> => {
-  const snap = await getDocs(col(`schools/${schoolId}/teachers`));
-  return snap.docs.map(d => d.data() as SchoolTeacher);
+  try {
+    const snap = await withTimeout(getDocs(col(`schools/${schoolId}/teachers`)), 2500);
+    return (snap as any).docs.map((doc: any) => doc.data() as SchoolTeacher);
+  } catch {
+    return [];
+  }
 };
 
 export const subscribeToTeachers = (schoolId: string, cb: (teachers: SchoolTeacher[]) => void) =>
@@ -198,23 +550,44 @@ export const subscribeToTeachers = (schoolId: string, cb: (teachers: SchoolTeach
   );
 
 export const updateTeacher = async (schoolId: string, teacherId: string, data: Partial<SchoolTeacher>) => {
-  await updateDoc(d(`schools/${schoolId}/teachers/${teacherId}`), sanitizeForFirestore(data));
+  const sanitized = sanitizeForFirestore(data);
+  if (rtdb) {
+    try { await withTimeout(update(ref(rtdb, `schools/${schoolId}/teachers/${teacherId}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(updateDoc(d(`schools/${schoolId}/teachers/${teacherId}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const deleteTeacher = async (schoolId: string, teacherId: string) => {
-  await deleteDoc(d(`schools/${schoolId}/teachers/${teacherId}`));
+  if (rtdb) {
+    try { await withTimeout(remove(ref(rtdb, `schools/${schoolId}/teachers/${teacherId}`)), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(deleteDoc(d(`schools/${schoolId}/teachers/${teacherId}`)), 2500); } catch {}
+  }
 };
 
 // ── STUDENTS ─────────────────────────────────────────────────────────────────
 
 export const saveStudent = async (student: SchoolStudent) => {
-  await setDoc(d(`schools/${student.schoolId}/students/${student.id}`), sanitizeForFirestore(student));
+  const sanitized = sanitizeForFirestore(student);
+  if (rtdb) {
+    try { await withTimeout(set(ref(rtdb, `schools/${student.schoolId}/students/${student.id}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(setDoc(d(`schools/${student.schoolId}/students/${student.id}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const getStudents = async (schoolId: string, classId?: string): Promise<SchoolStudent[]> => {
-  const snap = await getDocs(col(`schools/${schoolId}/students`));
-  const all = snap.docs.map(d => d.data() as SchoolStudent).filter(s => s.active);
-  return classId ? all.filter(s => s.classId === classId) : all;
+  try {
+    const snap = await withTimeout(getDocs(col(`schools/${schoolId}/students`)), 2500);
+    const all = (snap as any).docs.map((doc: any) => doc.data() as SchoolStudent).filter((s: any) => s.active);
+    return classId ? all.filter((s: any) => s.classId === classId) : all;
+  } catch {
+    return [];
+  }
 };
 
 export const subscribeToStudents = (schoolId: string, classId: string, cb: (students: SchoolStudent[]) => void) =>
@@ -232,11 +605,22 @@ export const subscribeToAllStudents = (schoolId: string, cb: (students: SchoolSt
   );
 
 export const updateStudent = async (schoolId: string, studentId: string, data: Partial<SchoolStudent>) => {
-  await updateDoc(d(`schools/${schoolId}/students/${studentId}`), sanitizeForFirestore(data));
+  const sanitized = sanitizeForFirestore(data);
+  if (rtdb) {
+    try { await withTimeout(update(ref(rtdb, `schools/${schoolId}/students/${studentId}`), sanitized), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(updateDoc(d(`schools/${schoolId}/students/${studentId}`), sanitized), 3000); } catch {}
+  }
 };
 
 export const deleteStudent = async (schoolId: string, studentId: string) => {
-  await updateDoc(d(`schools/${schoolId}/students/${studentId}`), { active: false });
+  if (rtdb) {
+    try { await withTimeout(update(ref(rtdb, `schools/${schoolId}/students/${studentId}`), { active: false }), 2000); } catch {}
+  }
+  if (db) {
+    try { await withTimeout(updateDoc(d(`schools/${schoolId}/students/${studentId}`), { active: false }), 2500); } catch {}
+  }
 };
 
 // ── ATTENDANCE ───────────────────────────────────────────────────────────────

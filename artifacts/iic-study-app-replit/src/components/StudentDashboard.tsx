@@ -395,6 +395,7 @@ import { SchoolHomeCard } from './school/SchoolHomeCard';
 import { HomeAssemblyAnimation } from './HomeAssemblyAnimation';
 import { getSchool as getSchoolById, getSchoolUserProfile, getAllSchools, removeSchoolUserByUid } from '../school-firebase';
 import { getActiveCoachings, getCoachingUserProfile } from '../coaching-firebase';
+import { SlidePageTransition } from './SlidePageTransition';
 
 /**
  * Lightweight swipe-to-dismiss wrapper for "Continue Reading" cards.
@@ -809,6 +810,24 @@ export const StudentDashboard: React.FC<Props> = ({
   const analysisLogs = (() => { try { return JSON.parse(localStorage.getItem("nst_universal_analysis_logs") || "[]"); } catch { return []; } })();
   const isGameEnabled = settings?.isGameEnabled !== false;
 
+  const [slideDirection, setSlideDirection] = useState<'forward' | 'backward'>('forward');
+
+  const getLogicalNavIndex = useCallback((screenId: string): number => {
+    switch (screenId) {
+      case 'HOME': return 0;
+      case 'COURSES': return 0.5;
+      case 'ROUTINE': return 1;
+      case 'UPDATES': return 1.4;
+      case 'REVISION': return 1.8;
+      case 'COMMUNITY': return 2;
+      case 'MCQ': return 3;
+      case 'STORE':
+      case 'APP_STORE': return 3.5;
+      case 'PROFILE': return 4;
+      default: return 0;
+    }
+  }, []);
+
   const handleTabChangeWrapper = (tab: any) => {
     setMathViewerEntry(null);
     setMathImmersive(false);
@@ -819,9 +838,13 @@ export const StudentDashboard: React.FC<Props> = ({
       tab === "OPEN_CATALOG_AUDIO"
     ) {
       setShowAllNotesCatalog(false);
+      setSlideDirection('forward');
       onTabChange("AI_HUB");
       return;
     }
+    const curIdx = typeof getCurrentSwipeTabIndex === 'function' ? getCurrentSwipeTabIndex() : 0;
+    const targetIdx = getLogicalNavIndex(tab);
+    setSlideDirection(targetIdx >= curIdx ? 'forward' : 'backward');
     onTabChange(tab);
   };
 
@@ -13786,6 +13809,130 @@ export const StudentDashboard: React.FC<Props> = ({
   // --- RENDER BASED ON ACTIVE TAB ---
 
   const renderMainContent = () => {
+    // 0. ROUTINE TAB
+    if (showMyRoutine || activeTab === "ROUTINE") {
+      return (
+        <div className="w-full min-h-[100dvh] bg-white dark:bg-slate-900 pb-20">
+          <MyRoutine
+            user={user}
+            activeBoard={activeSessionBoard || (user as any)?.board || 'BSEB'}
+            activeClass={activeSessionClass || (user as any)?.classLevel || '10'}
+            lucentNotes={(settings?.lucentNotes || []) as any[]}
+            onBack={() => {
+              setSlideDirection('backward');
+              setShowMyRoutine(false);
+              onTabChange('HOME');
+            }}
+            onUserUpdate={handleUserUpdate}
+            settings={settings}
+            onStartChallenge20={(challenge) => {
+              if (onStartWeeklyTest) {
+                onStartWeeklyTest({
+                  id: challenge.id,
+                  name: challenge.title,
+                  description: challenge.description || "Aaj ka Daily Challenge 2.0",
+                  date: new Date().toISOString(),
+                  durationMinutes: Math.min(challenge.durationMinutes || 60, 60),
+                  isCompleted: false,
+                  score: 0,
+                  totalQuestions: challenge.questions.length,
+                  questions: challenge.questions,
+                  classLevel: challenge.classLevel,
+                  challengeType: isDailyChallenge20(challenge) ? 'DAILY_CHALLENGE' : 'WEEKLY_TEST',
+                } as any);
+              }
+            }}
+            onClaimChallenge20={handleClaimDailyChallenge20}
+            challenge20s={activeChallenges20}
+            onOpenLesson={(lessonId: string) => {
+              const lesson = (settings?.lucentNotes || []).find((l: any) => l.id === lessonId);
+              if (lesson) {
+                setLucentPageListViewer(_withSortedPages(lesson));
+                setShowMyRoutine(false);
+              }
+            }}
+            onOpenRevisionHub={(lessonId?: string, lessonTitle?: string, autoStartMcq?: boolean) => {
+              openRevisionHubSafely({
+                lessonId,
+                lessonTitle,
+                autoStartMcq,
+                isFromRoutine: true,
+              });
+            }}
+            onPracticeMistakes={(mistakes) => {
+              setHomeMistakes(mistakes);
+              setShowMyRoutine(false);
+              setShowMistakePractice(true);
+            }}
+            onGoToRevision={(lessonId, lessonTitle) => {
+              openRevisionHubSafely({
+                lessonId,
+                lessonTitle,
+                isFromRoutine: true,
+              });
+            }}
+            isTopBarHidden={isTopBarHidden || isLandscapeUiHidden}
+            bottomNav={null}
+          />
+        </div>
+      );
+    }
+
+    // 0.1 MCQ ARENA TAB
+    if ((showChat && chatMode === 'MCQ') || activeTab === 'MCQ') {
+      return (
+        <div className="w-full min-h-[100dvh] bg-slate-900 flex flex-col min-h-0 overflow-y-auto overscroll-contain pb-20">
+          <McqHub
+            user={user}
+            settings={settings}
+            isDarkMode={isDarkMode}
+            compMcqPracticeLessons={compMcqPracticeLessons}
+            onOpenStore={() => onTabChange('STORE' as any)}
+            onBack={() => {
+              setSlideDirection('backward');
+              setShowChat(false);
+              onTabChange('HOME');
+            }}
+          />
+        </div>
+      );
+    }
+
+    // 0.2 COMMUNITY TAB
+    if ((showChat && chatMode === 'COMMUNITY') || activeTab === 'COMMUNITY' || (showChat && chatMode !== 'MCQ')) {
+      return (
+        <div className="w-full min-h-[100dvh] pb-20">
+          <UniversalChat
+            key={chatMode}
+            user={user}
+            onClose={() => {
+              setSlideDirection('backward');
+              setShowChat(false);
+              onTabChange('HOME');
+            }}
+            isAdmin={_isAdminUser}
+            isFeedOnly={chatMode === 'COMMUNITY'}
+            isMcqOnly={false}
+            isSupportOnly={chatMode === 'SUPPORT'}
+            defaultTab={chatMode === 'SUPPORT' ? 'SUPPORT' : 'GLOBAL'}
+            allowStudentMcq={settings?.allowStudentCommunityMcq !== false}
+            hideGlobalTab={false}
+            hideSupportTab={chatMode === 'COMMUNITY'}
+            onSpendCoins={handleSpendCoins}
+            onSpendDiamonds={handleSpendDiamonds}
+            onUpdateUser={handleUserUpdate}
+            themeColor={_overrideColor || undefined}
+            appName={settings?.appShortName || settings?.appName || "NSTA"}
+            appLogo={(settings?.appLogo && !settings.appLogo.includes('placeholder')) ? settings.appLogo : '/branding/nsta-logo.svg'}
+            onRestoreBottomNav={handleRestoreBottomNav}
+            isBottomNavVisible={false}
+            initialCommunityFilter={communityInitialFilter}
+            settings={settings}
+          />
+        </div>
+      );
+    }
+
     // 1. HOME TAB
     if (activeTab === "HOME") {
       return (
@@ -17902,7 +18049,7 @@ export const StudentDashboard: React.FC<Props> = ({
       return null;
     }
 
-    if (!inProjectorOverlay && (flashcardMcqs || compMcqSession || showMyRoutine)) {
+    if (!inProjectorOverlay && (flashcardMcqs || compMcqSession)) {
       return null;
     }
 
@@ -18167,6 +18314,7 @@ export const StudentDashboard: React.FC<Props> = ({
                   setIsLandscapeUiHidden(false);
                   setIsTopBarHidden(false);
                   setForceShowBottomNav(true);
+                  setSlideDirection('backward');
                   switchToLogicalTab("HOME");
                 },
               },
@@ -18204,7 +18352,10 @@ export const StudentDashboard: React.FC<Props> = ({
                   document.documentElement.scrollTop = 0;
                   document.body.scrollTop = 0;
                   hapticMedium();
+                  const cIdx = getCurrentSwipeTabIndex();
+                  setSlideDirection(cIdx <= 1 ? 'forward' : 'backward');
                   setShowMyRoutine(true);
+                  onTabChange('ROUTINE');
                 },
               },
               {
@@ -18241,8 +18392,11 @@ export const StudentDashboard: React.FC<Props> = ({
                   try { stopProfileStarRead(); } catch (_) {}
                   setShowStarredPage(false);
                   setCurrentLogicalTab("COMMUNITY_SUPPORT" as any);
+                  const cIdx = getCurrentSwipeTabIndex();
+                  setSlideDirection(cIdx <= 2 ? 'forward' : 'backward');
                   setChatMode('COMMUNITY');
                   setShowChat(true);
+                  onTabChange('COMMUNITY' as any);
                 },
               },
               {
@@ -18278,8 +18432,11 @@ export const StudentDashboard: React.FC<Props> = ({
                   try { stopProfileStarRead(); } catch (_) {}
                   setShowStarredPage(false);
                   setCurrentLogicalTab("COMMUNITY_SUPPORT" as any);
+                  const cIdx = getCurrentSwipeTabIndex();
+                  setSlideDirection(cIdx <= 3 ? 'forward' : 'backward');
                   setChatMode('MCQ');
                   setShowChat(true);
+                  onTabChange('MCQ');
                 },
               },
               ...(!settings?.appStorePageHidden && !(settings?.hiddenBottomNavButtons || []).includes('APP_STORE')
@@ -18291,7 +18448,11 @@ export const StudentDashboard: React.FC<Props> = ({
                       filledOnActive: true,
                       activeColor: "#ec4899",
                       isActive: !showStarredPage && !showRevisionHubScreen && !showUpdatesPage && !showMyRoutine && !showProgressDashboard && !showChat && currentLogicalTab === "APP_STORE",
-                      onClick: () => switchToLogicalTab("APP_STORE"),
+                      onClick: () => {
+                        const cIdx = getCurrentSwipeTabIndex();
+                        setSlideDirection(cIdx <= 3.5 ? 'forward' : 'backward');
+                        switchToLogicalTab("APP_STORE");
+                      },
                     },
                   ]
                 : []),
@@ -18302,7 +18463,10 @@ export const StudentDashboard: React.FC<Props> = ({
                 filledOnActive: false,
                 activeColor: "#6366f1",
                 isActive: !showStarredPage && !showRevisionHubScreen && !showUpdatesPage && !showMyRoutine && !showProgressDashboard && !showChat && currentLogicalTab === "PROFILE",
-                onClick: () => switchToLogicalTab("PROFILE"),
+                onClick: () => {
+                  setSlideDirection('forward');
+                  switchToLogicalTab("PROFILE");
+                },
               },
             ];
 
@@ -18493,6 +18657,10 @@ export const StudentDashboard: React.FC<Props> = ({
       setShowCommunityStarsPage(false);
     }
 
+    const curIdx = getCurrentSwipeTabIndex();
+    const nextDir: 'forward' | 'backward' = targetIndex >= curIdx ? 'forward' : 'backward';
+    setSlideDirection(nextDir);
+
     if (targetIndex === 0) {
       // HOME
       setForceShowBottomNav(true);
@@ -18524,6 +18692,7 @@ export const StudentDashboard: React.FC<Props> = ({
       document.body.scrollTop = 0;
       hapticMedium();
       setShowMyRoutine(true);
+      onTabChange('ROUTINE');
     } else if (targetIndex === 2) {
       // COMMUNITY
       if (contentViewStep === "PLAYER") {
@@ -18538,6 +18707,7 @@ export const StudentDashboard: React.FC<Props> = ({
       setCurrentLogicalTab("COMMUNITY_SUPPORT" as any);
       setChatMode('COMMUNITY');
       setShowChat(true);
+      onTabChange('COMMUNITY' as any);
       hapticMedium();
     } else if (targetIndex === 3) {
       // MCQ
@@ -18553,6 +18723,7 @@ export const StudentDashboard: React.FC<Props> = ({
       setCurrentLogicalTab("COMMUNITY_SUPPORT" as any);
       setChatMode('MCQ');
       setShowChat(true);
+      onTabChange('MCQ');
       hapticMedium();
     } else if (targetIndex === 4) {
       // PROFILE
@@ -18570,7 +18741,7 @@ export const StudentDashboard: React.FC<Props> = ({
       onTabChange('PROFILE');
       setCurrentLogicalTab('PROFILE');
     }
-  }, [contentViewStep, onTabChange, showCommunityStarsPage]);
+  }, [contentViewStep, onTabChange, showCommunityStarsPage, getCurrentSwipeTabIndex]);
 
   // Window-level swipe gesture listener to seamlessly swipe left/right between tabs like WhatsApp
   useEffect(() => {
@@ -18690,6 +18861,24 @@ export const StudentDashboard: React.FC<Props> = ({
     compMcqSession,
     showWhatsAppChatModal,
   ]);
+
+  const activeLogicalScreenKey = useMemo(() => {
+    if (showMyRoutine || activeTab === 'ROUTINE') return 'ROUTINE';
+    if ((showChat && chatMode === 'MCQ') || activeTab === 'MCQ') return 'MCQ';
+    if ((showChat && chatMode === 'COMMUNITY') || activeTab === 'COMMUNITY') return 'COMMUNITY';
+    if (showChat && chatMode === 'SUPPORT') return 'SUPPORT';
+    if (showStarredPage) return 'STARRED';
+    if (showDailyEventPage) return 'DAILY_EVENT';
+    if (showProgressDashboard) return 'PROGRESS';
+    if (showAllNotesCatalog) return 'NOTES_CATALOG';
+    if (showUpdatesPage || activeTab === 'UPDATES') return 'UPDATES';
+    if (showRevisionHubScreen || activeTab === 'REVISION') return 'REVISION';
+    if (activeTab === 'PROFILE' || currentLogicalTab === 'PROFILE') return 'PROFILE';
+    if (activeTab === 'STORE' || currentLogicalTab === 'APP_STORE') return 'STORE';
+    if (activeTab === 'COURSES') return 'COURSES';
+    if (activeTab === 'AI_HUB' || activeTab === 'AI_STUDIO') return 'AI_HUB';
+    return activeTab || 'HOME';
+  }, [showMyRoutine, showChat, chatMode, showStarredPage, showDailyEventPage, showProgressDashboard, showAllNotesCatalog, showUpdatesPage, showRevisionHubScreen, activeTab, currentLogicalTab]);
 
   return (
   <ThemeProvider theme={_extendedTheme}>
@@ -23652,8 +23841,8 @@ export const StudentDashboard: React.FC<Props> = ({
         </div>
       )}
 
-      {/* MCQ DUAL ARENA (Official 100 & Battles) */}
-      {showChat && chatMode === 'MCQ' && (
+      {/* MCQ DUAL ARENA (Rendered seamlessly via SlidePageTransition) */}
+      {false && showChat && chatMode === 'MCQ' && (
         <div
           className={`fixed inset-0 z-[350] bg-slate-900 flex flex-col min-h-0 overflow-y-auto overscroll-contain ${forceShowBottomNav ? 'pb-[64px]' : ''}`}
         >
@@ -23670,8 +23859,8 @@ export const StudentDashboard: React.FC<Props> = ({
         </div>
       )}
 
-      {/* UNIVERSAL CHAT (Global + Support) */}
-      {showChat && chatMode !== 'MCQ' && (
+      {/* UNIVERSAL CHAT (Rendered seamlessly via SlidePageTransition) */}
+      {false && showChat && chatMode !== 'MCQ' && (
         <div
           className={`fixed inset-0 z-[350] ${forceShowBottomNav ? 'pb-[64px]' : ''}`}
           onClick={() => {
@@ -24352,27 +24541,47 @@ export const StudentDashboard: React.FC<Props> = ({
                   : "p-4 pb-20"
         }`}
       >
-        <div
-          key={activeTab}
-          className={`${contentViewStep === "PLAYER" && selectedChapter ? "h-full" : "animate-in fade-in duration-150 ease-out"} ${
-            (() => {
-              if (activeTab === "HOME") return "nst-3d-100";
-              if (activeTab === "COURSES") {
-                if (contentViewStep === "CHAPTERS" || contentViewStep === "PLAYER") return "nst-3d-60";
-                if (class612SubjectView || homeworkSubjectView || lucentCategoryView) return "nst-3d-70";
-                return "nst-3d-80";
-              }
-              return "nst-3d-80";
-            })()
-          }`}
+        <SlidePageTransition
+          pageKey={activeLogicalScreenKey}
+          direction={slideDirection}
+
+          disabled={contentViewStep === "PLAYER" && Boolean(selectedChapter)}
+          onSwipeLeft={() => {
+            const curIdx = getCurrentSwipeTabIndex();
+            if (curIdx >= 0 && curIdx < 4) {
+              setSlideDirection('forward');
+              handleSwitchToTabByIndex(curIdx + 1);
+            }
+          }}
+          onSwipeRight={() => {
+            const curIdx = getCurrentSwipeTabIndex();
+            if (curIdx > 0) {
+              setSlideDirection('backward');
+              handleSwitchToTabByIndex(curIdx - 1);
+            }
+          }}
         >
-          {/* ErrorBoundary so a render-time crash inside one page (e.g. History
-              or Teacher Store) never blanks the whole dashboard — the user can
-              tap "Go to Home" and recover instead of seeing a white screen. */}
-          <ErrorBoundary key={activeTab + '-eb'}>
-            {renderMainContent()}
-          </ErrorBoundary>
-        </div>
+          <div
+            className={`${contentViewStep === "PLAYER" && selectedChapter ? "h-full" : ""} ${
+              (() => {
+                if (activeTab === "HOME") return "nst-3d-100";
+                if (activeTab === "COURSES") {
+                  if (contentViewStep === "CHAPTERS" || contentViewStep === "PLAYER") return "nst-3d-60";
+                  if (class612SubjectView || homeworkSubjectView || lucentCategoryView) return "nst-3d-70";
+                  return "nst-3d-80";
+                }
+                return "nst-3d-80";
+              })()
+            }`}
+          >
+            {/* ErrorBoundary so a render-time crash inside one page (e.g. History
+                or Teacher Store) never blanks the whole dashboard — the user can
+                tap "Go to Home" and recover instead of seeing a white screen. */}
+            <ErrorBoundary key={activeLogicalScreenKey + '-eb'}>
+              {renderMainContent()}
+            </ErrorBoundary>
+          </div>
+        </SlidePageTransition>
       </div>
 
       {/* Hidden printable container used by the Competition MCQ Hub "Download" button.
@@ -29016,8 +29225,8 @@ RULES:
         );
       })()}
 
-      {/* MY ROUTINE FULL-SCREEN */}
-      {showMyRoutine && createPortal(
+      {/* MY ROUTINE FULL-SCREEN (Rendered seamlessly via SlidePageTransition) */}
+      {false && showMyRoutine && createPortal(
         <MyRoutine
           user={user}
           activeBoard={activeSessionBoard || (user as any)?.board || 'BSEB'}
