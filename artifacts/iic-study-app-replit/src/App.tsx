@@ -1587,45 +1587,64 @@ const App: React.FC = () => {
   }, [state.user?.id, state.originalAdmin]);
 
   useEffect(() => {
-      if (state.user && !state.originalAdmin) {
-          getUserSavedNotes(state.user.id).then(async savedNotes => {
-              if (savedNotes && savedNotes.length > 0) {
-                  savedNotes.sort((a: any, b: any) => new Date(a.dateCreated || a.date || 0).getTime() - new Date(b.dateCreated || b.date || 0).getTime());
-                  await storage.setItem('nst_user_history', savedNotes);
+      const isGuestSession = Boolean(
+        state.user?.isGuest ||
+        state.user?.isAnonymous ||
+        String(state.user?.id || '').startsWith('guest_')
+      );
+      if (state.user && !state.originalAdmin && !isGuestSession) {
+          const targetUid = state.user.id;
+          let cancelled = false;
+
+          (async () => {
+              if (auth && !auth.currentUser && typeof auth.authStateReady === 'function') {
+                  await Promise.race([
+                      auth.authStateReady().catch(() => {}),
+                      new Promise(res => setTimeout(res, 1500)),
+                  ]);
               }
-          });
+              if (cancelled) return;
 
-          getUserData(state.user.id).then(fetchedCloudUser => {
-             if (fetchedCloudUser) {
-                 const localHistoryLen = state.user?.mcqHistory?.length || 0;
-                 const cloudHistoryLen = fetchedCloudUser.mcqHistory?.length || 0;
+              getUserSavedNotes(targetUid).then(async savedNotes => {
+                  if (!cancelled && savedNotes && savedNotes.length > 0) {
+                      savedNotes.sort((a: any, b: any) => new Date(a.dateCreated || a.date || 0).getTime() - new Date(b.dateCreated || b.date || 0).getTime());
+                      await storage.setItem('nst_user_history', savedNotes);
+                  }
+              }).catch(() => {});
 
-                 if (cloudHistoryLen > localHistoryLen) {
-                     setCloudUser(fetchedCloudUser);
-                     setShowCloudRecoveryModal(true);
-                 } else {
-                     const currentStr = JSON.stringify(state.user);
-                     const cloudStr = JSON.stringify(fetchedCloudUser);
-                     if (currentStr !== cloudStr) {
-                         let mergedUser = { ...state.user, ...fetchedCloudUser };
+              const fetchedCloudUser = await getUserData(targetUid).catch(() => null);
+              if (cancelled || !fetchedCloudUser) return;
 
-                         if (state.user?.role === 'ADMIN' && fetchedCloudUser.role !== 'ADMIN') {
-                             mergedUser.role = 'ADMIN';
-                         }
-                         if (state.user?.role === 'SUB_ADMIN' && fetchedCloudUser.role !== 'SUB_ADMIN' && fetchedCloudUser.role !== 'ADMIN') {
-                             mergedUser.role = 'SUB_ADMIN';
-                         }
+              const localHistoryLen = state.user?.mcqHistory?.length || 0;
+              const cloudHistoryLen = fetchedCloudUser.mcqHistory?.length || 0;
 
-                         if (mergedUser.role !== 'ADMIN' && mergedUser.role !== 'SUB_ADMIN') {
-                             mergedUser = recalculateSubscriptionStatus(mergedUser, state.settings);
-                         }
+              if (cloudHistoryLen > localHistoryLen) {
+                  setCloudUser(fetchedCloudUser);
+                  setShowCloudRecoveryModal(true);
+              } else {
+                  const currentStr = JSON.stringify(state.user);
+                  const cloudStr = JSON.stringify(fetchedCloudUser);
+                  if (currentStr !== cloudStr) {
+                      let mergedUser = { ...state.user, ...fetchedCloudUser };
 
-                         localStorage.setItem('nst_current_user', JSON.stringify(mergedUser));
-                         setState(prev => ({...prev, user: mergedUser}));
-                     }
-                 }
-             }
-          });
+                      if (state.user?.role === 'ADMIN' && fetchedCloudUser.role !== 'ADMIN') {
+                          mergedUser.role = 'ADMIN';
+                      }
+                      if (state.user?.role === 'SUB_ADMIN' && fetchedCloudUser.role !== 'SUB_ADMIN' && fetchedCloudUser.role !== 'ADMIN') {
+                          mergedUser.role = 'SUB_ADMIN';
+                      }
+
+                      if (mergedUser.role !== 'ADMIN' && mergedUser.role !== 'SUB_ADMIN') {
+                          mergedUser = recalculateSubscriptionStatus(mergedUser, state.settings);
+                      }
+
+                      localStorage.setItem('nst_current_user', JSON.stringify(mergedUser));
+                      setState(prev => ({...prev, user: mergedUser}));
+                  }
+              }
+          })();
+
+          return () => { cancelled = true; };
       }
   }, [state.user?.id, state.originalAdmin]);
 

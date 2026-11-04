@@ -7,14 +7,13 @@ import { CLASS_10_FAKE_LESSONS } from "./constants/class10SeedLessons";
 
 // --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
-  apiKey: "AIzaSyBEDKZVPgwOPCccjWdKSShfvSqC3REDa0c",
-  authDomain: "iic-nst.firebaseapp.com",
-  databaseURL: "https://iic-nst-default-rtdb.firebaseio.com",
-  projectId: "iic-nst",
-  storageBucket: "iic-nst.firebasestorage.app",
-  messagingSenderId: "984309241322",
-  appId: "1:984309241322:web:4dae35987732d630e64e93",
-  measurementId: "G-QX0XT7RSQX"
+  apiKey: "AIzaSyB8HAnSpjO7ljNPzYNamfopTPLblr0ErSU",
+  authDomain: "nsta-b09a4.firebaseapp.com",
+  databaseURL: "https://nsta-b09a4-default-rtdb.firebaseio.com",
+  projectId: "nsta-b09a4",
+  storageBucket: "nsta-b09a4.firebasestorage.app",
+  messagingSenderId: "874802599278",
+  appId: "1:874802599278:web:79406811f06f0352f31d7f"
 };
 
 // ── Stale IndexedDB guard ──────────────────────────────────────────────────
@@ -29,6 +28,9 @@ if (_lastProject && _lastProject !== firebaseConfig.projectId) {
     localStorage.removeItem('nst_cached_battle_mcqs');
     localStorage.removeItem('nst_system_settings');
     localStorage.removeItem('nst_official_mcqs_cache');
+    localStorage.removeItem('nst_current_user');
+    localStorage.removeItem('nst_last_user_id');
+    localStorage.removeItem('nst_is_guest');
     (indexedDB as any).databases?.().then((dbs: { name?: string }[]) => {
       dbs.filter(d => d.name && (d.name.includes('firestore') || d.name.includes('firebase')))
         .forEach(d => { try { indexedDB.deleteDatabase(d.name!); } catch {} });
@@ -37,12 +39,31 @@ if (_lastProject && _lastProject !== firebaseConfig.projectId) {
 }
 try { localStorage.setItem(_FSP_KEY, firebaseConfig.projectId); } catch {}
 
+const isPermissionDeniedError = (err: any): boolean => {
+  const msg = String(err?.message || err?.code || err || '');
+  return (
+    msg.includes('Permission denied') ||
+    msg.includes('PERMISSION_DENIED') ||
+    msg.includes('permission-denied') ||
+    msg.includes('Missing or insufficient permissions')
+  );
+};
+
 // ── Global Firestore assertion-error auto-recovery ─────────────────────────
 // If the assertion error slips through (e.g. mid-session project switch),
 // delete all Firebase IndexedDB databases and hard-reload automatically.
 if (typeof window !== 'undefined') {
   const handleQuotaOrNetwork = (msg: string, event: Event) => {
     if (msg.includes('analytics') || msg.includes('@firebase/analytics')) {
+      event.preventDefault();
+      return true;
+    }
+    if (
+      msg.includes('Permission denied') ||
+      msg.includes('PERMISSION_DENIED') ||
+      msg.includes('permission-denied') ||
+      msg.includes('Missing or insufficient permissions')
+    ) {
       event.preventDefault();
       return true;
     }
@@ -1495,7 +1516,17 @@ export const subscribeToUser = (userId: string, callback: (user: any) => void) =
 };
 
 export const getUserData = async (userId: string) => {
+    if (!userId || userId === 'guest' || String(userId).startsWith('guest_')) {
+        return null;
+    }
     try {
+        if (auth && !auth.currentUser && typeof auth.authStateReady === 'function') {
+            await Promise.race([
+                auth.authStateReady().catch(() => {}),
+                new Promise(res => setTimeout(res, 1500)),
+            ]);
+        }
+
         let coreData: any = null;
 
         // Firestore is the canonical read for account data. RTDB remains the
@@ -1506,9 +1537,15 @@ export const getUserData = async (userId: string) => {
         } catch {
             // Firestore can be unavailable before Firebase Auth is restored.
         }
-        if (!coreData) {
-            const snap = await get(ref(rtdb, `users/${userId}`));
-            if (snap.exists()) coreData = snap.val();
+        if (!coreData && rtdb) {
+            try {
+                const snap = await get(ref(rtdb, `users/${userId}`));
+                if (snap.exists()) coreData = snap.val();
+            } catch (rtdbErr) {
+                if (!isPermissionDeniedError(rtdbErr)) {
+                    console.warn('[IIC] getUserData RTDB fallback notice:', rtdbErr);
+                }
+            }
         }
 
         if (coreData) {
@@ -1521,7 +1558,12 @@ export const getUserData = async (userId: string) => {
         }
 
         return null;
-    } catch (e) { console.error(e); return null; }
+    } catch (e) {
+        if (!isPermissionDeniedError(e)) {
+            console.warn('[IIC] getUserData notice:', e);
+        }
+        return null;
+    }
 };
 
 // Login-time read that bypasses a device's persistent Firestore cache. The
@@ -1603,7 +1645,10 @@ export const getUserByEmail = async (email: string) => {
             return coreData;
         }
         return null; 
-    } catch (e) { console.error(e); return null; }
+    } catch (e) {
+        if (!isPermissionDeniedError(e)) console.warn('[IIC] getUserByEmail notice:', e);
+        return null;
+    }
 };
 
 export const getUserByNameAndClass = async (name: string, classLevel: string) => {
@@ -1626,7 +1671,10 @@ export const getUserByNameAndClass = async (name: string, classLevel: string) =>
             if (bulkySnap && bulkySnap.exists()) return { ...coreData, ...bulkySnap.data() };
         }
         return coreData;
-    } catch (e) { console.error(e); return null; }
+    } catch (e) {
+        if (!isPermissionDeniedError(e)) console.warn('[IIC] getUserByNameAndClass notice:', e);
+        return null;
+    }
 };
 
 export const getUserByLinkedGoogleUid = async (googleUid: string) => {
@@ -1644,7 +1692,10 @@ export const getUserByLinkedGoogleUid = async (googleUid: string) => {
             return coreData;
         }
         return null;
-    } catch (e) { console.error(e); return null; }
+    } catch (e) {
+        if (!isPermissionDeniedError(e)) console.warn('[IIC] getUserByLinkedGoogleUid notice:', e);
+        return null;
+    }
 };
 
 // ── RTDB-based user lookup (works without Firebase Auth session) ──
@@ -1773,7 +1824,10 @@ export const getUserByMobileOrId = async (input: string) => {
         }
 
         return null;
-    } catch (e) { console.error(e); return null; }
+    } catch (e) {
+        if (!isPermissionDeniedError(e)) console.warn('[IIC] getUserByMobileOrId notice:', e);
+        return null;
+    }
 };
 
 // 2. System Settings Sync
@@ -2674,37 +2728,44 @@ export const prefetchChapterData = (keys: string[]) => {
 
 // Used by client to listen for realtime changes to a specific chapter
 export const subscribeToChapterData = (key: string, callback: (data: any) => void) => {
+    const loadFromFirestoreFallback = () => {
+        getDoc(doc(db, "content_data", key))
+            .then(docSnap => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    set(ref(rtdb, `content_data/${key}`), data).catch(() => {});
+                    callback(data);
+                }
+            })
+            .catch(e => {
+                if (!isPermissionDeniedError(e)) {
+                    console.warn(`[IIC] subscribeToChapterData Firestore fallback notice for "${key}":`, e);
+                }
+                import('firebase/auth').then(({ signInAnonymously: _signIn }) =>
+                    _signIn(auth)
+                        .then(() => getDoc(doc(db, "content_data", key)))
+                        .then(docSnap => { if (docSnap.exists()) callback(docSnap.data()); })
+                        .catch(e2 => {
+                            if (!isPermissionDeniedError(e2)) {
+                                console.warn('[IIC] Auth retry notice:', e2);
+                            }
+                        })
+                );
+            });
+    };
+
     const rtdbRef = ref(rtdb, `content_data/${key}`);
     return onValue(rtdbRef, (snapshot) => {
         if (snapshot.exists()) {
             callback(snapshot.val());
         } else {
-            // RTDB empty — fall back to Firestore with error handling.
-            // Errors are logged but never silently swallowed so the caller
-            // can detect failures (previously: blank page with no clue why).
-            getDoc(doc(db, "content_data", key))
-                .then(docSnap => {
-                    if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        // Write back to RTDB so next read is fast and offline-safe
-                        set(ref(rtdb, `content_data/${key}`), data).catch(() => {});
-                        callback(data);
-                    }
-                    // else: document truly doesn't exist yet — leave content blank (correct)
-                })
-                .catch(e => {
-                    console.error(`[IIC] subscribeToChapterData Firestore fallback failed for "${key}":`, e);
-                    // Re-try once with anonymous auth in case the session expired
-                    import('firebase/auth').then(({ signInAnonymously: _signIn }) =>
-                        _signIn(auth)
-                            .then(() => getDoc(doc(db, "content_data", key)))
-                            .then(docSnap => { if (docSnap.exists()) callback(docSnap.data()); })
-                            .catch(e2 => console.error('[IIC] Auth retry also failed:', e2))
-                    );
-                });
+            loadFromFirestoreFallback();
         }
     }, (error) => {
-        console.error(`[IIC] subscribeToChapterData RTDB error for "${key}":`, error);
+        if (!isPermissionDeniedError(error)) {
+            console.warn(`[IIC] subscribeToChapterData RTDB notice for "${key}":`, error);
+        }
+        loadFromFirestoreFallback();
     });
 };
 

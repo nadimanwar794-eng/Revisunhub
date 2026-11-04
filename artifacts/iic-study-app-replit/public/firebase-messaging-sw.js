@@ -7,13 +7,13 @@ importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging-com
 
 try {
   firebase.initializeApp({
-    apiKey: 'AIzaSyBEDKZVPgwOPCccjWdKSShfvSqC3REDa0c',
-    authDomain: 'iic-nst.firebaseapp.com',
-    databaseURL: 'https://iic-nst-default-rtdb.firebaseio.com',
-    projectId: 'iic-nst',
-    storageBucket: 'iic-nst.firebasestorage.app',
-    messagingSenderId: '984309241322',
-    appId: '1:984309241322:web:4dae35987732d630e64e93',
+    apiKey: 'AIzaSyB8HAnSpjO7ljNPzYNamfopTPLblr0ErSU',
+    authDomain: 'nsta-b09a4.firebaseapp.com',
+    databaseURL: 'https://nsta-b09a4-default-rtdb.firebaseio.com',
+    projectId: 'nsta-b09a4',
+    storageBucket: 'nsta-b09a4.firebasestorage.app',
+    messagingSenderId: '874802599278',
+    appId: '1:874802599278:web:79406811f06f0352f31d7f',
   });
 
   const messaging = firebase.messaging();
